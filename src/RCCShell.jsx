@@ -1504,16 +1504,25 @@ export default function RCCShell() {
     let mounted = true;
 
     async function boot() {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
+      // Safety net — never stay stuck loading more than 8 seconds
+      const timeout = setTimeout(() => {
+        if (mounted) setAuthLoading(false);
+      }, 8000);
 
-      const activeSession = data?.session || null;
-      setSession(activeSession);
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
 
-      if (activeSession?.user) {
-        await loadProfile(activeSession.user.id, activeSession.user.email);
-      } else {
-        setAuthLoading(false);
+        const activeSession = data?.session || null;
+        setSession(activeSession);
+
+        if (activeSession?.user) {
+          await loadProfile(activeSession.user.id, activeSession.user.email);
+        } else {
+          setAuthLoading(false);
+        }
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
@@ -1609,17 +1618,15 @@ export default function RCCShell() {
     try {
       setAuthLoading(true);
 
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-
-      const resolvedEmail = authEmail || authUser?.email || null;
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .maybeSingle();
+      // ── Step 1: Fetch profile + auth user in parallel ──
+      const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+      ]);
 
       if (profileError) throw profileError;
+
+      const resolvedEmail = authEmail || authUser?.email || null;
 
       const merged = {
         ...(profile || {}),
@@ -1630,84 +1637,70 @@ export default function RCCShell() {
         email: resolvedEmail,
       };
 
+      // ── Show the user immediately — don't wait for data ──
       setCurrentUser(merged);
+      setAuthLoading(false);
 
+      // ── Step 2: Load role-specific data in parallel ──
       if (isAdmin(merged.role)) {
         setTab("dashboard");
-
-        const { data: fams } = await supabase.from("families").select("*");
-        const { data: cons } = await supabase
-          .from("profiles")
-          .select("*")
-          .in("role", ["consultant", "consultant_internal"]);
-
+        const [{ data: fams }, { data: cons }] = await Promise.all([
+          supabase.from("families").select("*"),
+          supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal"]),
+        ]);
         setFamilies(fams || []);
         setConsultants(cons || []);
         setChildren([]);
         setOnboardingStep(null);
+
       } else if (isConsultant(merged.role)) {
         setTab("families");
-
         const { data: fams } = await supabase.from("families").select("*").eq("consultant_id", userId);
         setFamilies(fams || []);
         setConsultants([]);
         setChildren([]);
         setOnboardingStep(null);
+
       } else {
         setTab("home");
 
-        let familyData = null;
-
-        const { data: byId } = await supabase
-          .from("families")
-          .select("*")
-          .eq("parent_id", userId)
-          .maybeSingle();
-
-        if (byId) {
-          familyData = byId;
-        } else if (resolvedEmail) {
-          const { data: byEmail } = await supabase
-            .from("families")
-            .select("*")
-            .eq("invite_email", resolvedEmail)
-            .maybeSingle();
-
-          if (byEmail) {
-            familyData = byEmail;
-            await supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
-          }
-        }
-
-        const { data: kids } = await supabase
-          .from("children")
-          .select("*")
-          .eq("parent_id", userId)
-          .order("created_at", { ascending: true });
+        // Fetch family by parent_id and children in parallel
+        const [{ data: byId }, { data: kids }] = await Promise.all([
+          supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
+          supabase.from("children").select("*").eq("parent_id", userId).order("created_at", { ascending: true }),
+        ]);
 
         setChildren(kids || []);
 
+        let familyData = byId || null;
+
+        // Fallback: look up by email if not found by parent_id
+        if (!familyData && resolvedEmail) {
+          const { data: byEmail } = await supabase
+            .from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle();
+          if (byEmail) {
+            familyData = byEmail;
+            // Link parent_id in background — don't await
+            supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
+          }
+        }
+
         if (familyData) {
           setFamilies([familyData]);
+          if (!activeFamilyId) setActiveFamilyId(familyData.id);
 
-          if (!activeFamilyId) {
-            setActiveFamilyId(familyData.id);
-          }
-
+          // Load consultant in background — don't block render
           if (familyData.consultant_id) {
-            const { data: cons } = await supabase
-              .from("profiles")
-              .select("id, name, user_email")
-              .eq("id", familyData.consultant_id)
-              .maybeSingle();
-
-            setConsultants(cons ? [{ ...cons, email: cons.user_email }] : []);
+            supabase.from("profiles").select("id, name, user_email")
+              .eq("id", familyData.consultant_id).maybeSingle()
+              .then(({ data: cons }) => {
+                setConsultants(cons ? [{ ...cons, email: cons.user_email }] : []);
+              });
           } else {
             setConsultants([]);
           }
 
           const hasChild = (kids || []).length > 0;
-
           if (inviteToken && !hasChild) {
             setOnboardingStep("child");
           } else if (familyData.require_intake && !familyData.intake_complete) {
@@ -1723,7 +1716,6 @@ export default function RCCShell() {
       }
     } catch (err) {
       console.error("loadProfile error:", err);
-    } finally {
       setAuthLoading(false);
     }
   }
