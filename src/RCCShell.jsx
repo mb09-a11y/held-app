@@ -90,6 +90,8 @@ function LoginScreen({ onLogin, onGoRegister }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   async function handleLogin() {
     if (!email || !password) {
@@ -104,6 +106,24 @@ function LoginScreen({ onLogin, onGoRegister }) {
       setError(e.message || "Sign in failed. Please check your details.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (!email) {
+      setError("Enter your email address above first.");
+      return;
+    }
+    setResetLoading(true);
+    setError("");
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    setResetLoading(false);
+    if (error) {
+      setError(error.message);
+    } else {
+      setResetSent(true);
     }
   }
 
@@ -144,7 +164,28 @@ function LoginScreen({ onLogin, onGoRegister }) {
             {loading ? "Signing in…" : "Sign in"}
           </Btn>
 
-          <div style={{ textAlign: "center", marginTop: 14 }}>
+          {resetSent && (
+            <div style={{ fontSize: 13, color: "#7BAA8A", textAlign: "center", marginTop: 10, lineHeight: 1.6, fontFamily: font }}>
+              ✓ Password reset email sent! Check your inbox.
+            </div>
+          )}
+
+          <div style={{ textAlign: "center", marginTop: 10 }}>
+            <button
+              onClick={handleForgotPassword}
+              disabled={resetLoading}
+              style={{
+                background: "none", border: "none",
+                fontFamily: font, fontSize: 12.5,
+                color: T.muted, cursor: "pointer",
+                textDecoration: "underline",
+              }}
+            >
+              {resetLoading ? "Sending…" : "Forgot password?"}
+            </button>
+          </div>
+
+          <div style={{ textAlign: "center", marginTop: 10 }}>
             <button
               onClick={onGoRegister}
               style={{

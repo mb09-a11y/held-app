@@ -248,6 +248,7 @@ function useVoiceRecorder(onComplete) {
 
 // ─── WAVEFORM DISPLAY ─────────────────────────────────────────────────────────
 function VoiceMessage({ url, duration, color = C.teal, small = false }) {
+  const T = useT();
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const audioRef = useRef(null);
@@ -299,7 +300,7 @@ function MessageBubble({ msg, isOwn, onPin, onSearch }) {
       <div style={{ position: "relative", maxWidth: "80%" }} onMouseLeave={() => setMenuOpen(false)}>
         <div
           onClick={() => setMenuOpen(!menuOpen)}
-          style={{ background: bg, border: `1px solid ${isAI ? C.purple + "40" : isOwn ? C.teal + "35" : C.border}`, borderRadius: isOwn ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: msg.type === "voice" ? "10px 14px" : "10px 16px", cursor: "pointer" }}
+          style={{ background: bg, border: `1px solid ${isAI ? C.purple + "40" : isOwn ? C.teal + "35" : T.border}`, borderRadius: isOwn ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: msg.type === "voice" ? "10px 14px" : "10px 16px", cursor: "pointer" }}
         >
           {msg.type === "text" && (
             <p style={{ fontFamily: font, fontSize: 14, color: T.text, lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }}>
@@ -321,8 +322,8 @@ function MessageBubble({ msg, isOwn, onPin, onSearch }) {
                 <>
                   <span style={{ fontSize: 24 }}>{fileIcon(msg.fileType)}</span>
                   <div>
-                    <div style={{ fontFamily: font, fontSize: 13, color: C.text, fontWeight: 600 }}>{msg.fileName}</div>
-                    <div style={{ fontFamily: mono, fontSize: 10.5, color: C.muted }}>{formatBytes(msg.fileSize)}</div>
+                    <div style={{ fontFamily: font, fontSize: 13, color: T.text, fontWeight: 600 }}>{msg.fileName}</div>
+                    <div style={{ fontFamily: mono, fontSize: 10.5, color: T.muted }}>{formatBytes(msg.fileSize)}</div>
                   </div>
                 </>
               )}
@@ -337,20 +338,20 @@ function MessageBubble({ msg, isOwn, onPin, onSearch }) {
 
         {/* Context menu */}
         {menuOpen && (
-          <div style={{ position: "absolute", [isOwn ? "right" : "left"]: 0, top: "100%", marginTop: 4, background: "#1d2330", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", zIndex: 10, minWidth: 160, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+          <div style={{ position: "absolute", [isOwn ? "right" : "left"]: 0, top: "100%", marginTop: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", zIndex: 10, minWidth: 160, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
             {[
               { label: "📌 Pin to case", action: () => { onPin(msg.id); setMenuOpen(false); } },
               { label: "📋 Add to plan note", action: () => { setMenuOpen(false); } },
               { label: "🔍 Search similar", action: () => { onSearch(msg.content || msg.fileName || ""); setMenuOpen(false); } },
             ].map((item, i) => (
-              <button key={i} onClick={item.action} style={{ display: "block", width: "100%", padding: "10px 14px", background: "none", border: "none", color: C.text, fontFamily: font, fontSize: 13, textAlign: "left", cursor: "pointer", borderBottom: i < 2 ? `1px solid ${C.faint}` : "none" }}>
+              <button key={i} onClick={item.action} style={{ display: "block", width: "100%", padding: "10px 14px", background: "none", border: "none", color: T.text, fontFamily: font, fontSize: 13, textAlign: "left", cursor: "pointer", borderBottom: i < 2 ? `1px solid ${T.faint}` : "none" }}>
                 {item.label}
               </button>
             ))}
           </div>
         )}
       </div>
-      <div style={{ fontSize: 10, color: C.muted, fontFamily: mono, marginTop: 3, marginLeft: 2, marginRight: 2 }}>
+      <div style={{ fontSize: 10, color: T.muted, fontFamily: mono, marginTop: 3, marginLeft: 2, marginRight: 2 }}>
         {fmtTime(msg.ts)}
       </div>
     </div>
@@ -359,17 +360,19 @@ function MessageBubble({ msg, isOwn, onPin, onSearch }) {
 
 // ─── DATE DIVIDER ─────────────────────────────────────────────────────────────
 function DateDivider({ label }) {
+  const T = useT();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0 12px" }}>
-      <div style={{ flex: 1, height: 1, background: C.faint }} />
-      <span style={{ fontFamily: font, fontSize: 11, color: C.muted, letterSpacing: ".06em" }}>{label}</span>
-      <div style={{ flex: 1, height: 1, background: C.faint }} />
+      <div style={{ flex: 1, height: 1, background: T.faint }} />
+      <span style={{ fontFamily: font, fontSize: 11, color: T.muted, letterSpacing: ".06em" }}>{label}</span>
+      <div style={{ flex: 1, height: 1, background: T.faint }} />
     </div>
   );
 }
 
 // ─── TYPING INDICATOR ────────────────────────────────────────────────────────
 function TypingIndicator() {
+  const T = useT();
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", marginBottom: 4 }}>
       <div style={{ fontSize: 10.5, fontWeight: 700, color: C.purple, fontFamily: font, marginBottom: 3, marginRight: 2 }}>✦ RCC Coach</div>
@@ -419,6 +422,7 @@ async function callRCCAI(messages, familyContext) {
 
 // ─── FILES TAB ────────────────────────────────────────────────────────────────
 function FilesTab({ messages, searchQuery, setSearchQuery }) {
+  const T = useT();
   const [tagFilter, setTagFilter] = useState("all");
   const files = messages.filter(m => m.type === "file" || m.type === "voice");
   const tags = ["all", "images", "documents", "voice", "pinned"];
@@ -440,14 +444,14 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
       <div style={{ position: "relative", marginBottom: 14 }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.4 }}>🔍</span>
         <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search files…"
-          style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: C.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+          style={{ width: "100%", background: T.faint, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
       </div>
 
       {/* Tag filters */}
       <div style={{ display: "flex", gap: 7, marginBottom: 16, flexWrap: "wrap" }}>
         {tags.map(t => (
           <button key={t} onClick={() => setTagFilter(t)}
-            style={{ padding: "6px 13px", borderRadius: 20, border: `1px solid ${tagFilter === t ? C.teal : C.border}`, background: tagFilter === t ? `${C.teal}20` : "transparent", color: tagFilter === t ? C.teal : C.muted, fontFamily: font, fontSize: 12, fontWeight: tagFilter === t ? 700 : 400, cursor: "pointer" }}>
+            style={{ padding: "6px 13px", borderRadius: 20, border: `1px solid ${tagFilter === t ? C.teal : T.border}`, background: tagFilter === t ? `${C.teal}20` : "transparent", color: tagFilter === t ? C.teal : T.muted, fontFamily: font, fontSize: 12, fontWeight: tagFilter === t ? 700 : 400, cursor: "pointer" }}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -457,13 +461,13 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
       {filtered.length === 0 && (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>📁</div>
-          <div style={{ fontFamily: font, fontSize: 14, color: C.muted }}>No files here yet</div>
+          <div style={{ fontFamily: font, fontSize: 14, color: T.muted }}>No files here yet</div>
         </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {filtered.map(m => (
-          <div key={m.id} style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${m.pinnedTo ? C.amber + "50" : C.border}`, borderRadius: 14, padding: 14, position: "relative" }}>
+          <div key={m.id} style={{ background: T.faint, border: `1px solid ${m.pinnedTo ? C.amber + "50" : T.border}`, borderRadius: 14, padding: 14, position: "relative" }}>
             {m.pinnedTo && <div style={{ position: "absolute", top: 10, right: 10, fontSize: 12 }}>📌</div>}
             {m.type === "voice" ? (
               <div>
@@ -475,10 +479,10 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
             ) : (
               <div style={{ fontSize: 32, marginBottom: 8 }}>{fileIcon(m.fileType)}</div>
             )}
-            <div style={{ fontFamily: font, fontSize: 12, color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontFamily: font, fontSize: 12, color: T.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {m.fileName || (m.type === "voice" ? "Voice note" : "File")}
             </div>
-            <div style={{ fontFamily: mono, fontSize: 10, color: C.muted, marginTop: 2 }}>
+            <div style={{ fontFamily: mono, fontSize: 10, color: T.muted, marginTop: 2 }}>
               {fmtDate(m.ts)} · {fmtTime(m.ts)}
             </div>
           </div>
@@ -852,7 +856,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             {/* Search toggle */}
             {mode !== "files" && (
               <button onClick={() => setSearchQuery(q => q === null ? "" : null)}
-                style={{ background: searchQuery !== null ? `${C.teal}20` : "rgba(255,255,255,0.04)", border: `1px solid ${searchQuery !== null ? C.teal : C.border}`, borderRadius: 10, padding: "8px 12px", color: searchQuery !== null ? C.teal : C.muted, fontFamily: font, fontSize: 13, cursor: "pointer" }}>
+                style={{ background: searchQuery !== null ? `${C.teal}20` : "rgba(255,255,255,0.04)", border: `1px solid ${searchQuery !== null ? C.teal : T.border}`, borderRadius: 10, padding: "8px 12px", color: searchQuery !== null ? C.teal : T.muted, fontFamily: font, fontSize: 13, cursor: "pointer" }}>
                 🔍
               </button>
             )}
@@ -862,7 +866,7 @@ Use the child's name naturally. Know what method they're on and what day — don
           {searchQuery !== null && mode !== "files" && (
             <div style={{ position: "relative", marginBottom: 12 }}>
               <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search messages…" autoFocus
-                style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: C.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+                style={{ width: "100%", background: T.faint, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
               <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: 0.4, fontSize: 14 }}>🔍</span>
             </div>
           )}
@@ -871,7 +875,7 @@ Use the child's name naturally. Know what method they're on and what day — don
           <div style={{ display: "flex", gap: 4, background: T.faint, borderRadius: 12, padding: 4, marginBottom: 4 }}>
             {tabs.map(t => (
               <button key={t.id} onClick={() => { setMode(t.id); setSearchQuery(""); }}
-                style={{ flex: 1, padding: "9px 4px", borderRadius: 9, border: "none", fontFamily: font, fontSize: 12, fontWeight: mode === t.id ? 700 : 400, background: mode === t.id ? (t.id === "ai" ? `${C.purple}30` : `${C.teal}26`) : "transparent", color: mode === t.id ? (t.id === "ai" ? C.purple : C.teal) : C.muted, transition: "all .2s", whiteSpace: "nowrap" }}>
+                style={{ flex: 1, padding: "9px 4px", borderRadius: 9, border: "none", fontFamily: font, fontSize: 12, fontWeight: mode === t.id ? 700 : 400, background: mode === t.id ? (t.id === "ai" ? `${C.purple}30` : `${C.teal}26`) : "transparent", color: mode === t.id ? (t.id === "ai" ? C.purple : C.teal) : T.muted, transition: "all .2s", whiteSpace: "nowrap" }}>
                 {t.id === "ai" ? "✦ RCC Coach" : t.label}
               </button>
             ))}
@@ -885,17 +889,17 @@ Use the child's name naturally. Know what method they're on and what day — don
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
                 <div style={{ width: 44, height: 44, borderRadius: "50%", background: `${C.purple}30`, border: `2px solid ${C.purple}60`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>✦</div>
                 <div>
-                  <div style={{ fontFamily: serif, fontSize: 16, color: "rgba(0,0,0,0.85)" }}>RCC Coach</div>
+                  <div style={{ fontFamily: serif, fontSize: 16, color: T.text }}>RCC Coach</div>
                   <div style={{ fontFamily: font, fontSize: 11.5, color: C.purple, marginTop: 2 }}>Powered by Rooted Connections Collective</div>
                 </div>
               </div>
-              <p style={{ fontFamily: font, fontSize: 13.5, color: "rgba(0,0,0,0.6)", lineHeight: 1.7 }}>
+              <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7 }}>
                 Hey. I'm here for the in-between moments — the 3am spirals, the "is this normal?", the "we've been at this for 45 minutes and I'm losing it."
               </p>
-              <p style={{ fontFamily: font, fontSize: 13.5, color: "rgba(0,0,0,0.6)", lineHeight: 1.7, marginTop: 10 }}>
+              <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, marginTop: 10 }}>
                 I'm trained on the RCC framework and I'll respond just like your consultant would. Anything medical or that needs a full case review, I'll loop her in directly.
               </p>
-              <p style={{ fontFamily: font, fontSize: 13.5, color: "rgba(0,0,0,0.6)", lineHeight: 1.7, marginTop: 10 }}>
+              <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, marginTop: 10 }}>
                 What's going on right now?
               </p>
             </div>
@@ -923,13 +927,13 @@ Use the child's name naturally. Know what method they're on and what day — don
             }}
           >
             {loading && (
-              <div style={{ textAlign: "center", padding: "40px 0", color: C.muted, fontFamily: font, fontSize: 13 }}>Loading…</div>
+              <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>Loading…</div>
             )}
 
             {!loading && filteredMessages.length === 0 && !aiTyping && (
               <div style={{ textAlign: "center", padding: "60px 20px" }}>
                 <div style={{ fontSize: 36, marginBottom: 12 }}>{mode === "ai" ? "✦" : "💬"}</div>
-                <div style={{ fontFamily: serif, fontSize: 16, color: "rgba(0,0,0,0.35)" }}>
+                <div style={{ fontFamily: serif, fontSize: 16, color: T.text }}>
                   {searchQuery ? "No results" : mode === "ai" ? "Start the conversation" : "No messages yet"}
                 </div>
               </div>
@@ -984,7 +988,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             >
               {/* Attach */}
               <button onClick={() => fileRef.current?.click()}
-                style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.06)", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, fontSize: 16, flexShrink: 0 }}>
+                style={{ width: 40, height: 40, borderRadius: "50%", background: T.faint, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 16, flexShrink: 0 }}>
                 📎
               </button>
               <input ref={fileRef} type="file" accept="image/*,application/pdf,video/*" onChange={handleFile} style={{ display: "none" }} />
@@ -1041,7 +1045,7 @@ Use the child's name naturally. Know what method they're on and what day — don
                 </button>
               ) : (
                 <button onClick={voice.recording ? voice.stop : voice.start}
-                  style={{ width: 40, height: 40, borderRadius: "50%", background: voice.recording ? `${C.rose}30` : "rgba(255,255,255,0.06)", border: `1px solid ${voice.recording ? C.rose : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: voice.recording ? C.rose : C.muted, fontSize: 16, flexShrink: 0 }}>
+                  style={{ width: 40, height: 40, borderRadius: "50%", background: voice.recording ? `${C.rose}30` : "rgba(255,255,255,0.06)", border: `1px solid ${voice.recording ? C.rose : T.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: voice.recording ? C.rose : T.muted, fontSize: 16, flexShrink: 0 }}>
                   🎙️
                 </button>
               )}
