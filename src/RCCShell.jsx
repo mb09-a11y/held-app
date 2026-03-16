@@ -445,7 +445,7 @@ function ChildInfoStep({ onSave, loading }) {
 }
 
 // ─── PARENT HOME ─────────────────────────────────────────────────────────────
-function ParentHome({ user, onLogout }) {
+function ParentHome({ user, onLogout, onInviteCo }) {
   const T = useT();
   const { setTab, consultants } = useApp();
   const consultant = consultants?.[0];
@@ -590,6 +590,21 @@ function ParentHome({ user, onLogout }) {
           </p>
         )}
       </div>
+      {/* Co-caregiver invite */}
+<div style={{ borderRadius: 14, border: `1px solid ${T.border}`, padding: "16px 18px", background: T.card, marginTop: 12 }}>
+  <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 8 }}>
+    Co-Caregiver
+  </div>
+  <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, marginBottom: 12 }}>
+    Invite a partner or co-caregiver to view the sleep plan and check off items.
+  </p>
+  <button
+    onClick={onInviteCo}
+    style={{ background: T.faint, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", fontFamily: font, fontSize: 13, color: T.teal, cursor: "pointer" }}
+  >
+    + Invite co-caregiver
+  </button>
+</div>
     </div>
   );
 }
@@ -1460,6 +1475,11 @@ export default function RCCShell() {
 
   const [showInviteConsultant, setShowInviteConsultant] = useState(false);
   const [showInviteFamily, setShowInviteFamily] = useState(false);
+  const [showInviteCo, setShowInviteCo] = useState(false);
+  const [coInviteEmail, setCoInviteEmail] = useState("");
+  const [coInviteBusy, setCoInviteBusy] = useState(false);
+  const [coInviteError, setCoInviteError] = useState("");
+  const [coInviteSuccess, setCoInviteSuccess] = useState("");
 
     const [familyInviteForm, setFamilyInviteForm] = useState({
     email: "",
@@ -1535,8 +1555,12 @@ export default function RCCShell() {
       setSession(newSession);
 
       if (newSession?.user) {
-        await loadProfile(newSession.user.id, newSession.user.email);
-      } else {
+  if (event === "TOKEN_REFRESHED" && currentUser) {
+    loadProfile(newSession.user.id, newSession.user.email, true);
+    return;
+  }
+  await loadProfile(newSession.user.id, newSession.user.email);
+} else {
         setCurrentUser(null);
         setFamilies([]);
         setConsultants([]);
@@ -1614,9 +1638,9 @@ export default function RCCShell() {
   }, [inviteToken, consultantInviteToken, session]);
 
   // ── LOAD PROFILE + DATA ──────────────────────────────────
-  async function loadProfile(userId, authEmail = null) {
-    try {
-      setAuthLoading(true);
+  async function loadProfile(userId, authEmail = null, silent = false) {
+  try {
+    if (!silent) setAuthLoading(true);
 
       // ── Step 1: Fetch profile + auth user in parallel ──
       const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
@@ -1680,8 +1704,29 @@ export default function RCCShell() {
             .from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle();
           if (byEmail) {
             familyData = byEmail;
-            // Link parent_id in background — don't await
-            supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
+            await supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
+          }
+        }
+
+        // Check if they're a co-caregiver
+        if (!familyData && resolvedEmail) {
+          const { data: coRecord } = await supabase
+            .from("co_caregivers")
+            .select("family_id")
+            .eq("email", resolvedEmail)
+            .eq("status", "active")
+            .maybeSingle();
+
+          if (coRecord) {
+            const { data: coFamily } = await supabase
+              .from("families")
+              .select("*")
+              .eq("id", coRecord.family_id)
+              .maybeSingle();
+            if (coFamily) {
+              familyData = coFamily;
+              merged.role = "co_caregiver";
+            }
           }
         }
 
@@ -1916,6 +1961,43 @@ export default function RCCShell() {
     setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
     setConsultantInviteForm({ email: "", name: "", consultant_internal: false, payment_required: false });
   }
+
+  async function sendCoCaregiver() {
+  if (!coInviteEmail.trim()) { setCoInviteError("Email is required."); return; }
+  setCoInviteBusy(true); setCoInviteError(""); setCoInviteSuccess("");
+  try {
+    const token = crypto.randomUUID();
+    const familyId = activeFamily?.id;
+    if (!familyId) throw new Error("No active family found.");
+
+    // Insert co-caregiver record
+    const { error: insertError } = await supabase.from("co_caregivers").insert({
+      family_id: familyId,
+      invited_by: currentUser.id,
+      email: coInviteEmail.trim().toLowerCase(),
+      status: "pending",
+    });
+    if (insertError) throw insertError;
+
+    // Send invite email using same edge function pattern
+    const { error: fnError } = await supabase.functions.invoke("send-invite", {
+      body: {
+        email: coInviteEmail.trim().toLowerCase(),
+        inviteToken: token,
+        isCo: true,
+        familyId,
+      },
+    });
+    if (fnError) console.warn("Email send failed but record created:", fnError);
+
+    setCoInviteSuccess(`Invitation sent to ${coInviteEmail}!`);
+    setCoInviteEmail("");
+  } catch (e) {
+    setCoInviteError(e.message || "Failed to send invitation.");
+  } finally {
+    setCoInviteBusy(false);
+  }
+}
 
   async function sendFamilyInvite() {
     if (!familyInviteForm.email.trim()) {
@@ -2312,7 +2394,13 @@ export default function RCCShell() {
                     </div>
 
                     <div className="rcc-content">
-                      {tab === "home" && <ParentHome user={currentUser} onLogout={logout} />}
+                      {tab === "home" && (
+                      <ParentHome
+                        user={currentUser}
+                        onLogout={logout}
+                        onInviteCo={() => setShowInviteCo(true)}
+                      />
+)}
                       {tab === "sleep" && <SleepTabView />}
                       {tab === "regulation" && <RegulationModule />}
                       {tab === "messages" && <Messaging user={currentUser} activeFamily={activeFamily} />}
@@ -2566,6 +2654,32 @@ export default function RCCShell() {
 
             return null;
           })()}
+          {showInviteCo && (
+  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 20 }}>
+    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 18, padding: 24, width: "100%", maxWidth: 400 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText }}>Invite Co-Caregiver</div>
+        <button onClick={() => { setShowInviteCo(false); setCoInviteEmail(""); setCoInviteError(""); setCoInviteSuccess(""); }}
+          style={{ background: "none", border: "none", color: T.muted, fontSize: 18, cursor: "pointer" }}>×</button>
+      </div>
+      <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, marginBottom: 16 }}>
+        They'll get an email invite and can view the sleep plan and check off items — but won't be able to change plan settings.
+      </p>
+      <Input label="Their email" value={coInviteEmail} onChange={setCoInviteEmail} type="email" required />
+      {coInviteError && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{coInviteError}</div>}
+      {coInviteSuccess && <div style={{ fontSize: 12.5, color: "#7BAA8A", marginBottom: 10 }}>✓ {coInviteSuccess}</div>}
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+        <Btn onClick={sendCoCaregiver} disabled={coInviteBusy}>
+          {coInviteBusy ? "Sending…" : "Send invite →"}
+        </Btn>
+        <button onClick={() => setShowInviteCo(false)}
+          style={{ padding: "11px 16px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer" }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
         </div>
       </ThemeCtx.Provider>
     </AppCtx.Provider>

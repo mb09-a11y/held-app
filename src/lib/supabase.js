@@ -12,4 +12,11 @@ if (!url || !anonKey) {
   console.warn("[supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. Auth/data calls will fail until set.");
 }
 
-export const supabase = createClient(url || "", anonKey || "");
+export const supabase = createClient(url || "", anonKey || "", {
+  auth: {
+    persistSession: true,
+    storageKey: "rcc-auth",
+    storage: window.localStorage,
+    autoRefreshToken: true,
+  },
+});
