@@ -1456,8 +1456,18 @@ export default function RCCShell() {
 
   // Auth state
   const [session, setSession] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(() => {
+  try {
+    const cached = localStorage.getItem("rcc_user");
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
+});
+const [authLoading, setAuthLoading] = useState(() => {
+  // If we have a cached user, don't show loading screen on startup
+  try {
+    return !localStorage.getItem("rcc_user");
+  } catch { return true; }
+});
   const [authScreen, setAuthScreen] = useState("login");
 
   // App data state
@@ -1661,6 +1671,7 @@ export default function RCCShell() {
 
       // ── Show the user immediately — don't wait for data ──
       setCurrentUser(merged);
+      try { localStorage.setItem("rcc_user", JSON.stringify(merged)); } catch {}
       setAuthLoading(false);
 
       // ── Step 2: Load role-specific data in parallel ──
@@ -1860,6 +1871,7 @@ export default function RCCShell() {
     setChildren([]);
     setTab("home");
     setAdminConsultantView(false);
+    try { localStorage.removeItem("rcc_user"); } catch {}
   }
 
   async function saveChildInfo(child) {
