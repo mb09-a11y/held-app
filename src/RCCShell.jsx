@@ -1534,27 +1534,22 @@ const [authLoading, setAuthLoading] = useState(() => {
     let mounted = true;
 
     async function boot() {
-      // Safety net — never stay stuck loading more than 8 seconds
-      const timeout = setTimeout(() => {
-        if (mounted) setAuthLoading(false);
-      }, 8000);
+  const { data } = await supabase.auth.getSession();
+  if (!mounted) return;
 
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
+  const activeSession = data?.session || null;
+  setSession(activeSession);
 
-        const activeSession = data?.session || null;
-        setSession(activeSession);
-
-        if (activeSession?.user) {
-          await loadProfile(activeSession.user.id, activeSession.user.email);
-        } else {
-          setAuthLoading(false);
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
+  if (activeSession?.user) {
+    // If we already have a cached user, load profile silently
+    const hasCachedUser = !!localStorage.getItem("rcc_user");
+    await loadProfile(activeSession.user.id, activeSession.user.email, hasCachedUser);
+  } else {
+    // No session — clear cache and show login
+    try { localStorage.removeItem("rcc_user"); } catch {}
+    setAuthLoading(false);
+  }
+}
 
     boot();
 
