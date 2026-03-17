@@ -1383,7 +1383,17 @@ export default function RCCShell() {
           supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
           supabase.from("children").select("*").eq("parent_id", userId).order("created_at", { ascending: true }),
         ]);
-        setChildren(kids || []);
+        // For co-caregivers, kids belong to the primary parent not this user
+        const parentIdForKids = (familyData?.parent_id && familyData.parent_id !== userId)
+          ? familyData.parent_id
+          : userId;
+
+        const { data: resolvedKids } = await supabase
+          .from("children").select("*")
+          .eq("parent_id", parentIdForKids)
+          .order("created_at", { ascending: true });
+
+        setChildren(resolvedKids || []);
         let familyData = byId || null;
 
         if (!familyData && resolvedEmail) {
