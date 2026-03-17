@@ -1379,29 +1379,19 @@ export default function RCCShell() {
 
       } else {
         setTab("home");
-        const [{ data: byId }, { data: kids }] = await Promise.all([
-          supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
-          supabase.from("children").select("*").eq("parent_id", userId).order("created_at", { ascending: true }),
-        ]);
-        // For co-caregivers, kids belong to the primary parent not this user
-        const parentIdForKids = (familyData?.parent_id && familyData.parent_id !== userId)
-          ? familyData.parent_id
-          : userId;
 
-        const { data: resolvedKids } = await supabase
-          .from("children").select("*")
-          .eq("parent_id", parentIdForKids)
-          .order("created_at", { ascending: true });
-
-        setChildren(resolvedKids || []);
+        // Step 1: try to find family by parent_id
+        const { data: byId } = await supabase
+          .from("families").select("*").eq("parent_id", userId).maybeSingle();
         let familyData = byId || null;
 
+        // Step 2: fallback — find by invite_email
         if (!familyData && resolvedEmail) {
           const { data: byEmail } = await supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle();
           if (byEmail) { familyData = byEmail; await supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id); }
         }
 
-        // Co-caregiver lookup — checks co_caregivers table by email
+        // Step 3: fallback — check if they're a co-caregiver
         if (!familyData && resolvedEmail) {
           const { data: coRecord } = await supabase.from("co_caregivers").select("family_id").eq("email", resolvedEmail).in("status", ["pending", "active"]).maybeSingle();
           if (coRecord) {
@@ -1409,7 +1399,6 @@ export default function RCCShell() {
             if (coFamily) {
               familyData = coFamily;
               merged.role = "co_caregiver";
-              // Mark as active now that they've logged in
               await supabase.from("co_caregivers").update({ status: "active" }).eq("family_id", coRecord.family_id).eq("email", resolvedEmail);
             }
           }
@@ -1418,11 +1407,24 @@ export default function RCCShell() {
         if (familyData) {
           setFamilies([familyData]);
           if (!activeFamilyId) setActiveFamilyId(familyData.id);
+
+          // Step 4: load children — co-caregivers need the primary parent's children
+          const parentIdForKids = (familyData.parent_id && familyData.parent_id !== userId)
+            ? familyData.parent_id
+            : userId;
+          const { data: resolvedKids } = await supabase
+            .from("children").select("*")
+            .eq("parent_id", parentIdForKids)
+            .order("created_at", { ascending: true });
+          setChildren(resolvedKids || []);
+
+          // Step 5: load consultant in background
           if (familyData.consultant_id) {
             supabase.from("profiles").select("id, name, user_email").eq("id", familyData.consultant_id).maybeSingle()
               .then(({ data: cons }) => setConsultants(cons ? [{ ...cons, email: cons.user_email }] : []));
           } else { setConsultants([]); }
-          const hasChild = (kids || []).length > 0;
+
+          const hasChild = (resolvedKids || []).length > 0;
           // Co-caregivers skip child onboarding and intake — go straight to home
           if (merged.role === "co_caregiver") {
             setOnboardingStep(null);
@@ -1434,7 +1436,7 @@ export default function RCCShell() {
             setOnboardingStep(null);
           }
         } else {
-          setFamilies([]); setConsultants([]); setOnboardingStep(null);
+          setFamilies([]); setConsultants([]); setChildren([]); setOnboardingStep(null);
         }
       }
     } catch (err) { console.error("loadProfile error:", err); setAuthLoading(false); }
