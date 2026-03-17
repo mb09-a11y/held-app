@@ -1554,8 +1554,10 @@ export default function RCCShell() {
 
       setSession(newSession);
 
-      if (newSession?.user) {
-  if (event === "TOKEN_REFRESHED" && currentUser) {
+    if (newSession?.user) {
+  // If we already have a user loaded, always refresh silently in the background
+  // This covers TOKEN_REFRESHED, SIGNED_IN on wake-from-sleep, and any other re-auth events
+  if (currentUser) {
     loadProfile(newSession.user.id, newSession.user.email, true);
     return;
   }
