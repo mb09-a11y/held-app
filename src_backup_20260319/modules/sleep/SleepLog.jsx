@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useT, useApp, font, serif, genId } from "../../core/shared.jsx";
+import { useT, font, serif, genId } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
@@ -169,8 +169,7 @@ function InputSheet({ title, fields, onConfirm, onCancel }) {
                 </select>
               ) : (
                 <input
-                  type={f.type === "date" ? "date" : f.type === "time" ? "time" : f.type === "number" ? "number" : "text"}
-                  value={vals[f.key]} placeholder={f.placeholder || ""}
+                  type={f.type || "text"} value={vals[f.key]} placeholder={f.placeholder || ""}
                   onChange={e => setVals(v => ({ ...v, [f.key]: e.target.value }))}
                   style={inputStyle}
                 />
@@ -225,11 +224,6 @@ async function updateLog(id, changes) {
   if (error) console.error("[SleepLog] updateLog:", error);
 }
 
-async function deleteLog(id) {
-  const { error } = await supabase.from("sleep_logs").delete().eq("id", id);
-  if (error) console.error("[SleepLog] deleteLog:", error);
-}
-
 async function fetchConfig(familyId) {
   if (!familyId) return null;
   const { data } = await supabase.from("sleep_configs").select("*").eq("family_id", familyId).maybeSingle();
@@ -253,10 +247,9 @@ async function upsertConfig(familyId, config) {
 }
 
 // ─── ROOT MODULE ──────────────────────────────────────────────────────────────
-export function SleepLog({ user, activeFamily, initialTab }) {
+export function SleepLog({ user, activeFamily }) {
   const T = useT();
-  const { activeChild } = useApp();
-  const [tab, setTab] = useState(initialTab || "dashboard");
+  const [tab, setTab] = useState("dashboard");
   const [dbPin, setDbPin] = useState(null);
   const [logs, setLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
@@ -281,11 +274,6 @@ export function SleepLog({ user, activeFamily, initialTab }) {
   });
 }, [familyId]);
 
-  // Filter logs to active child — show untagged logs (child_id = null) as fallback for legacy data
-  const childLogs = activeChild
-    ? logs.filter(l => !l.child_id || l.child_id === activeChild.id)
-    : logs;
-
   // ── LOAD PIN ──
   useEffect(() => {
     if (!user?.id) return;
@@ -301,8 +289,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
 
   const addEntry = useCallback(async (type, data) => {
     const localId = crypto.randomUUID(); // temp local id for optimistic UI
-    const entry = { id: localId, ts: new Date().toISOString(), type, ...data,
-      ...(activeChild?.id ? { child_id: activeChild.id } : {}) };
+    const entry = { id: localId, ts: new Date().toISOString(), type, ...data };
     setLogs(prev => [entry, ...prev]); // optimistic
     if (familyId) {
       const saved = await insertLog(familyId, entry);
@@ -319,15 +306,10 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     await updateLog(id, changes);
   }, []);
 
-  const deleteEntry = useCallback(async (id) => {
-    setLogs(prev => prev.filter(l => l.id !== id));
-    await deleteLog(id);
-  }, []);
-
   // ── ANALYTICS ──
   const analytics = useMemo(() => {
     const dayAgo = new Date(Date.now() - 86400000).toISOString();
-    const dayLogs = childLogs.filter(l => l.ts > dayAgo);
+    const dayLogs = logs.filter(l => l.ts > dayAgo);
 
     const sessions = dayLogs.filter(l => l.type === "sleep_session");
     let totalCribMs = 0, wakingMs = 0;
@@ -348,9 +330,6 @@ export function SleepLog({ user, activeFamily, initialTab }) {
         acc.lastSide = l.side;
         return acc;
       }, { totalMins: 0, lastSide: "N/A" }),
-      pumpSessions: dayLogs.filter(l => l.mode === "pump").length,
-      pumpOz: dayLogs.filter(l => l.mode === "pump").reduce((s, l) => s + (l.amount || 0), 0),
-      medicineCount: dayLogs.filter(l => l.type === "medicine").length,
       nightWakes: dayLogs.filter(l => l.type === "night_waking").length,
       poops: dayLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty").length,
       wets: dayLogs.filter(l => l.type === "diaper" && l.sub_type === "wet").length,
@@ -362,7 +341,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
         return Math.round(withData.reduce((s, l) => s + l.fall_asleep_secs, 0) / withData.length / 60);
       })(),
     };
-  }, [childLogs]);
+  }, [logs]);
 
   const isConsultantUser = user?.role === "consultant" || user?.role === "consultant_internal" || user?.role === "admin";
   const TABS = isConsultantUser
@@ -371,26 +350,6 @@ export function SleepLog({ user, activeFamily, initialTab }) {
 
   return (
     <div style={{ fontFamily: font, color: T.text, paddingBottom: 80, minHeight: "100vh" }}>
-
-      {/* ── ACTIVE CHILD INDICATOR ── */}
-      {activeChild && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px 0", marginBottom: 4 }}>
-          {activeChild.photo_url ? (
-            <img src={activeChild.photo_url} alt={activeChild.name}
-              onError={e => e.target.style.display = "none"}
-              style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover" }} />
-          ) : (
-            <span style={{ fontSize: 16 }}>🧒</span>
-          )}
-          <span style={{ fontFamily: font, fontSize: 12.5, fontWeight: 600, color: T.teal }}>
-            {activeChild.name}
-          </span>
-          <span style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-            · sleep data
-          </span>
-        </div>
-      )}
-
       {/* ── TAB BAR ── */}
       <div style={{
         display: "flex", gap: 8, background: T.faint, borderRadius: 14, padding: 5,
@@ -419,9 +378,9 @@ export function SleepLog({ user, activeFamily, initialTab }) {
           </div>
         ) : (
           <>
-            {tab === "dashboard"   && <DashboardView analytics={analytics} logs={childLogs} activeFamily={activeFamily} onPatch={patchEntry} onDelete={deleteEntry} />}
-            {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={childLogs} config={config} activeFamily={activeFamily} />}
-            {tab === "history"     && <TrendsView logs={childLogs} onPatch={patchEntry} onDelete={deleteEntry} />}
+            {tab === "dashboard"   && <DashboardView analytics={analytics} logs={logs} activeFamily={activeFamily} />}
+            {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={logs} config={config} activeFamily={activeFamily} />}
+            {tab === "history"     && <TrendsView logs={logs} />}
             {tab === "configure"  && <ConsultantView config={config} setConfig={setConfig} dbPin={dbPin} isConsultant={isConsultantUser} />}
           </>
         )}
@@ -431,171 +390,8 @@ export function SleepLog({ user, activeFamily, initialTab }) {
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-
-// ─── EDIT LOG MODAL ───────────────────────────────────────────────────────────
-function EditLogModal({ log, onSave, onDelete, onClose }) {
+function DashboardView({ analytics, logs, activeFamily }) {
   const T = useT();
-
-  // Convert ISO to local time string HH:MM for inputs
-  function isoToTimeStr(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-  }
-
-  // Convert local time string back to ISO, keeping the same date as the original
-  function timeStrToISO(timeStr, originalIso) {
-    if (!timeStr) return null;
-    const base = originalIso ? new Date(originalIso) : new Date();
-    const [h, m] = timeStr.split(":").map(Number);
-    const result = new Date(base);
-    result.setHours(h, m, 0, 0);
-    return result.toISOString();
-  }
-
-  const isSleep = log.type === "sleep_session";
-  const isWaking = log.type === "night_waking";
-
-  const [putDown, setPutDown] = useState(isoToTimeStr(log.ts));
-  const [fellAsleep, setFellAsleep] = useState(isoToTimeStr(log.fell_asleep_ts));
-  const [wakeUp, setWakeUp] = useState(isoToTimeStr(log.end_ts));
-  const [mood, setMood] = useState(log.mood || "");
-  const [wakingTime, setWakingTime] = useState(isoToTimeStr(log.ts));
-  const [duration, setDuration] = useState(log.duration || 10);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleSave() {
-    setSaving(true); setError("");
-    try {
-      let changes = {};
-      if (isSleep) {
-        const putDownISO = timeStrToISO(putDown, log.ts);
-        const fellAsleepISO = fellAsleep ? timeStrToISO(fellAsleep, log.ts) : null;
-        const wakeUpISO = wakeUp ? timeStrToISO(wakeUp, log.end_ts || log.ts) : null;
-        const fallAsleepSecs = fellAsleepISO && putDownISO
-          ? Math.round((new Date(fellAsleepISO) - new Date(putDownISO)) / 1000)
-          : log.fall_asleep_secs;
-        const totalSleepMs = wakeUpISO && (fellAsleepISO || putDownISO)
-          ? new Date(wakeUpISO) - new Date(fellAsleepISO || putDownISO)
-          : log.total_sleep_ms;
-        changes = {
-          ts: putDownISO,
-          fell_asleep_ts: fellAsleepISO,
-          end_ts: wakeUpISO,
-          mood: mood || null,
-          fall_asleep_secs: fallAsleepSecs,
-          total_sleep_ms: totalSleepMs,
-        };
-      } else if (isWaking) {
-        changes = {
-          ts: timeStrToISO(wakingTime, log.ts),
-          duration: parseInt(duration) || 10,
-        };
-      } else {
-        // Generic entry — just allow time edit
-        changes = { ts: timeStrToISO(wakingTime, log.ts) };
-      }
-      await onSave(log.id, changes);
-      onClose();
-    } catch (e) {
-      setError(e.message || "Failed to save.");
-    } finally { setSaving(false); }
-  }
-
-  const MOODS = ["😊", "😐", "😢", "😴", "😤"];
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 300, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: T.bg2, borderRadius: "20px 20px 0 0", width: "100%", padding: "24px 20px 40px", maxHeight: "90vh", overflowY: "auto" }}>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <div style={{ fontSize: 18, fontWeight: 700, color: T.headingText }}>
-            {logIcon(log)} Edit {logLabel(log)}
-          </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: T.muted, fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
-        </div>
-
-        {/* Sleep session fields */}
-        {isSleep && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Put down time</div>
-              <input type="time" value={putDown} onChange={e => setPutDown(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Fell asleep</div>
-              <input type="time" value={fellAsleep} onChange={e => setFellAsleep(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-            </div>
-            {log.end_ts && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Wake up time</div>
-                <input type="time" value={wakeUp} onChange={e => setWakeUp(e.target.value)}
-                  style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-              </div>
-            )}
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 8 }}>Wake-up mood</div>
-              <div style={{ display: "flex", gap: 10 }}>
-                {MOODS.map(m => (
-                  <button key={m} onClick={() => setMood(m === mood ? "" : m)}
-                    style={{ fontSize: 24, background: mood === m ? `${T.teal}20` : "none", border: `2px solid ${mood === m ? T.teal : T.border}`, borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Night waking fields */}
-        {isWaking && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Time</div>
-              <input type="time" value={wakingTime} onChange={e => setWakingTime(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Duration (minutes)</div>
-              <input type="number" value={duration} onChange={e => setDuration(e.target.value)} min="1" max="120"
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-            </div>
-          </div>
-        )}
-
-        {/* Generic time edit */}
-        {!isSleep && !isWaking && (
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Time</div>
-            <input type="time" value={wakingTime} onChange={e => setWakingTime(e.target.value)}
-              style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
-          </div>
-        )}
-
-        {error && <div style={{ fontSize: 12.5, color: "#C07070", marginTop: 12 }}>{error}</div>}
-
-        {/* Action buttons */}
-        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
-          <button onClick={handleSave} disabled={saving}
-            style={{ flex: 1, padding: "13px", borderRadius: 10, border: "none", background: saving ? T.faint : T.teal, color: saving ? T.muted : "#fff", fontSize: 15, fontWeight: 600, cursor: saving ? "default" : "pointer" }}>
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-          <button onClick={() => { if (window.confirm("Delete this entry?")) { onDelete(log.id); onClose(); } }}
-            style={{ padding: "13px 16px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontSize: 15, cursor: "pointer" }}>
-            🗑
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
-  const T = useT();
-  const [editingLog, setEditingLog] = useState(null);
   const age = calculateAge(activeFamily?.birth_date || activeFamily?.birthDate);
   const totalMonths = age.years * 12 + age.months;
   const showFeeding = totalMonths < 15;
@@ -612,12 +408,14 @@ function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
         {showFeeding && (
           <StatCard
             label="Feeding"
-            value={analytics.totalOz > 0 ? `${analytics.totalOz}oz bottle` : analytics.nursingCount > 0 ? `${analytics.nursingCount} nursing` : analytics.pumpSessions > 0 ? `${analytics.pumpSessions} pump` : "None logged"}
-            sub={[
-              analytics.nursing.totalMins > 0 ? `${analytics.nursing.totalMins}m nursing` : null,
-              analytics.pumpOz > 0 ? `${analytics.pumpOz}oz pumped` : analytics.pumpSessions > 0 ? `${analytics.pumpSessions} pump session${analytics.pumpSessions !== 1 ? "s" : ""}` : null,
-              analytics.medicineCount > 0 ? `💊 ${analytics.medicineCount} med${analytics.medicineCount !== 1 ? "s" : ""}` : null,
-            ].filter(Boolean).join(" · ") || undefined}
+            value={analytics.totalOz > 0 ? `${analytics.totalOz}oz bottle` : analytics.nursingCount > 0 ? `${analytics.nursingCount} session${analytics.nursingCount !== 1 ? "s" : ""}` : "None logged"}
+            sub={
+              analytics.totalOz > 0 && analytics.nursingCount > 0
+                ? `+ ${analytics.nursingCount} nursing session${analytics.nursingCount !== 1 ? "s" : ""}`
+                : analytics.nursing.totalMins > 0
+                ? `${analytics.nursing.totalMins}m nursing · last: ${analytics.nursing.lastSide}`
+                : undefined
+            }
             icon="🍼" color={C.teal}
           />
         )}
@@ -665,26 +463,12 @@ function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
                 {((new Date(l.end_ts) - new Date(l.ts)) / 3600000).toFixed(1)}h
               </span>
             )}
-            <button onClick={() => setEditingLog(l)}
-              style={{ background: T.faint, border: `1px solid ${T.border}`, color: T.muted, fontSize: 12, cursor: "pointer", padding: "5px 10px", borderRadius: 8, marginLeft: 4, fontFamily: "system-ui", whiteSpace: "nowrap" }}>
-              Edit
-            </button>
           </div>
         ))}
         {logs.filter(l => isWithin24h(l.ts)).length === 0 && (
           <p style={{ fontSize: 13, color: T.muted, textAlign: "center", padding: "12px 0" }}>No entries yet today</p>
         )}
       </Card>
-
-      {/* Edit modal */}
-      {editingLog && (
-        <EditLogModal
-          log={editingLog}
-          onSave={onPatch}
-          onDelete={onDelete}
-          onClose={() => setEditingLog(null)}
-        />
-      )}
     </div>
   );
 }
@@ -699,18 +483,27 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   function showToast(message, icon = "✅") {
     clearTimeout(toastTimer.current);
     setToast({ visible: true, message, icon });
-    toastTimer.current = setTimeout(() => setToast(t => ({ ...t, visible: false })), 2500);
+    toastTimer.current = setTimeout(() => setToast(t => ({ ...t, visible: false })), 2000);
   }
 
-  // ── Persistent in-progress session (survives tab switches) ──
+  // ── Persistent sleep session state (survives tab switches via localStorage) ──
   const SESSION_KEY = `rcc_sleep_session_${activeFamily?.id || "default"}`;
-  const [session, setSession] = useState(() => {
+
+  function loadSession() {
     try { return JSON.parse(localStorage.getItem(SESSION_KEY)) || null; } catch { return null; }
-  });
+  }
+  function saveSession(s) {
+    if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    else localStorage.removeItem(SESSION_KEY);
+  }
+
+  const [session, setSession] = useState(() => loadSession());
+
+  // session shape: { state: "put_down"|"asleep", putDownTime, asleepTime, sessionId }
+
   function updateSession(next) {
     setSession(next);
-    if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    else localStorage.removeItem(SESSION_KEY);
+    saveSession(next);
   }
 
   const age = calculateAge(activeFamily?.birth_date || activeFamily?.birthDate);
@@ -719,83 +512,43 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const showDiapers = age.years < 3;
   const showSolids = totalMonths >= 4;
 
-  // ── Next sleep suggestion — based on last woke-up event + wake window ──
-  const lastWakeUp = [...logs]
-    .filter(l => l.type === "sleep_session" && l.end_ts)
-    .sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts))[0];
+  // Next sleep suggestion
+  const lastSession = logs.find(l => l.type === "sleep_session" && l.end_ts);
   const napCount = logs.filter(l => l.type === "sleep_session" && isToday(l.ts)).length;
-
-  // Use age-appropriate wake windows if child DOB is available, otherwise use config
-  const { activeChild: sleepActiveChild } = useApp();
-  const childDob = sleepActiveChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
-  const ageMonthsForWindow = childDob
-    ? Math.floor((Date.now() - new Date(childDob)) / (1000 * 60 * 60 * 24 * 30.44))
-    : null;
-  const ageBasedWindows = ageMonthsForWindow !== null
-    ? defaultWakeWindowsForAge(ageMonthsForWindow)
-    : config.recommendedWakeWindows;
-  // Prefer consultant-configured windows if they've been customized, otherwise use age-based
-  const hasCustomWindows = JSON.stringify(config.recommendedWakeWindows) !== JSON.stringify([1.5, 1.75, 2, 2.25]);
-  const effectiveWindows = hasCustomWindows ? config.recommendedWakeWindows : ageBasedWindows;
-  const window_ = effectiveWindows[napCount] ?? effectiveWindows[effectiveWindows.length - 1];
-  const suggestedTs = lastWakeUp ? new Date(new Date(lastWakeUp.end_ts).getTime() + window_ * 3600000) : null;
+  const window_ = config.recommendedWakeWindows[napCount] ?? config.recommendedWakeWindows[config.recommendedWakeWindows.length - 1];
+  const suggestedTs = lastSession ? new Date(new Date(lastSession.end_ts).getTime() + window_ * 3600000) : null;
   const suggestedTime = suggestedTs ? fmtTime(suggestedTs.toISOString()) : "---";
   const minsUntil = suggestedTs ? Math.round((suggestedTs - Date.now()) / 60000) : null;
 
-  // ── Local time helpers ──
-  // Always use local time for display and input pre-fill
-  function nowTimeStr() {
-    const now = new Date();
-    return `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-  }
-  // Convert HH:MM input to ISO, keeping today's local date
-  function timeStrToISO(timeStr) {
-    const [h, m] = timeStr.split(":").map(Number);
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d.toISOString();
-  }
+  // ── Handlers ──
 
-  const openSheet = (cfg) => setSheet(cfg);
-  const closeSheet = () => setSheet(null);
-
-  async function logAndToast(type, data, message, icon = "✅") {
-    await onLog(type, data);
-    showToast(message, icon);
-  }
-
-  // ── Step 1: Put Down ──
   const handlePutDown = (vals) => {
     const putDownTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    updateSession({ putDownTime, asleepTime: null, sessionId: null });
-    showToast("Put down logged", "🛏️");
+    updateSession({ state: "put_down", putDownTime, asleepTime: null, sessionId: null });
   };
 
-  // ── Step 2: Fell Asleep — saves to DB, gets real session ID ──
   const handleAsleep = async (vals) => {
     const asleepTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    const putDownTime = session?.putDownTime || asleepTime;
-    showToast("Falling asleep logged", "💤");
+    // Save to DB first, get back the real UUID
+    showToast("Sleep session started", "💤");
     const saved = await onLog("sleep_session", {
-      ts: putDownTime,
+      ts: session?.putDownTime || asleepTime,
       fell_asleep_ts: asleepTime,
       end_ts: null,
     });
-    updateSession({ putDownTime, asleepTime, sessionId: saved?.id || null });
+    const sessionId = saved?.id || null;
+    updateSession({ ...session, state: "asleep", asleepTime, sessionId });
   };
 
-  // ── Step 3: Woke Up — completes the session with all calculations ──
   const handleWakeUp = async (vals) => {
     const endTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
     const { putDownTime, asleepTime, sessionId } = session || {};
-
     const fallAsleepSecs = asleepTime && putDownTime
       ? Math.round((new Date(asleepTime) - new Date(putDownTime)) / 1000)
       : null;
     const totalSleepMs = asleepTime
-      ? Math.max(0, new Date(endTime) - new Date(asleepTime))
+      ? new Date(endTime) - new Date(asleepTime)
       : null;
-
     if (sessionId) {
       await onPatch(sessionId, {
         end_ts: endTime,
@@ -804,6 +557,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
         total_sleep_ms: totalSleepMs,
       });
     } else {
+      // No active session (parent just woke, didn't log put down / asleep)
       await onLog("sleep_session", {
         ts: putDownTime || asleepTime || endTime,
         fell_asleep_ts: asleepTime || null,
@@ -814,50 +568,55 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
       });
     }
     updateSession(null);
-    showToast("Wake up logged ✓", "☀️");
   };
 
   const handleNightWaking = (vals) => {
-    const ts = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    onLog("night_waking", { ts, duration: parseInt(vals?.duration) || 10 });
-    showToast("Night waking logged", "🌛");
+    logAndToast("night_waking", { duration: parseInt(vals?.duration) || 10 }, "Night waking logged", "🌛");
   };
 
-  // ── Derived display from in-progress session ──
+  const openSheet = (cfg) => setSheet(cfg);
+  const closeSheet = () => setSheet(null);
+
+  async function logAndToast(type, data, message, icon = "✅") {
+    await onLog(type, data);
+    showToast(message, icon);
+  }
+
+  // Current time string for pre-filling inputs
+  function nowTimeStr() {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  }
+
+  // Convert HH:MM to full ISO using today's date
+  function timeStrToISO(timeStr) {
+    const [h, m] = timeStr.split(":").map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d.toISOString();
+  }
+
+  // Derived display values from persisted session
   const putDownDisplay = session?.putDownTime ? fmtTime(session.putDownTime) : null;
   const asleepDisplay = session?.asleepTime ? fmtTime(session.asleepTime) : null;
-  const inCribMins = session?.putDownTime
-    ? Math.round((Date.now() - new Date(session.putDownTime)) / 60000)
+  const settlingMins = session?.putDownTime && session?.asleepTime
+    ? Math.round((new Date(session.asleepTime) - new Date(session.putDownTime)) / 60000)
     : null;
-  const sleepingMins = session?.asleepTime
-    ? Math.round((Date.now() - new Date(session.asleepTime)) / 60000)
-    : null;
-
-  const MOODS = [
-    { id: "happy",   emoji: "😊" },
-    { id: "neutral", emoji: "😐" },
-    { id: "fussy",   emoji: "😢" },
-    { id: "sleepy",  emoji: "😴" },
-    { id: "upset",   emoji: "😤" },
-  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {sheet && (
-        <InputSheet title={sheet.title} fields={sheet.fields}
-          onConfirm={(vals) => { sheet.onConfirm(vals); closeSheet(); }}
-          onCancel={closeSheet} />
+        <InputSheet title={sheet.title} fields={sheet.fields} onConfirm={(vals) => { sheet.onConfirm(vals); closeSheet(); }} onCancel={closeSheet} />
       )}
       <style>{`@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
       <Toast message={toast.message} icon={toast.icon} visible={toast.visible} />
 
-      {/* Next Sleep Window */}
+      {/* Next Sleep Suggestion */}
       <Card style={{ background: `${C.teal}12`, borderColor: `${C.teal}30` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <SectionLabel>Next Sleep Window</SectionLabel>
             <p style={{ fontSize: 22, fontFamily: serif, color: C.teal, fontWeight: 700 }}>{suggestedTime}</p>
-            <p style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>based on last wake-up + {window_}h window</p>
           </div>
           {minsUntil !== null && (
             <div style={{ textAlign: "right" }}>
@@ -870,18 +629,18 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
         </div>
       </Card>
 
-      {/* Sleep Tracker */}
+      {/* ── SLEEP TRACKER ── */}
       <Card>
         <SectionLabel>Sleep Tracker</SectionLabel>
 
-        {/* In-progress session status */}
+        {/* Status summary when session is active */}
         {session && (
           <div style={{
-            background: session.asleepTime ? `${C.sage}15` : `${C.amber}15`,
-            border: `1px solid ${session.asleepTime ? C.sage : C.amber}40`,
+            background: session.state === "asleep" ? `${C.sage}15` : `${C.amber}15`,
+            border: `1px solid ${session.state === "asleep" ? C.sage : C.amber}40`,
             borderRadius: 12, padding: "12px 14px", marginBottom: 14,
           }}>
-            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
               {putDownDisplay && (
                 <div>
                   <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Put down</p>
@@ -894,306 +653,233 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
                   <p style={{ fontSize: 16, fontWeight: 700, color: C.sage }}>{asleepDisplay}</p>
                 </div>
               )}
-              {inCribMins !== null && !session.asleepTime && (
+              {settlingMins !== null && (
                 <div>
-                  <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>In crib</p>
-                  <p style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{inCribMins}m</p>
-                </div>
-              )}
-              {sleepingMins !== null && (
-                <div>
-                  <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Sleeping</p>
-                  <p style={{ fontSize: 16, fontWeight: 700, color: C.sage }}>{sleepingMins}m</p>
+                  <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Settling</p>
+                  <p style={{ fontSize: 16, fontWeight: 700, color: C.purple }}>{settlingMins}m</p>
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <p style={{ fontSize: 11, color: T.muted }}>
-                {session.asleepTime ? "💤 Baby is sleeping" : "⏳ Waiting for sleep…"}
-              </p>
-              <button onClick={() => { if (window.confirm("Clear current session?")) updateSession(null); }}
-                style={{ background: "none", border: "none", color: T.muted, fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>
-                Clear
-              </button>
-            </div>
+            <p style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
+              {session.state === "asleep" ? "💤 Baby is sleeping" : "⏳ Waiting for sleep…"}
+            </p>
           </div>
         )}
 
-        {/* Three independent action buttons */}
+        {/* Action buttons */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
-          {/* 1 — Put Down */}
+          {/* Put Down */}
           <button
             onClick={() => openSheet({
               title: "🛏️ Put Down",
               fields: [{ key: "time", label: "Time put down", type: "time", default: nowTimeStr() }],
               onConfirm: handlePutDown,
             })}
+            disabled={session?.state === "put_down" || session?.state === "asleep"}
             style={{
-              padding: "14px 18px", borderRadius: 14,
-              border: `2px solid ${session?.putDownTime ? C.amber : T.border}`,
-              background: session?.putDownTime ? `${C.amber}20` : T.faint,
-              color: session?.putDownTime ? C.amber : T.text,
-              fontFamily: font, fontSize: 14, fontWeight: 700,
-              cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-            }}>
+              padding: "14px 18px", borderRadius: 14, border: `2px solid ${C.amber}`,
+              background: session?.state === "put_down" || session?.state === "asleep" ? `${C.amber}15` : `${C.amber}25`,
+              color: C.amber, fontFamily: font, fontSize: 14, fontWeight: 700,
+              cursor: session?.state === "put_down" || session?.state === "asleep" ? "default" : "pointer",
+              opacity: session?.state === "put_down" || session?.state === "asleep" ? 0.5 : 1,
+              display: "flex", alignItems: "center", gap: 10,
+            }}
+          >
             <span style={{ fontSize: 20 }}>🛏️</span>
-            <div style={{ textAlign: "left", flex: 1 }}>
+            <div style={{ textAlign: "left" }}>
               <div>Put Down</div>
-              {putDownDisplay
-                ? <div style={{ fontSize: 11, fontWeight: 400 }}>logged at {putDownDisplay} — tap to update</div>
-                : <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.6 }}>tap to log</div>}
+              {putDownDisplay && <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>{putDownDisplay}</div>}
             </div>
-            {session?.putDownTime && <span style={{ fontSize: 16 }}>✓</span>}
+            {(!session?.state) && <span style={{ marginLeft: "auto", opacity: 0.5 }}>tap to log</span>}
           </button>
 
-          {/* 2 — Fell Asleep */}
+          {/* Fell Asleep */}
           <button
             onClick={() => openSheet({
               title: "💤 Fell Asleep",
               fields: [{ key: "time", label: "Time fell asleep", type: "time", default: nowTimeStr() }],
               onConfirm: handleAsleep,
             })}
+            disabled={session?.state === "asleep" || !session?.state && false}
             style={{
-              padding: "14px 18px", borderRadius: 14,
-              border: `2px solid ${session?.asleepTime ? C.purple : T.border}`,
-              background: session?.asleepTime ? `${C.purple}20` : T.faint,
-              color: session?.asleepTime ? C.purple : T.text,
-              fontFamily: font, fontSize: 14, fontWeight: 700,
-              cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-            }}>
+              padding: "14px 18px", borderRadius: 14, border: `2px solid ${C.purple}`,
+              background: session?.state === "asleep" ? `${C.purple}15` : `${C.purple}25`,
+              color: C.purple, fontFamily: font, fontSize: 14, fontWeight: 700,
+              cursor: session?.state === "asleep" ? "default" : "pointer",
+              opacity: session?.state === "asleep" ? 0.5 : 1,
+              display: "flex", alignItems: "center", gap: 10,
+            }}
+          >
             <span style={{ fontSize: 20 }}>💤</span>
-            <div style={{ textAlign: "left", flex: 1 }}>
+            <div style={{ textAlign: "left" }}>
               <div>Fell Asleep</div>
-              {asleepDisplay
-                ? <div style={{ fontSize: 11, fontWeight: 400 }}>logged at {asleepDisplay} — tap to update</div>
-                : <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.6 }}>
-                    {session?.putDownTime ? "tap to log" : "log put down first, or tap to log directly"}
-                  </div>}
+              {asleepDisplay && <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>{asleepDisplay}</div>}
             </div>
-            {session?.asleepTime && <span style={{ fontSize: 16 }}>✓</span>}
+            {(!session || session.state === "put_down") && !session?.state === "asleep" && <span style={{ marginLeft: "auto", opacity: 0.5 }}>tap to log</span>}
           </button>
 
-          {/* 3 — Woke Up */}
+          {/* Woke Up */}
           <button
             onClick={() => openSheet({
-              title: "☀️ Woke Up",
+              title: "🌅 Woke Up",
               fields: [
-                { key: "time", label: "Wake up time", type: "time", default: nowTimeStr() },
+                { key: "time", label: "Time woke up", type: "time", default: nowTimeStr() },
                 { key: "mood", label: "Wake-up mood", type: "select", options: MOODS.map(m => m.id), default: "" },
               ],
               onConfirm: handleWakeUp,
             })}
             style={{
-              padding: "14px 18px", borderRadius: 14,
-              border: `2px solid ${C.teal}`,
-              background: `${C.teal}20`,
-              color: C.teal,
-              fontFamily: font, fontSize: 14, fontWeight: 700,
-              cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
-            }}>
-            <span style={{ fontSize: 20 }}>☀️</span>
-            <div style={{ textAlign: "left", flex: 1 }}>
+              padding: "14px 18px", borderRadius: 14, border: `2px solid ${C.sage}`,
+              background: `${C.sage}25`,
+              color: C.sage, fontFamily: font, fontSize: 14, fontWeight: 700,
+              cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 10,
+            }}
+          >
+            <span style={{ fontSize: 20 }}>🌅</span>
+            <div style={{ textAlign: "left" }}>
               <div>Woke Up</div>
-              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>
-                {session?.asleepTime ? "completes the sleep session" : "log even without prior steps"}
-              </div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>ends session</div>
             </div>
           </button>
-
-          <Divider />
 
           {/* Night Waking */}
           <button
             onClick={() => openSheet({
               title: "🌛 Night Waking",
               fields: [
-                { key: "time", label: "Time", type: "time", default: nowTimeStr() },
-                { key: "duration", label: "Duration (minutes)", type: "number", default: "10" },
+                { key: "time", label: "Time of waking", type: "time", default: nowTimeStr() },
+                { key: "duration", label: "Duration awake (minutes)", type: "number", placeholder: "e.g. 20" },
               ],
-              onConfirm: (vals) => handleNightWaking(vals),
+              onConfirm: (vals) => { onLog("night_waking", {
+                ts: vals.time ? timeStrToISO(vals.time) : new Date().toISOString(),
+                duration: parseInt(vals.duration) || 10,
+              }); showToast("Night waking logged", "🌛"); },
             })}
-            style={{ padding: "12px 18px", borderRadius: 14, border: `1px solid ${T.border}`, background: T.faint, color: T.text, fontFamily: font, fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+            style={{
+              padding: "14px 18px", borderRadius: 14, border: `2px solid ${C.mauve}`,
+              background: `${C.mauve}15`,
+              color: C.mauve, fontFamily: font, fontSize: 14, fontWeight: 700,
+              cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 10,
+            }}
+          >
             <span style={{ fontSize: 20 }}>🌛</span>
             <div style={{ textAlign: "left" }}>
               <div>Night Waking</div>
-              <div style={{ fontSize: 11, fontWeight: 400, color: T.muted }}>log a wake between sleeps</div>
+              <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.7 }}>mid-session</div>
             </div>
           </button>
+
+          {/* Cancel session */}
+          {session && (
+            <button
+              onClick={() => { if (window.confirm("Clear the current sleep session?")) updateSession(null); }}
+              style={{
+                padding: "8px", borderRadius: 10, border: `1px solid ${T.border}`,
+                background: "transparent", color: T.muted, fontFamily: font, fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Clear session
+            </button>
+          )}
         </div>
       </Card>
 
-      {/* Feeding */}
+      {/* ── FEEDING ── */}
       {showFeeding && (
         <Card>
           <SectionLabel>Feeding</SectionLabel>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {/* Nursing — logs start time, side, duration */}
-            <button onClick={() => openSheet({
-              title: "🤱 Nursing",
+            <Btn outline onClick={() => openSheet({
+              title: "Log Nursing",
               fields: [
-                { key: "start_time", label: "Started at", type: "time", default: nowTimeStr() },
-                { key: "side", label: "Side", type: "select", options: ["left","right","both"], default: "left" },
-                { key: "duration", label: "Duration (mins)", type: "number", default: "10" },
+                { key: "side", label: "Side", type: "select", options: ["Left", "Right", "Both"] },
+                { key: "duration", label: "Duration (minutes)", type: "number", placeholder: "e.g. 15" },
               ],
-              onConfirm: (v) => {
-                const startISO = v.start_time ? timeStrToISO(v.start_time) : new Date().toISOString();
-                logAndToast("feed", { mode: "nursing", ts: startISO, side: v.side, duration: parseInt(v.duration) || 10 }, "Nursing logged", "🤱");
-              },
-            })}
-              style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-              🤱 Nursing
-            </button>
-
-            {/* Bottle */}
-            <button onClick={() => openSheet({
-              title: "🍼 Bottle",
-              fields: [
-                { key: "time", label: "Time", type: "time", default: nowTimeStr() },
-                { key: "amount", label: "Amount (oz)", type: "number", default: "4" },
-              ],
-              onConfirm: (v) => {
-                const ts = v.time ? timeStrToISO(v.time) : new Date().toISOString();
-                logAndToast("feed", { mode: "bottle", ts, amount: parseFloat(v.amount) || 0 }, "Bottle logged", "🍼");
-              },
-            })}
-              style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-              🍼 Bottle
-            </button>
-
-            {/* Pump */}
-            <button onClick={() => openSheet({
-              title: "🫙 Pump Session",
-              fields: [
-                { key: "start_time", label: "Started at", type: "time", default: nowTimeStr() },
-                { key: "duration", label: "Duration (mins)", type: "number", default: "15" },
-                { key: "amount", label: "Amount expressed (oz)", type: "number", default: "" },
-                { key: "side", label: "Side", type: "select", options: ["left","right","both"], default: "both" },
-              ],
-              onConfirm: (v) => {
-                const startISO = v.start_time ? timeStrToISO(v.start_time) : new Date().toISOString();
-                logAndToast("feed", {
-                  mode: "pump", ts: startISO,
-                  duration: parseInt(v.duration) || 15,
-                  amount: v.amount ? parseFloat(v.amount) : null,
-                  side: v.side,
-                }, "Pump session logged", "🫙");
-              },
-            })}
-              style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-              🫙 Pump
-            </button>
+              onConfirm: (v) => { onLog("feed", { mode: "nursing", side: v.side, duration: parseInt(v.duration) || 0 }); showToast("Nursing session logged", "🤱"); },
+            })}>🤱 Nursing</Btn>
+            <Btn outline onClick={() => openSheet({
+              title: "Log Bottle",
+              fields: [{ key: "amount", label: "Ounces", type: "number", placeholder: "e.g. 4" }],
+              onConfirm: (v) => { onLog("feed", { mode: "bottle", amount: parseFloat(v.amount) || 0 }); showToast("Bottle logged", "🍼"); },
+            })}>🍼 Bottle</Btn>
           </div>
         </Card>
       )}
 
-      {/* Diapers */}
+      {/* ── DIAPERS ── */}
       {showDiapers && (
         <Card>
-          <SectionLabel>Diapers</SectionLabel>
+          <SectionLabel>Diaper</SectionLabel>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <button onClick={() => logAndToast("diaper", { sub_type: "wet" }, "Wet diaper logged", "💦")}
-              style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-              💦 Wet
-            </button>
-            <button onClick={() => openSheet({ title: "💩 Dirty Diaper", fields: [{ key: "description", label: "Notes (optional)", type: "text", default: "" }], onConfirm: (v) => logAndToast("diaper", { sub_type: "dirty", description: v.description }, "Dirty diaper logged", "💩") })}
-              style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-              💩 Dirty
-            </button>
+            <Btn variant="sky" outline onClick={() => logAndToast("diaper", { sub_type: "wet" }, "Wet diaper logged", "💦")}>💦 Wet</Btn>
+            <Btn variant="mauve" outline onClick={() => openSheet({
+              title: "Dirty Diaper",
+              fields: [{ key: "description", label: "Type", type: "select", options: POOP_TYPES }],
+              onConfirm: (v) => { onLog("diaper", { sub_type: "dirty", description: v.description }); showToast("Dirty diaper logged", "💩"); },
+            })}>💩 Dirty</Btn>
           </div>
         </Card>
       )}
 
-      {/* Solids */}
+      {/* ── SOLIDS ── */}
       {showSolids && (
         <Card>
           <SectionLabel>Solids</SectionLabel>
-          <button onClick={() => openSheet({ title: "🍲 Solids", fields: [{ key: "food", label: "What did they eat?", type: "text", default: "" }, { key: "reaction", label: "Reaction", type: "select", options: ["loved","liked","ok","refused"], default: "liked" }], onConfirm: (v) => logAndToast("solids", { food: v.food, reaction: v.reaction }, "Solids logged", "🍲") })}
-            style={{ width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-            🍲 Log Solids
-          </button>
+          <Btn outline style={{ width: "100%" }} onClick={() => openSheet({
+            title: "Log Solids",
+            fields: [
+              { key: "food", label: "Food", type: "text", placeholder: "e.g. Sweet potato" },
+              { key: "reaction", label: "Reaction (optional)", type: "text", placeholder: "e.g. Loved it!" },
+            ],
+            onConfirm: (v) => { onLog("solids", { food: v.food, reaction: v.reaction }); showToast("Solids logged", "🥣"); },
+          })}>🍲 Log Food</Btn>
         </Card>
       )}
 
-      {/* Medicine */}
+      {/* ── MOOD ── */}
       <Card>
-        <SectionLabel>Medicine</SectionLabel>
-        <button onClick={() => openSheet({
-          title: "💊 Medicine",
-          fields: [
-            { key: "time", label: "Time given", type: "time", default: nowTimeStr() },
-            { key: "description", label: "Medicine name", type: "text", default: "" },
-            { key: "amount", label: "Dose (e.g. 5ml, 160mg)", type: "text", default: "" },
-          ],
-          onConfirm: (v) => {
-            const ts = v.time ? timeStrToISO(v.time) : new Date().toISOString();
-            logAndToast("medicine", { ts, description: v.description, amount: v.amount }, "Medicine logged", "💊");
-          },
-        })}
-          style={{ width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-          💊 Log Medicine
-        </button>
-      </Card>
-
-      {/* Growth */}
-      <Card>
-        <SectionLabel>Growth</SectionLabel>
-        <button onClick={() => openSheet({
-          title: "📏 Growth Measurement",
-          fields: [
-            { key: "date", label: "Date", type: "date", default: new Date().toISOString().split("T")[0] },
-            { key: "weight_lbs", label: "Weight (lbs)", type: "number", default: "" },
-            { key: "weight_oz", label: "Weight (oz)", type: "number", default: "" },
-            { key: "length", label: "Length (inches)", type: "number", default: "" },
-            { key: "head", label: "Head circumference (inches, optional)", type: "number", default: "" },
-            { key: "notes", label: "Notes (e.g. pediatrician visit)", type: "text", default: "" },
-          ],
-          onConfirm: (v) => {
-            const weightLbs = parseFloat(v.weight_lbs) || 0;
-            const weightOz = parseFloat(v.weight_oz) || 0;
-            const totalOz = weightLbs * 16 + weightOz;
-            const displayWeight = weightLbs ? `${weightLbs}lb ${weightOz ? weightOz + "oz" : ""}`.trim() : null;
-            logAndToast("growth", {
-              ts: v.date ? new Date(v.date + "T12:00:00").toISOString() : new Date().toISOString(),
-              amount: totalOz || null,
-              description: v.length ? `${v.length}in${v.head ? " · head " + v.head + "in" : ""}` : null,
-              food: displayWeight,
-              reaction: v.notes || null,
-            }, "Growth logged", "📏");
-          },
-        })}
-          style={{ width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
-          📏 Log Measurement
-        </button>
-      </Card>
-
-      {/* Mood */}
-      <Card>
-        <SectionLabel>Mood</SectionLabel>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <SectionLabel>Overall Mood</SectionLabel>
+        <p style={{ fontSize: 12, color: T.muted, marginBottom: 12 }}>
+          How is baby doing overall right now?
+        </p>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
           {MOODS.map(m => (
-            <button key={m.id} onClick={() => logAndToast("mood", { mood: m.id }, "Mood logged", m.emoji)}
-              style={{ fontSize: 26, background: "none", border: `1px solid ${T.border}`, borderRadius: 10, padding: "8px 12px", cursor: "pointer" }}>
-              {m.emoji}
+            <button
+              key={m.id}
+              onClick={() => logAndToast("mood", { mood: m.id }, "Mood logged", m.emoji)}
+              style={{
+                background: "none",
+                border: `2px solid ${T.border}`,
+                borderRadius: 14,
+                padding: "10px 6px",
+                cursor: "pointer",
+                transition: "all 0.15s",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 4,
+                flex: 1,
+                margin: "0 3px",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = m.color; e.currentTarget.style.background = `${m.color}15`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "none"; }}
+              title={m.label}
+            >
+              <span style={{ fontSize: 26 }}>{m.emoji}</span>
+              <span style={{ fontSize: 10, color: T.muted, fontFamily: font, fontWeight: 600 }}>{m.label}</span>
             </button>
           ))}
         </div>
       </Card>
-
-      {/* Clear session button */}
-      {session && (
-        <button onClick={() => { if (window.confirm("Clear the current sleep session?")) updateSession(null); }}
-          style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px", fontFamily: font, fontSize: 12.5, color: T.muted, cursor: "pointer" }}>
-          Clear current session
-        </button>
-      )}
     </div>
   );
 }
 
-
-function TrendsView({ logs, onPatch, onDelete }) {
-  const [editingLog, setEditingLog] = useState(null);
+function TrendsView({ logs }) {
   const T = useT();
 
   // 7-day data: avg fall-asleep time per day
@@ -1320,33 +1006,15 @@ function TrendsView({ logs, onPatch, onDelete }) {
                 </p>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {s.mood && (
-                <span style={{ fontSize: 20 }}>{MOODS.find(m => m.id === s.mood)?.emoji || "😴"}</span>
-              )}
-              {onPatch && (
-                <button onClick={() => setEditingLog(s)}
-                  style={{ background: T.faint, border: `1px solid ${T.border}`, color: T.muted, fontSize: 12, cursor: "pointer", padding: "5px 10px", borderRadius: 8, fontFamily: "system-ui" }}>
-                  Edit
-                </button>
-              )}
-            </div>
+            {s.mood && (
+              <span style={{ fontSize: 20 }}>{MOODS.find(m => m.id === s.mood)?.emoji || "😴"}</span>
+            )}
           </div>
         ))}
         {logs.filter(l => l.type === "sleep_session").length === 0 && (
           <p style={{ fontSize: 13, color: T.muted, textAlign: "center", padding: "12px 0" }}>No sessions logged yet</p>
         )}
       </Card>
-
-      {/* Edit modal */}
-      {editingLog && (
-        <EditLogModal
-          log={editingLog}
-          onSave={onPatch}
-          onDelete={onDelete}
-          onClose={() => setEditingLog(null)}
-        />
-      )}
     </div>
   );
 }
@@ -1451,22 +1119,6 @@ function calculateAge(birthDate) {
   return { years: Math.max(0, years), months: Math.max(0, months) };
 }
 
-// ─── AGE-APPROPRIATE WAKE WINDOWS ────────────────────────────────────────────
-// Based on RCC methodology (Beyond Birth Basics)
-// Each array = wake windows per nap slot for that age range
-// Last value is always the pre-bedtime wake window
-function defaultWakeWindowsForAge(ageMonths) {
-  const weeks = ageMonths * 4.33;
-  if (weeks < 4)      return [0.75, 0.75, 0.75, 0.75, 0.75, 1.0]; // 0-4wk: 45-60min, 5-6 naps
-  if (weeks < 12)     return [1.0, 1.0, 1.25, 1.25, 1.25, 1.5];   // 4-12wk: 60-90min, 5-6 naps
-  if (ageMonths < 5)  return [1.25, 1.5, 1.75, 2.0, 2.0];         // 3-4mo: 75-120min, 4-5 naps
-  if (ageMonths < 7)  return [2.0, 2.25, 2.5, 3.0];               // 5-7mo: 2-3h, 3-4 naps
-  if (ageMonths < 11) return [2.5, 3.0, 3.5];                      // 7-10mo: 2.5-3.5h, 2-3 naps
-  if (ageMonths < 14) return [3.0, 3.5, 4.0];                      // 11-13mo: 3-4h, 1-2 naps
-  if (ageMonths < 37) return [4.0, 6.0];                           // 14-36mo: 4-6h, 1 nap
-  return [11.0, 12.0];                                              // 3y+: no nap, bedtime window
-}
-
 function isWithin24h(ts) { return new Date(ts) > new Date(Date.now() - 86400000); }
 function isWithin7Days(ts) { return new Date(ts) > new Date(Date.now() - 7 * 86400000); }
 function isToday(ts) { return new Date(ts).toDateString() === new Date().toDateString(); }
@@ -1483,25 +1135,17 @@ function fmtDateTime(iso) {
 function logIcon(l) {
   if (l.type === "sleep_session") return "💤";
   if (l.type === "night_waking") return "🌛";
-  if (l.type === "feed" && l.mode === "nursing") return "🤱";
-  if (l.type === "feed" && l.mode === "pump") return "🫙";
-  if (l.type === "feed") return "🍼";
+  if (l.type === "feed") return l.mode === "nursing" ? "🤱" : "🍼";
   if (l.type === "diaper") return l.sub_type === "dirty" ? "💩" : "💦";
   if (l.type === "solids") return "🍲";
-  if (l.type === "medicine") return "💊";
-  if (l.type === "growth") return "📏";
   return "📋";
 }
 function logLabel(l) {
   if (l.type === "sleep_session") return l.end_ts ? "Sleep session" : "Sleeping…";
   if (l.type === "night_waking") return "Night waking";
-  if (l.type === "feed" && l.mode === "nursing") return `Nursing ${l.side || ""}`.trim();
-  if (l.type === "feed" && l.mode === "pump") return `Pump ${l.amount ? l.amount + "oz" : ""}`.trim();
-  if (l.type === "feed") return `Bottle ${l.amount || ""}oz`;
+  if (l.type === "feed") return l.mode === "nursing" ? `Nursing ${l.side || ""}` : `Bottle ${l.amount || ""}oz`;
   if (l.type === "diaper") return l.sub_type === "dirty" ? `Dirty: ${l.description || ""}` : "Wet diaper";
   if (l.type === "solids") return `${l.food}`;
-  if (l.type === "medicine") return `${l.description || "Medicine"}${l.amount ? " · " + l.amount : ""}`;
-  if (l.type === "growth") return `Weight: ${l.amount ? l.amount + " lbs" : "—"}${l.description ? " · " + l.description + '"' : ""}`;
   return l.type;
 }
 

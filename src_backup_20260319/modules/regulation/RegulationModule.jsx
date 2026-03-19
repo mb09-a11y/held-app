@@ -52,14 +52,7 @@ const STATE_DESCRIPTION = {
 };
 
 // ─── STORAGE HELPERS ──────────────────────────────────────────────────────────
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
-function localDateStr(isoString) {
-  const d = new Date(isoString);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
+function todayStr() { return new Date().toISOString().split("T")[0]; }
 function fmtDate(iso) { return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
 
 // ─── STATE CLASSIFICATION ENGINE ─────────────────────────────────────────────
@@ -185,12 +178,12 @@ function ThemeToggle() {
 function HomeScreen({ onCheckIn, onTrends, onInsights, onExercise, logs, isConsultant }) {
   const { themeMode, themeToggle } = useApp();
   const T = useT();
-  const todayLogs = logs.filter(l => localDateStr(l.timestamp) === todayStr());
+  const todayLogs = logs.filter(l => l.timestamp.startsWith(todayStr()));
   const hasMorning = todayLogs.some(l => l.type === "am");
   const hasEvening = todayLogs.some(l => l.type === "pm");
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const latestState = todayLogs.length > 0 ? todayLogs[todayLogs.length - 1].state : null;
+  const latestState = logs.length > 0 ? logs[logs.length - 1].state : null;
 
   return (
     <div>
@@ -201,6 +194,7 @@ function HomeScreen({ onCheckIn, onTrends, onInsights, onExercise, logs, isConsu
           <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.1 }}>Regulation</h1>
           <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>{greeting}.</div>
         </div>
+        <ThemeToggle />
       </div>
 
       {/* Consultant framing banner */}
@@ -749,7 +743,7 @@ function TrendsScreen({ logs, exerciseLogs, onBack }) {
   const days = Array.from({ length: cutoff }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (cutoff - 1 - i));
     const str = d.toISOString().split("T")[0];
-    const dayLogs = filtered.filter(l => localDateStr(l.timestamp) === str);
+    const dayLogs = filtered.filter(l => l.timestamp.startsWith(str));
     const am = dayLogs.find(l => l.type === "am");
     const pm = dayLogs.find(l => l.type === "pm");
     return { str, label: d.toLocaleDateString("en-US", { weekday: "short", day: "numeric" }), am, pm };
@@ -1073,7 +1067,7 @@ export function RegulationModule() {
       // Normalize DB rows to match the shape the rest of the module expects
       setLogs((checkins || []).map(r => ({
         id: r.id,
-        timestamp: r.checked_in_at || r.created_at || new Date().toISOString(),
+        timestamp: r.created_at || r.inserted_at || new Date().toISOString(),
         type: r.type,
         state: r.state,
         primary: r.state, // keep primary in sync for ResultScreen
@@ -1083,7 +1077,7 @@ export function RegulationModule() {
       })));
       setExerciseLogs((sessions || []).map(r => ({
         id: r.id,
-        timestamp: r.checked_in_at || r.created_at || new Date().toISOString(),
+        timestamp: r.created_at || r.inserted_at || new Date().toISOString(),
         exercise_id: r.exercise_id,
         duration_played: r.duration_played,
         completion: r.completion,
