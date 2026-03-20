@@ -316,6 +316,24 @@ function FamilyDeepDive({ clientData, onBack, onOpenTab, onOpenSleepTab }) {
             </div>
           </Card>
         )}
+        {!family.intake_complete && family.require_intake && (
+          <Card
+            onClick={async () => {
+              if (!window.confirm(`Resend the intake form to ${family.display_name || family.invite_email}? This will prompt them to complete it on their next login.`)) return;
+              await supabase.from("families").update({ intake_complete: false }).eq("id", family.id);
+              window.alert("Intake reset — the family will see it on their next login.");
+            }}
+            style={{ background: `${T.amber}12`, border: `1px solid ${T.amber}40`, cursor: "pointer" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <span style={{ fontSize: 22 }}>📤</span>
+              <div>
+                <div style={{ fontFamily: font, fontSize: 14, fontWeight: 600, color: T.amber }}>Resend Intake</div>
+                <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>Intake not yet complete — tap to re-prompt</div>
+              </div>
+            </div>
+          </Card>
+        )}
         {[
           { icon: "💬", label: "Messages", sub: lastMessage ? `Last message ${timeAgo(lastMessage)}` : "Start a conversation", onClick: () => onOpenTab("messages") },
           { icon: "🌙", label: "Sleep Log", sub: lastLog ? `Last log ${timeAgo(lastLog)}` : "No logs yet", onClick: () => onOpenTab("sleep", "dashboard") },

@@ -190,7 +190,8 @@ function InputSheet({ title, fields, onConfirm, onCancel }) {
 // ─── SUPABASE DATA LAYER ──────────────────────────────────────────────────────
 async function fetchLogs(familyId) {
   if (!familyId) return [];
-  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  // 14 days — avoids timezone-edge misses and covers overnight sessions
+  const since = new Date(Date.now() - 14 * 86400000).toISOString();
   const { data, error } = await supabase
     .from("sleep_logs")
     .select("*")
@@ -201,23 +202,28 @@ async function fetchLogs(familyId) {
   return data || [];
 }
 
-async function insertLog(familyId, entry) {
+async function insertLog(familyId, entry, userId) {
   if (!familyId) { console.error("[SleepLog] insertLog: no familyId"); return null; }
-  // Strip the local optimistic id — let Supabase generate a real UUID
   const { id: _localId, ...rest } = entry;
-  // Ensure ts is a valid ISO string
-  const safeEntry = { ...rest, family_id: familyId, ts: rest.ts || new Date().toISOString() };
-  const { data, error } = await supabase
-    .from("sleep_logs")
-    .insert(safeEntry)
-    .select()
-    .single();
-  if (error) {
-    console.error("[SleepLog] insertLog error:", JSON.stringify(error));
-    console.error("[SleepLog] entry attempted:", JSON.stringify(safeEntry));
-    return null;
+  // Include user_id so RLS policies matching on auth.uid() = user_id pass correctly
+  const safeEntry = {
+    ...rest,
+    family_id: familyId,
+    ts: rest.ts || new Date().toISOString(),
+    ...(userId ? { user_id: userId } : {}),
+  };
+  // Retry up to 3 times on network blip
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { data, error } = await supabase
+      .from("sleep_logs")
+      .insert(safeEntry)
+      .select()
+      .single();
+    if (!error) return data;
+    console.error(`[SleepLog] insertLog attempt ${attempt}:`, JSON.stringify(error));
+    if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
   }
-  return data;
+  return null;
 }
 
 async function updateLog(id, changes) {
@@ -278,6 +284,17 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     setLogs(logData);
     if (cfgData) setConfigState(cfgData);
     setLoadingLogs(false);
+
+    // If there's an open session in localStorage with no sessionId,
+    // try to recover it from the most recent open sleep_session in DB
+    const storedSession = (() => { try { return JSON.parse(localStorage.getItem(`rcc_sleep_session_${familyId}`)); } catch { return null; } })();
+    if (storedSession && !storedSession.sessionId) {
+      const openLog = (logData || []).find(l => l.type === "sleep_session" && !l.end_ts);
+      if (openLog) {
+        const recovered = { ...storedSession, sessionId: openLog.id };
+        localStorage.setItem(`rcc_sleep_session_${familyId}`, JSON.stringify(recovered));
+      }
+    }
   });
 }, [familyId]);
 
@@ -299,20 +316,36 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     if (familyId) await upsertConfig(familyId, updated);
   }, [config, familyId]);
 
+  const [saveError, setSaveError] = useState(null);
+
+  const refreshLogs = useCallback(async () => {
+    if (!familyId) return;
+    setLoadingLogs(true);
+    const logData = await fetchLogs(familyId);
+    setLogs(logData);
+    setLoadingLogs(false);
+  }, [familyId]);
+
   const addEntry = useCallback(async (type, data) => {
-    const localId = crypto.randomUUID(); // temp local id for optimistic UI
+    const localId = crypto.randomUUID();
     const entry = { id: localId, ts: new Date().toISOString(), type, ...data,
       ...(activeChild?.id ? { child_id: activeChild.id } : {}) };
     setLogs(prev => [entry, ...prev]); // optimistic
+    setSaveError(null);
     if (familyId) {
-      const saved = await insertLog(familyId, entry);
+      const saved = await insertLog(familyId, entry, user?.id);
       if (saved) {
         setLogs(prev => prev.map(l => l.id === localId ? saved : l));
-        return saved; // return saved record so callers can get the real DB id
+        return saved;
+      } else {
+        // Save failed — remove the optimistic entry and show error
+        setLogs(prev => prev.filter(l => l.id !== localId));
+        setSaveError("⚠️ Log didn't save — check your connection and try again.");
+        return null;
       }
     }
     return entry;
-  }, [familyId]);
+  }, [familyId, activeChild?.id]);
 
   const patchEntry = useCallback(async (id, changes) => {
     setLogs(prev => prev.map(l => l.id === id ? { ...l, ...changes } : l));
@@ -366,8 +399,8 @@ export function SleepLog({ user, activeFamily, initialTab }) {
 
   const isConsultantUser = user?.role === "consultant" || user?.role === "consultant_internal" || user?.role === "admin";
   const TABS = isConsultantUser
-    ? ["Dashboard", "Today", "History", "Configure"]
-    : ["Dashboard", "Today", "History"];
+    ? ["Dashboard", "Today", "History", "Growth", "Configure"]
+    : ["Dashboard", "Today", "History", "Growth"];
 
   return (
     <div style={{ fontFamily: font, color: T.text, paddingBottom: 80, minHeight: "100vh" }}>
@@ -388,6 +421,28 @@ export function SleepLog({ user, activeFamily, initialTab }) {
           <span style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
             · sleep data
           </span>
+          <button onClick={refreshLogs} disabled={loadingLogs}
+            title="Refresh logs"
+            style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer",
+              fontSize: 14, opacity: loadingLogs ? 0.4 : 0.6, transition: "opacity .2s" }}>
+            🔄
+          </button>
+        </div>
+      )}
+
+      {/* ── SAVE ERROR BANNER ── */}
+      {saveError && (
+        <div style={{
+          margin: "0 20px 12px", padding: "11px 14px", borderRadius: 12,
+          background: `${C.rose}18`, border: `1px solid ${C.rose}40`,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        }}>
+          <span style={{ fontFamily: font, fontSize: 13, color: C.rose, flex: 1 }}>{saveError}</span>
+          <button onClick={() => { setSaveError(null); refreshLogs(); }}
+            style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${C.rose}50`,
+              background: "none", color: C.rose, fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+            Retry
+          </button>
         </div>
       )}
 
@@ -422,6 +477,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
             {tab === "dashboard"   && <DashboardView analytics={analytics} logs={childLogs} activeFamily={activeFamily} onPatch={patchEntry} onDelete={deleteEntry} />}
             {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={childLogs} config={config} activeFamily={activeFamily} />}
             {tab === "history"     && <TrendsView logs={childLogs} onPatch={patchEntry} onDelete={deleteEntry} />}
+            {tab === "growth"      && <GrowthView logs={childLogs} activeFamily={activeFamily} />}
             {tab === "configure"  && <ConsultantView config={config} setConfig={setConfig} dbPin={dbPin} isConsultant={isConsultantUser} />}
           </>
         )}
@@ -819,7 +875,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
 
   const handleNightWaking = (vals) => {
     const ts = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    onLog("night_waking", { ts, duration: parseInt(vals?.duration) || 10 });
+    onLog("night_waking", { ts, duration: parseInt(vals?.duration) || 10, description: vals?.notes || null });
     showToast("Night waking logged", "🌛");
   };
 
@@ -1010,6 +1066,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
               fields: [
                 { key: "time", label: "Time", type: "time", default: nowTimeStr() },
                 { key: "duration", label: "Duration (minutes)", type: "number", default: "10" },
+                { key: "notes", label: "Notes (optional)", type: "text", default: "" },
               ],
               onConfirm: (vals) => handleNightWaking(vals),
             })}
@@ -1165,6 +1222,48 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
           style={{ width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
           📏 Log Measurement
         </button>
+      </Card>
+
+      {/* Wellness */}
+      <Card>
+        <SectionLabel>Wellness</SectionLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <button onClick={() => openSheet({
+            title: "🦷 Teething",
+            fields: [{ key: "notes", label: "Notes (optional)", type: "text", default: "" }],
+            onConfirm: (v) => {
+              logAndToast("wellness", { sub_type: "teething", description: v.notes || "Teething" }, "Teething logged", "🦷");
+            },
+          })} style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
+            🦷 Teething
+          </button>
+          <button onClick={() => openSheet({
+            title: "🤒 Sick",
+            fields: [
+              { key: "sub_type", label: "Status", type: "select", options: ["sick", "potentially_sick"], default: "sick" },
+              { key: "notes", label: "Symptoms / notes", type: "text", default: "" },
+            ],
+            onConfirm: (v) => {
+              const label = v.sub_type === "potentially_sick" ? "Potentially sick" : "Sick";
+              logAndToast("wellness", { sub_type: v.sub_type || "sick", description: v.notes || label }, `${label} logged`, "🤒");
+            },
+          })} style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
+            🤒 Sick
+          </button>
+          <button onClick={() => openSheet({
+            title: "🌡️ Temperature",
+            fields: [
+              { key: "temp", label: "Temperature (°F)", type: "number", default: "" },
+              { key: "notes", label: "Notes (optional)", type: "text", default: "" },
+            ],
+            onConfirm: (v) => {
+              const display = v.temp ? `${v.temp}°F` : "Temperature logged";
+              logAndToast("wellness", { sub_type: "temperature", description: v.notes || "", amount: v.temp ? parseFloat(v.temp) : null, food: display }, "Temp logged", "🌡️");
+            },
+          })} style={{ gridColumn: "1 / -1", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
+            🌡️ Log Temperature
+          </button>
+        </div>
       </Card>
 
       {/* Mood */}
@@ -1351,6 +1450,380 @@ function TrendsView({ logs, onPatch, onDelete }) {
   );
 }
 
+// ─── GROWTH CHART ─────────────────────────────────────────────────────────────
+// WHO weight-for-age percentile reference data (0–24 months, sex-averaged kg)
+// Source: WHO Child Growth Standards, converted to lbs for display
+const WHO_WEIGHT = {
+  // [months]: [3rd, 10th, 25th, 50th, 75th, 90th, 97th] in lbs
+  0:  [5.3,  5.8,  6.4,  7.3,  8.2,  9.0,  9.9],
+  1:  [6.7,  7.4,  8.2,  9.2, 10.3, 11.2, 12.3],
+  2:  [8.2,  9.0,  9.9, 11.1, 12.4, 13.5, 14.8],
+  3:  [9.5, 10.4, 11.5, 12.8, 14.3, 15.6, 17.1],
+  4:  [10.6, 11.6, 12.8, 14.3, 15.9, 17.3, 18.9],
+  5:  [11.5, 12.6, 13.9, 15.4, 17.2, 18.7, 20.5],
+  6:  [12.3, 13.4, 14.8, 16.5, 18.3, 19.9, 21.8],
+  7:  [12.9, 14.1, 15.6, 17.4, 19.3, 21.0, 23.0],
+  8:  [13.5, 14.8, 16.3, 18.2, 20.2, 22.0, 24.0],
+  9:  [14.1, 15.4, 17.0, 18.9, 21.0, 22.9, 25.0],
+  10: [14.6, 15.9, 17.6, 19.6, 21.8, 23.7, 25.9],
+  11: [15.0, 16.4, 18.1, 20.2, 22.4, 24.4, 26.7],
+  12: [15.5, 16.9, 18.7, 20.8, 23.1, 25.2, 27.6],
+  14: [16.3, 17.8, 19.7, 21.9, 24.4, 26.5, 29.0],
+  16: [17.1, 18.6, 20.6, 22.9, 25.5, 27.8, 30.5],
+  18: [17.8, 19.4, 21.5, 23.9, 26.6, 29.0, 31.9],
+  20: [18.5, 20.2, 22.4, 24.9, 27.7, 30.2, 33.2],
+  22: [19.2, 21.0, 23.2, 25.8, 28.8, 31.4, 34.5],
+  24: [19.8, 21.7, 24.0, 26.7, 29.8, 32.6, 35.8],
+};
+
+// WHO length-for-age percentile reference (0–24 months, sex-averaged cm → inches)
+const WHO_LENGTH = {
+  0:  [17.6, 18.1, 18.6, 19.4, 20.1, 20.7, 21.3],
+  1:  [19.3, 19.8, 20.4, 21.1, 21.9, 22.5, 23.2],
+  2:  [20.8, 21.3, 21.9, 22.8, 23.5, 24.2, 24.9],
+  3:  [22.0, 22.5, 23.2, 24.0, 24.9, 25.6, 26.4],
+  4:  [23.0, 23.6, 24.3, 25.2, 26.0, 26.8, 27.6],
+  6:  [24.8, 25.4, 26.1, 27.1, 28.0, 28.8, 29.7],
+  9:  [26.6, 27.3, 28.0, 29.1, 30.0, 30.9, 31.9],
+  12: [28.1, 28.8, 29.6, 30.7, 31.7, 32.6, 33.6],
+  15: [29.4, 30.1, 30.9, 32.1, 33.1, 34.1, 35.1],
+  18: [30.6, 31.3, 32.2, 33.4, 34.5, 35.5, 36.6],
+  21: [31.6, 32.4, 33.3, 34.6, 35.7, 36.8, 37.9],
+  24: [32.6, 33.4, 34.3, 35.7, 36.8, 37.9, 39.1],
+};
+
+function interpolateWHO(table, ageMonths) {
+  const keys = Object.keys(table).map(Number).sort((a, b) => a - b);
+  if (ageMonths <= keys[0]) return table[keys[0]];
+  if (ageMonths >= keys[keys.length - 1]) return table[keys[keys.length - 1]];
+  const lo = keys.filter(k => k <= ageMonths).pop();
+  const hi = keys.filter(k => k > ageMonths)[0];
+  const t = (ageMonths - lo) / (hi - lo);
+  return table[lo].map((v, i) => v + t * (table[hi][i] - v));
+}
+
+function GrowthChart({ data, dob, metric, T }) {
+  // data: array of { ageMonths, value, date, label }
+  // metric: "weight" | "length"
+  const label = metric === "weight" ? "Weight (lbs)" : "Length (in)";
+  const whoTable = metric === "weight" ? WHO_WEIGHT : WHO_LENGTH;
+  const color = metric === "weight" ? C.teal : C.sage;
+
+  if (!dob) {
+    return (
+      <div style={{ textAlign: "center", padding: "30px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>
+        No date of birth on file — add it in child settings to see percentile curves.
+      </div>
+    );
+  }
+  if (data.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: "30px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>
+        No {metric} measurements logged yet. Use "Log Measurement" in the Today tab to start tracking.
+      </div>
+    );
+  }
+
+  // Chart dimensions
+  const W = 320, H = 200, PAD = { top: 12, right: 16, bottom: 32, left: 36 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  // X axis: 0 to max(24, child's current age + 1) months
+  const dobDate = new Date(dob);
+  const currentAgeMonths = Math.floor((Date.now() - dobDate) / (1000 * 60 * 60 * 24 * 30.44));
+  const xMax = Math.max(24, currentAgeMonths + 1);
+  const xMin = 0;
+
+  // Y axis range from WHO data
+  const allWho = Array.from({ length: xMax + 1 }, (_, m) => interpolateWHO(whoTable, m)).flat();
+  const dataVals = data.map(d => d.value);
+  const yMin = Math.floor(Math.min(...allWho, ...dataVals) * 0.95);
+  const yMax = Math.ceil(Math.max(...allWho, ...dataVals) * 1.03);
+
+  const xScale = v => PAD.left + ((v - xMin) / (xMax - xMin)) * chartW;
+  const yScale = v => PAD.top + chartH - ((v - yMin) / (yMax - yMin)) * chartH;
+
+  // Build WHO percentile paths
+  const PERCENTILE_LABELS = ["3rd", "10th", "25th", "50th", "75th", "90th", "97th"];
+  const PERCENTILE_OPACITIES = [0.25, 0.3, 0.4, 0.7, 0.4, 0.3, 0.25];
+  const monthPoints = Array.from({ length: xMax + 1 }, (_, m) => m);
+
+  function buildPath(idx) {
+    return monthPoints.map((m, i) => {
+      const vals = interpolateWHO(whoTable, m);
+      const x = xScale(m);
+      const y = yScale(vals[idx]);
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  }
+
+  // X axis ticks
+  const xTicks = xMax <= 12
+    ? [0, 2, 4, 6, 8, 10, 12]
+    : [0, 3, 6, 9, 12, 15, 18, 21, 24].filter(t => t <= xMax);
+
+  // Y axis ticks
+  const yRange = yMax - yMin;
+  const yStep = yRange <= 10 ? 2 : yRange <= 20 ? 4 : yRange <= 40 ? 5 : 10;
+  const yTicks = [];
+  for (let y = Math.ceil(yMin / yStep) * yStep; y <= yMax; y += yStep) yTicks.push(y);
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: W, display: "block", margin: "0 auto" }}>
+        {/* Grid lines */}
+        {yTicks.map(y => (
+          <line key={y} x1={PAD.left} x2={W - PAD.right} y1={yScale(y)} y2={yScale(y)}
+            stroke={T.border} strokeWidth={0.5} />
+        ))}
+
+        {/* WHO percentile bands */}
+        {[0, 1, 2, 3, 4, 5, 6].map((idx) => (
+          <path key={idx} d={buildPath(idx)}
+            fill="none" stroke={color}
+            strokeWidth={idx === 3 ? 1.5 : 0.75}
+            strokeDasharray={idx === 3 ? "none" : "3,3"}
+            opacity={PERCENTILE_OPACITIES[idx]} />
+        ))}
+
+        {/* 50th label */}
+        {(() => {
+          const midVals = interpolateWHO(whoTable, Math.floor(xMax * 0.6));
+          return (
+            <text
+              x={xScale(Math.floor(xMax * 0.6)) + 3}
+              y={yScale(midVals[3]) - 3}
+              fontSize={8} fill={color} opacity={0.7} fontFamily={font}
+            >50th</text>
+          );
+        })()}
+
+        {/* Axes */}
+        <line x1={PAD.left} x2={PAD.left} y1={PAD.top} y2={H - PAD.bottom}
+          stroke={T.border} strokeWidth={1} />
+        <line x1={PAD.left} x2={W - PAD.right} y1={H - PAD.bottom} y2={H - PAD.bottom}
+          stroke={T.border} strokeWidth={1} />
+
+        {/* X ticks + labels */}
+        {xTicks.map(m => (
+          <g key={m}>
+            <line x1={xScale(m)} x2={xScale(m)} y1={H - PAD.bottom} y2={H - PAD.bottom + 4}
+              stroke={T.border} strokeWidth={1} />
+            <text x={xScale(m)} y={H - PAD.bottom + 12}
+              fontSize={8} textAnchor="middle" fill={T.muted} fontFamily={font}>{m}m</text>
+          </g>
+        ))}
+
+        {/* Y ticks + labels */}
+        {yTicks.map(y => (
+          <g key={y}>
+            <text x={PAD.left - 4} y={yScale(y) + 3}
+              fontSize={8} textAnchor="end" fill={T.muted} fontFamily={font}>{y}</text>
+          </g>
+        ))}
+
+        {/* Data line */}
+        {data.length > 1 && (
+          <path
+            d={data.map((d, i) => `${i === 0 ? "M" : "L"}${xScale(d.ageMonths).toFixed(1)},${yScale(d.value).toFixed(1)}`).join(" ")}
+            fill="none" stroke={color} strokeWidth={2.5}
+            strokeLinecap="round" strokeLinejoin="round"
+          />
+        )}
+
+        {/* Data points */}
+        {data.map((d, i) => (
+          <g key={i}>
+            <circle cx={xScale(d.ageMonths)} cy={yScale(d.value)} r={5}
+              fill={color} stroke={T.bg} strokeWidth={2} />
+          </g>
+        ))}
+      </svg>
+
+      {/* Y axis label */}
+      <div style={{ textAlign: "center", fontSize: 10, color: T.muted, fontFamily: font, marginTop: 2 }}>{label}</div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={color} strokeWidth={2.5} strokeLinecap="round" /></svg>
+          <span style={{ fontFamily: font, fontSize: 10, color: T.muted }}>Measured</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <svg width={20} height={8}><line x1={0} y1={4} x2={20} y2={4} stroke={color} strokeWidth={1} strokeDasharray="3,3" opacity={0.6} /></svg>
+          <span style={{ fontFamily: font, fontSize: 10, color: T.muted }}>WHO percentiles</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GrowthView({ logs, activeFamily }) {
+  const T = useT();
+  const { activeChild } = useApp();
+  const [metric, setMetric] = useState("weight");
+
+  const dob = activeChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
+  const dobDate = dob ? new Date(dob) : null;
+
+  const growthLogs = logs
+    .filter(l => l.type === "growth")
+    .sort((a, b) => new Date(a.ts) - new Date(b.ts));
+
+  // Parse weight data — stored as total oz in `amount`
+  const weightData = growthLogs
+    .filter(l => l.amount && l.amount > 0)
+    .map(l => {
+      const ageMs = dobDate ? new Date(l.ts) - dobDate : 0;
+      const ageMonths = ageMs / (1000 * 60 * 60 * 24 * 30.44);
+      const lbs = parseFloat((l.amount / 16).toFixed(2));
+      return {
+        ageMonths: Math.max(0, ageMonths),
+        value: lbs,
+        date: new Date(l.ts).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }),
+        label: l.food || `${Math.floor(lbs)}lb ${Math.round((lbs % 1) * 16)}oz`,
+      };
+    });
+
+  // Parse length data — stored as "Xin" in `description`
+  const lengthData = growthLogs
+    .filter(l => l.description && l.description.match(/[\d.]+in/))
+    .map(l => {
+      const match = l.description.match(/([\d.]+)in/);
+      const inches = match ? parseFloat(match[1]) : null;
+      if (!inches) return null;
+      const ageMs = dobDate ? new Date(l.ts) - dobDate : 0;
+      const ageMonths = ageMs / (1000 * 60 * 60 * 24 * 30.44);
+      return {
+        ageMonths: Math.max(0, ageMonths),
+        value: inches,
+        date: new Date(l.ts).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }),
+        label: `${inches}"`,
+      };
+    }).filter(Boolean);
+
+  const activeData = metric === "weight" ? weightData : lengthData;
+
+  // Latest measurement summary
+  const latest = activeData[activeData.length - 1];
+  const prev = activeData[activeData.length - 2];
+  const diff = latest && prev ? (latest.value - prev.value).toFixed(1) : null;
+
+  return (
+    <div>
+      {/* Metric toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {[
+          { id: "weight", label: "⚖️ Weight", color: C.teal },
+          { id: "length", label: "📏 Length", color: C.sage },
+        ].map(m => (
+          <button key={m.id} onClick={() => setMetric(m.id)} style={{
+            flex: 1, padding: "10px 0", borderRadius: 12,
+            border: `1.5px solid ${metric === m.id ? m.color : T.border}`,
+            background: metric === m.id ? `${m.color}18` : T.card,
+            color: metric === m.id ? m.color : T.muted,
+            fontFamily: font, fontSize: 13, fontWeight: metric === m.id ? 700 : 500,
+            cursor: "pointer", transition: "all .18s",
+          }}>{m.label}</button>
+        ))}
+      </div>
+
+      {/* Latest measurement card */}
+      {latest && (
+        <div style={{
+          display: "flex", gap: 12, marginBottom: 20,
+          padding: "14px 16px", borderRadius: 14,
+          background: T.faint, border: `1px solid ${T.border}`,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 4 }}>
+              Latest {metric === "weight" ? "weight" : "length"}
+            </div>
+            <div style={{ fontFamily: serif, fontSize: 24, color: T.headingText, fontWeight: 700 }}>
+              {latest.label}
+            </div>
+            <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>{latest.date}</div>
+          </div>
+          {diff !== null && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginBottom: 4 }}>Since last visit</div>
+              <div style={{ fontFamily: font, fontSize: 16, fontWeight: 700, color: parseFloat(diff) >= 0 ? C.sage : C.rose }}>
+                {parseFloat(diff) >= 0 ? "+" : ""}{diff} {metric === "weight" ? "lbs" : "in"}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Chart */}
+      <Card style={{ marginBottom: 20, padding: "16px 12px" }}>
+        <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, marginBottom: 12 }}>
+          {metric === "weight" ? "Weight" : "Length"} over time · WHO percentile reference
+        </div>
+        <GrowthChart data={activeData} dob={dob} metric={metric} T={T} />
+      </Card>
+
+      {/* Data table */}
+      {activeData.length > 0 && (
+        <Card>
+          <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, marginBottom: 12 }}>
+            Measurement history
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {[...activeData].reverse().map((d, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 0",
+                borderBottom: i < activeData.length - 1 ? `1px solid ${T.border}` : "none",
+              }}>
+                <div>
+                  <div style={{ fontFamily: font, fontSize: 13.5, fontWeight: 600, color: T.text }}>{d.label}</div>
+                  <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 1 }}>
+                    {d.date} · {d.ageMonths < 1 ? "newborn" : d.ageMonths < 24 ? `${Math.round(d.ageMonths)}m` : `${(d.ageMonths / 12).toFixed(1)}y`}
+                  </div>
+                </div>
+                {(() => {
+                  const whoVals = interpolateWHO(metric === "weight" ? WHO_WEIGHT : WHO_LENGTH, d.ageMonths);
+                  const p50 = whoVals[3];
+                  const pct = d.value < whoVals[0] ? "<3rd"
+                    : d.value < whoVals[1] ? "3–10th"
+                    : d.value < whoVals[2] ? "10–25th"
+                    : d.value < whoVals[4] ? "25–75th"
+                    : d.value < whoVals[5] ? "75–90th"
+                    : d.value < whoVals[6] ? "90–97th"
+                    : ">97th";
+                  const isMiddle = pct === "25–75th";
+                  return (
+                    <div style={{
+                      padding: "4px 10px", borderRadius: 10,
+                      background: isMiddle ? `${C.sage}18` : `${T.faint}`,
+                      border: `1px solid ${isMiddle ? C.sage + "40" : T.border}`,
+                      fontFamily: font, fontSize: 11, fontWeight: 600,
+                      color: isMiddle ? C.sage : T.muted,
+                    }}>
+                      {pct}
+                    </div>
+                  );
+                })()}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Gentle context note */}
+      <div style={{
+        marginTop: 16, padding: "12px 14px", borderRadius: 12,
+        background: T.faint, border: `1px solid ${T.border}`,
+        fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.7,
+      }}>
+        📖 Percentile curves show the range of healthy growth patterns — not a target. A baby consistently tracking their own curve is growing well, whatever that percentile is. Always discuss growth with your pediatrician.
+      </div>
+    </div>
+  );
+}
+
 // ─── CONSULTANT VIEW ──────────────────────────────────────────────────────────
 function ConsultantView({ config, setConfig, dbPin, isConsultant }) {
   const T = useT();
@@ -1490,11 +1963,14 @@ function logIcon(l) {
   if (l.type === "solids") return "🍲";
   if (l.type === "medicine") return "💊";
   if (l.type === "growth") return "📏";
+  if (l.type === "wellness" && l.sub_type === "teething") return "🦷";
+  if (l.type === "wellness" && l.sub_type === "temperature") return "🌡️";
+  if (l.type === "wellness") return "🤒";
   return "📋";
 }
 function logLabel(l) {
   if (l.type === "sleep_session") return l.end_ts ? "Sleep session" : "Sleeping…";
-  if (l.type === "night_waking") return "Night waking";
+  if (l.type === "night_waking") return `Night waking${l.description ? " · " + l.description : ""}`;
   if (l.type === "feed" && l.mode === "nursing") return `Nursing ${l.side || ""}`.trim();
   if (l.type === "feed" && l.mode === "pump") return `Pump ${l.amount ? l.amount + "oz" : ""}`.trim();
   if (l.type === "feed") return `Bottle ${l.amount || ""}oz`;
@@ -1502,6 +1978,9 @@ function logLabel(l) {
   if (l.type === "solids") return `${l.food}`;
   if (l.type === "medicine") return `${l.description || "Medicine"}${l.amount ? " · " + l.amount : ""}`;
   if (l.type === "growth") return `Weight: ${l.amount ? l.amount + " lbs" : "—"}${l.description ? " · " + l.description + '"' : ""}`;
+  if (l.type === "wellness" && l.sub_type === "teething") return `Teething${l.description ? " · " + l.description : ""}`;
+  if (l.type === "wellness" && l.sub_type === "temperature") return `Temp: ${l.food || ""}${l.description ? " · " + l.description : ""}`;
+  if (l.type === "wellness") return `${l.sub_type === "potentially_sick" ? "Potentially sick" : "Sick"}${l.description ? " · " + l.description : ""}`;
   return l.type;
 }
 

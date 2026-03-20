@@ -66,6 +66,8 @@ export function NotificationSettings() {
     pm_time: "20:00",
     quiet_hours_start: "22:00",
     quiet_hours_end: "07:00",
+    nap_lead_mins: 10,
+    bedtime_lead_mins: 10,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -188,6 +190,43 @@ export function NotificationSettings() {
           onChange={v => updatePref("regulation_checkin", v)}
         />
       </Card>
+
+      {/* Nap & bedtime lead time — parents only */}
+      {isParent && (
+        <Card style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 12, fontFamily: font }}>
+            Sleep Window Reminders
+          </div>
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, marginBottom: 16 }}>
+            Get a heads-up before nap and bedtime so you can start winding down. Default is 10 minutes.
+          </div>
+          {[
+            { key: "nap_lead_mins", label: "Before nap", emoji: "🌤️" },
+            { key: "bedtime_lead_mins", label: "Before bedtime", emoji: "🌙" },
+          ].map(({ key, label, emoji }) => (
+            <div key={key} style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontFamily: font, fontSize: 13.5, fontWeight: 600, color: T.text }}>{emoji} {label}</div>
+                <div style={{ fontFamily: font, fontSize: 13, fontWeight: 700, color: T.teal, minWidth: 60, textAlign: "right" }}>
+                  {prefs[key] === 0 ? "Off" : `${prefs[key]} min`}
+                </div>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={30}
+                step={5}
+                value={prefs[key]}
+                onChange={e => updatePref(key, Number(e.target.value))}
+                style={{ width: "100%", accentColor: T.teal }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontFamily: font, fontSize: 11, color: T.muted, marginTop: 4 }}>
+                <span>Off</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span><span>30 min</span>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {/* Check-in reminder times — parents only */}
       {isParent && (

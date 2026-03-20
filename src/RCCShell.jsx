@@ -86,13 +86,22 @@ function SleepTabView() {
   const T = useT();
   const { activeFamily, currentUser, pendingSleepTab, setPendingSleepTab } = useApp();
   const [view, setView] = useState("log");
-  // Capture the pending tab synchronously so it's available on first render
   const [sleepInitialTab] = useState(() => pendingSleepTab || "dashboard");
 
-  // Consume it immediately on mount so it doesn't persist
   useEffect(() => {
     if (pendingSleepTab) setPendingSleepTab(null);
   }, []);
+
+  // Guard: if activeFamily is null, logs can't save — surface this clearly
+  if (!activeFamily) {
+    return (
+      <div style={{ textAlign: "center", padding: "60px 20px", color: T.muted, fontFamily: font }}>
+        <div style={{ fontSize: 28, marginBottom: 10 }}>🌙</div>
+        <p style={{ fontFamily: serif, fontSize: 15, marginBottom: 8, color: T.headingText }}>Loading sleep data…</p>
+        <p style={{ fontSize: 13 }}>If this persists, try signing out and back in.</p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -177,6 +186,9 @@ export default function RCCShell() {
   const [inviteRecord, setInviteRecord] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken || !!consultantInviteToken || !!coInviteToken);
   const [onboardingStep, setOnboardingStep] = useState(null);
+  // profileReady: true once loadProfile has fully resolved for a parent (families confirmed loaded)
+  // Prevents intake bypass when navigating away mid-onboarding and refreshing
+  const [profileReady, setProfileReady] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [showFindConsultant, setShowFindConsultant] = useState(false);
@@ -325,7 +337,9 @@ export default function RCCShell() {
 
         if (familyData) {
           setFamilies([familyData]);
-          if (!activeFamilyId) setActiveFamilyId(familyData.id);
+          // Always sync activeFamilyId to the loaded family — stale localStorage
+          // values from a previous session cause activeFamily to resolve as null
+          setActiveFamilyId(familyData.id);
 
           // Step 4: load children — co-caregivers need the primary parent's children
           const parentIdForKids = (familyData.parent_id && familyData.parent_id !== userId)
@@ -360,6 +374,7 @@ export default function RCCShell() {
         }
       }
     } catch (err) { console.error("loadProfile error:", err); setAuthLoading(false); }
+    finally { setProfileReady(true); }
   }
 
   // ── AUTH ACTIONS ──────────────────────────────────────────
@@ -424,7 +439,7 @@ export default function RCCShell() {
     await supabase.auth.signOut();
     closeInvitePanels();
     setCurrentUser(null); setSession(null); setFamilies([]); setConsultants([]); setChildren([]);
-    setTab("home"); setAdminConsultantView(false);
+    setTab("home"); setAdminConsultantView(false); setProfileReady(false);
     try { localStorage.removeItem("rcc_user"); } catch {}
   }
 
@@ -595,6 +610,8 @@ export default function RCCShell() {
         <div style={{ minHeight: "100vh", width: "100%", background: T.gradientBg, color: T.text, fontFamily: font, transition: "background .4s, color .3s" }}>
 
           {authLoading && <LoadingScreen label="Loading…" />}
+          {/* Hold the loading screen until profile + families are fully resolved — prevents intake bypass on refresh */}
+          {!authLoading && currentUser && !profileReady && <LoadingScreen label="Loading your profile…" />}
           {!authLoading && inviteLoading && !currentUser && <LoadingScreen label="Preparing your invitation…" />}
 
           {/* Auth */}
@@ -619,16 +636,16 @@ export default function RCCShell() {
               : <RegisterScreen onBack={() => setAuthScreen("login")} onRegistered={handleRegistered} inviteToken={null} consultantInviteToken={null} coInviteEmail={null} inviteRecord={null} />
           )}
 
-          {/* Onboarding */}
-          {!authLoading && currentUser && onboardingStep === "child" && (
+          {/* Onboarding — only render once profileReady so families[] is populated */}
+          {!authLoading && profileReady && currentUser && onboardingStep === "child" && (
             <ChildInfoStep loading={childSaving} onSave={async (child) => { setChildSaving(true); try { await saveChildInfo(child); } finally { setChildSaving(false); } }} />
           )}
-          {!authLoading && currentUser && onboardingStep !== "child" && (onboardingStep === "intake" || needsIntake) && (
+          {!authLoading && profileReady && currentUser && onboardingStep !== "child" && (onboardingStep === "intake" || needsIntake) && (
             <IntakeForm user={currentUser} family={families[0]} onComplete={completeIntake} />
           )}
 
           {/* Main app */}
-          {!authLoading && currentUser && onboardingStep === null && !needsIntake && (() => {
+          {!authLoading && profileReady && currentUser && onboardingStep === null && !needsIntake && (() => {
             const role = currentUser.role;
             const unread = {};
 

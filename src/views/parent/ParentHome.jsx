@@ -272,9 +272,9 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const T = useT();
   const { setTab, consultants, currentUser, activeChild, activeFamily, isPremium, hasConsultantAssigned } = useApp();
   const [showUpgrade, setShowUpgrade] = useState(false);
-  const [whatHappening, setWhatHappening] = useState(false);
+  const [whatStep, setWhatStep] = useState("idle"); // idle | baby | parent | loading | response
+  const [whatAnswers, setWhatAnswers] = useState({});
   const [whatResponse, setWhatResponse] = useState(null);
-  const [whatLoading, setWhatLoading] = useState(false);
   const consultant = consultants?.[0];
   const isCo = currentUser?.role === "co_caregiver";
 
@@ -286,11 +286,56 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const { insight, loading: insightLoading } = useAIInsight(familyState, isPremium);
   const { greeting, message } = getEmotionalHeader(currentUser);
 
-  // ── "What's happening right now?" AI response ──
-  async function askWhatHappening() {
-    setWhatHappening(true);
-    setWhatLoading(true);
+  // ── "What's happening right now?" guided check-in ──
+  function resetCheckin() {
+    setWhatStep("idle");
+    setWhatAnswers({});
     setWhatResponse(null);
+  }
+
+  function answerBaby(val) {
+    setWhatAnswers(a => ({ ...a, baby: val }));
+    setWhatStep("parent");
+  }
+
+  function answerParent(val) {
+    const answers = { ...whatAnswers, parent: val };
+    setWhatAnswers(answers);
+    submitCheckin(answers);
+  }
+
+  async function submitCheckin(answers) {
+    setWhatStep("loading");
+    const childAge = activeChild?.dob
+      ? (() => {
+          const m = Math.floor((Date.now() - new Date(activeChild.dob)) / (1000*60*60*24*30.44));
+          return m < 12 ? `${m} month old` : `${Math.floor(m/12)} year old`;
+        })()
+      : "young baby";
+    const childName = activeChild?.name || "your baby";
+
+    const babyLabels = {
+      fussy:      "fussy and hard to settle",
+      overtired:  "showing overtired signs",
+      wont_sleep: "resisting sleep",
+      just_woke:  "just woke up",
+      sleeping:   "sleeping well",
+      unsure:     "and I'm not sure what's going on",
+    };
+    const parentLabels = {
+      overwhelmed: "I feel overwhelmed",
+      anxious:     "I feel anxious about sleep",
+      exhausted:   "I'm running on empty",
+      frustrated:  "I'm feeling frustrated",
+      okay:        "I'm doing okay",
+      good:        "I'm feeling pretty good",
+    };
+
+    const babyContext = babyLabels[answers.baby] || answers.baby;
+    const parentContext = parentLabels[answers.parent] || answers.parent;
+    const sleepContext = isPremium && familyState
+      ? `Today: ${familyState.sleepData?.napCountToday || 0} nap(s), ${familyState.sleepData?.totalSleepTodayHours || 0}h sleep logged.`
+      : "";
 
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -298,23 +343,21 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 400,
-          system: `You are the RCC Sleep Coach. Answer a parent's "what's happening right now?" question. Be warm, brief (2-3 sentences), and grounding. ${isPremium && familyState ? "Use their specific data to give a personalized, context-aware response." : "Give general, supportive guidance only — do not reference specific data."}`,
+          max_tokens: 350,
+          system: `You are the RCC Sleep Coach — warm, grounding, nervous-system informed. A parent just checked in. Respond in 2-4 sentences. Be specific to what they shared. Validate first, then offer one small, concrete thing they can do or notice right now. Never be dismissive. Never list bullet points.`,
           messages: [{
             role: "user",
-            content: isPremium && familyState
-              ? `My baby is ${familyState.childProfile.age || "young"}. Today: ${familyState.sleepData.napCountToday} nap(s), ${familyState.sleepData.totalSleepTodayHours}h sleep. Last wake-up: ${familyState.sleepData.lastWakeUp ? new Date(familyState.sleepData.lastWakeUp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "unknown"}. What's happening right now with sleep?`
-              : "I have a baby and I'm trying to understand what's happening with sleep right now. Can you help ground me?",
+            content: `My ${childAge}, ${childName}, is ${babyContext}. ${parentContext}. ${sleepContext} What's happening and what's one thing I can do right now?`,
           }],
         }),
       });
       const data = await res.json();
       const text = data.content?.find(c => c.type === "text")?.text || "";
       setWhatResponse(text);
+      setWhatStep("response");
     } catch {
-      setWhatResponse("It's okay to not know exactly what's happening. Trust your instincts — you know your baby better than any algorithm.");
-    } finally {
-      setWhatLoading(false);
+      setWhatResponse("Something interrupted that — take a slow breath. You're doing the right thing by checking in. Try again in a moment.");
+      setWhatStep("response");
     }
   }
 
@@ -349,39 +392,125 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
       <ChildSwitcher onAddChild={onAddChild} />
 
       {/* ── 1. WHAT'S HAPPENING RIGHT NOW ── */}
-      <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
-        {!whatHappening ? (
-          <button onClick={askWhatHappening}
-            style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <div style={{ fontFamily: font, fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 3 }}>
-                  💭 What's happening right now?
+      {(() => {
+        const C_teal = T.teal;
+        const chipStyle = (active) => ({
+          padding: "9px 14px", borderRadius: 20, border: `1.5px solid ${active ? C_teal : T.border}`,
+          background: active ? `${C_teal}18` : T.card,
+          color: active ? C_teal : T.text,
+          fontFamily: font, fontSize: 13, fontWeight: active ? 700 : 500,
+          cursor: "pointer", transition: "all .15s", textAlign: "left",
+        });
+
+        return (
+          <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
+
+            {/* IDLE — entry point */}
+            {whatStep === "idle" && (
+              <button onClick={() => setWhatStep("baby")}
+                style={{ width: "100%", background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontFamily: font, fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 3 }}>
+                      💭 What's happening right now?
+                    </div>
+                    <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted }}>
+                      A quick check-in so I can actually help
+                    </div>
+                  </div>
+                  <span style={{ color: T.teal, fontSize: 18 }}>→</span>
                 </div>
-                <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted }}>
-                  {isPremium ? "Get context-aware guidance based on your data" : "Get general sleep support"}
+              </button>
+            )}
+
+            {/* STEP 1 — How's baby? */}
+            {whatStep === "baby" && (
+              <div>
+                <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 10 }}>
+                  Step 1 of 2 · How's {activeChild?.name || "baby"} right now?
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { val: "fussy",      label: "😤 Fussy and hard to settle" },
+                    { val: "overtired",  label: "😩 Showing overtired signs" },
+                    { val: "wont_sleep", label: "🙅 Resisting sleep" },
+                    { val: "just_woke",  label: "☀️ Just woke up" },
+                    { val: "sleeping",   label: "💤 Sleeping / just fell asleep" },
+                    { val: "unsure",     label: "🤷 Not sure what's going on" },
+                  ].map(o => (
+                    <button key={o.val} onClick={() => answerBaby(o.val)} style={chipStyle(false)}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={resetCheckin}
+                  style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", marginTop: 12, padding: 0 }}>
+                  ← Cancel
+                </button>
+              </div>
+            )}
+
+            {/* STEP 2 — How are you? */}
+            {whatStep === "parent" && (
+              <div>
+                <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 10 }}>
+                  Step 2 of 2 · And how are <em>you</em>?
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { val: "overwhelmed", label: "😵 Overwhelmed" },
+                    { val: "anxious",     label: "😰 Anxious about sleep" },
+                    { val: "exhausted",   label: "🥱 Running on empty" },
+                    { val: "frustrated",  label: "😤 Frustrated" },
+                    { val: "okay",        label: "😐 Hanging in there" },
+                    { val: "good",        label: "🙂 Actually doing okay" },
+                  ].map(o => (
+                    <button key={o.val} onClick={() => answerParent(o.val)} style={chipStyle(false)}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setWhatStep("baby")}
+                  style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", marginTop: 12, padding: 0 }}>
+                  ← Back
+                </button>
+              </div>
+            )}
+
+            {/* LOADING */}
+            {whatStep === "loading" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
+                <div style={{ fontSize: 18 }}>🌿</div>
+                <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, fontStyle: "italic" }}>
+                  Thinking about what you shared…
                 </div>
               </div>
-              <span style={{ color: T.teal, fontSize: 18 }}>→</span>
-            </div>
-          </button>
-        ) : (
-          <div>
-            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
-              💭 Right now
-            </div>
-            {whatLoading ? (
-              <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>Thinking…</div>
-            ) : (
-              <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, margin: 0 }}>{whatResponse}</p>
             )}
-            <button onClick={() => { setWhatHappening(false); setWhatResponse(null); }}
-              style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", marginTop: 10, padding: 0 }}>
-              ← Close
-            </button>
+
+            {/* RESPONSE */}
+            {whatStep === "response" && (
+              <div>
+                <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
+                  💭 For you, right now
+                </div>
+                <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.75, margin: 0 }}>
+                  {whatResponse}
+                </p>
+                <div style={{ display: "flex", gap: 12, marginTop: 14 }}>
+                  <button onClick={resetCheckin}
+                    style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 10, fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", padding: "7px 14px" }}>
+                    ← Close
+                  </button>
+                  <button onClick={() => { setWhatStep("baby"); setWhatAnswers({}); setWhatResponse(null); }}
+                    style={{ background: "none", border: `1px solid ${T.teal}50`, borderRadius: 10, fontFamily: font, fontSize: 12, color: T.teal, cursor: "pointer", padding: "7px 14px" }}>
+                    Check in again
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* ── 2. REGULATION SUPPORT ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
@@ -520,7 +649,9 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
           🎯 Focus for Today
         </div>
-        {isPremium && insight?.focus_items ? (
+        {isPremium && insightLoading ? (
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted, fontStyle: "italic" }}>Pulling your insights…</div>
+        ) : isPremium && insight?.focus_items ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {insight.focus_items.map((item, i) => (
               <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -531,6 +662,35 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
               </div>
             ))}
           </div>
+        ) : isPremium ? (
+          // Premium but not enough data yet — show age-appropriate defaults
+          (() => {
+            const totalMonths = (() => {
+              const dob = activeChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
+              if (!dob) return 3;
+              return Math.floor((Date.now() - new Date(dob)) / (1000*60*60*24*30.44));
+            })();
+            const defaults = totalMonths < 4
+              ? ["Watch for sleepy cues — yawning, eye-rubbing, or a brief stare", "Keep nap environment consistent: same place, same wind-down", "Your baby is still learning day from night — this takes time"]
+              : totalMonths < 8
+              ? ["Aim for wake windows appropriate for your baby's age", "A short outdoor reset before nap can help regulate the nervous system", "Watch for overtired signs — they appear fast at this age"]
+              : totalMonths < 14
+              ? ["Consistency in the bedtime routine matters more than timing right now", "Night waking at this age is often developmental — not a regression", "If naps are short, try extending wake windows by 15 minutes"]
+              : ["One consistent nap time anchors the whole day", "Big feelings before sleep are normal — name them, don't fix them", "Sleep pressure builds — outdoor time and movement help"];
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {defaults.map((item, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: `${T.teal}20`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: T.teal, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>{item}</p>
+                  </div>
+                ))}
+                <p style={{ fontFamily: font, fontSize: 11.5, color: T.muted, marginTop: 4, fontStyle: "italic" }}>
+                  Personalized insights appear after a few days of logging. 🌱
+                </p>
+              </div>
+            );
+          })()
         ) : (
           <Locked isPremium={isPremium} T={T} onUpgrade={() => setShowUpgrade(true)}
             cta="Get personalized plan →"

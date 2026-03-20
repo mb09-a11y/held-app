@@ -855,9 +855,32 @@ export function SleepPlanTracker({ user, activeFamily }) {
       supabase.from("intake_responses").select("*").eq("family_id", familyId).maybeSingle(),
     ]).then(([{ data: fam }, { data: intakeData }]) => {
       if (fam?.sleep_plan_profile) setProfileState(p => ({ ...p, ...fam.sleep_plan_profile }));
-      if (fam?.sleep_progress) setChecksState(fam.sleep_progress);
       if (fam?.sleep_progress_history) setHistory(fam.sleep_progress_history || []);
       if (intakeData) setIntake(intakeData);
+
+      // ── Daily routine auto-reset ──
+      // Routine checks (bedtime/nap) reset each new day so parents start fresh.
+      // Training/setup checks are permanent progress markers — they never reset.
+      const today = new Date().toISOString().split("T")[0];
+      const lastReset = fam?.sleep_plan_profile?.lastRoutineResetDate;
+      const savedChecks = fam?.sleep_progress || {};
+      if (lastReset !== today) {
+        // Get all routine item IDs so we only clear those, not training/setup items
+        const planProfile = fam?.sleep_plan_profile || {};
+        const bedtimeItems = (planProfile.customBedtimeRoutine || getBedtimeRoutine(planProfile.ageGroup || "infant")).map(i => i.id);
+        const napItems = (planProfile.customNapRoutine || NAP_ROUTINE).map(i => i.id);
+        const routineIds = new Set([...bedtimeItems, ...napItems]);
+        const resetChecks = Object.fromEntries(Object.entries(savedChecks).filter(([id]) => !routineIds.has(id)));
+        setChecksState(resetChecks);
+        // Persist reset + new date
+        if (familyId) {
+          const updatedProfile = { ...(fam?.sleep_plan_profile || {}), lastRoutineResetDate: today };
+          supabase.from("families").update({ sleep_progress: resetChecks, sleep_plan_profile: updatedProfile }).eq("id", familyId);
+        }
+      } else {
+        if (fam?.sleep_progress) setChecksState(fam.sleep_progress);
+      }
+
       setLoading(false);
     });
   }, [familyId]);

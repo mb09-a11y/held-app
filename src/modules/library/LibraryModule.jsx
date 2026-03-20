@@ -433,10 +433,10 @@ export function LibraryModule() {
         </div>
       </div>
 
-      {/* Tab bar */}
+      {/* Tab bar — horizontal scrolling pills, visually distinct */}
       <div style={{
-        display: "flex", gap: 4, overflowX: "auto",
-        background: T.faint, borderRadius: 14, padding: 4, marginBottom: 24,
+        display: "flex", gap: 8, overflowX: "auto",
+        marginBottom: 24, paddingBottom: 4,
         scrollbarWidth: "none",
       }}>
         {TABS.map(t => (
@@ -445,13 +445,15 @@ export function LibraryModule() {
             onClick={() => setActiveTab(t.id)}
             style={{
               flexShrink: 0,
-              padding: "9px 14px", borderRadius: 10, border: "none",
-              fontFamily: font, fontSize: 12.5,
-              fontWeight: activeTab === t.id ? 700 : 400,
-              background: activeTab === t.id ? `${C.teal}22` : "transparent",
+              padding: "8px 16px", borderRadius: 20,
+              border: `1.5px solid ${activeTab === t.id ? C.teal : T.border}`,
+              fontFamily: font, fontSize: 13,
+              fontWeight: activeTab === t.id ? 700 : 500,
+              background: activeTab === t.id ? `${C.teal}20` : T.card,
               color: activeTab === t.id ? C.teal : T.muted,
-              cursor: "pointer", transition: "all .2s",
+              cursor: "pointer", transition: "all .18s",
               whiteSpace: "nowrap",
+              boxShadow: activeTab === t.id ? `0 2px 10px ${C.teal}25` : "none",
             }}
           >
             {t.emoji} {t.label}
