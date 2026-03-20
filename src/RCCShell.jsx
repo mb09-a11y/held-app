@@ -150,6 +150,11 @@ export default function RCCShell() {
     try { return !localStorage.getItem("rcc_user"); } catch { return true; }
   });
   const [authScreen, setAuthScreen] = useState("login");
+  // If we have a cached user, mark profileReady immediately so the shell renders from cache
+  // while fresh data loads in the background — eliminates the long loading screen on repeat visits
+  const [profileReady, setProfileReady] = useState(() => {
+    try { return !!localStorage.getItem("rcc_user"); } catch { return false; }
+  });
 
   const [families, setFamilies] = useState([]);
   const [consultants, setConsultants] = useState([]);
@@ -186,9 +191,6 @@ export default function RCCShell() {
   const [inviteRecord, setInviteRecord] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken || !!consultantInviteToken || !!coInviteToken);
   const [onboardingStep, setOnboardingStep] = useState(null);
-  // profileReady: true once loadProfile has fully resolved for a parent (families confirmed loaded)
-  // Prevents intake bypass when navigating away mid-onboarding and refreshing
-  const [profileReady, setProfileReady] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [showFindConsultant, setShowFindConsultant] = useState(false);
@@ -294,6 +296,8 @@ export default function RCCShell() {
       setCurrentUser(merged);
       try { localStorage.setItem("rcc_user", JSON.stringify(merged)); } catch {}
       setAuthLoading(false);
+      // Mark profile ready immediately so the app shell renders — data loads below in background
+      setProfileReady(true);
 
       if (isAdmin(merged.role)) {
         setTab("dashboard");
@@ -311,18 +315,22 @@ export default function RCCShell() {
       } else {
         setTab("home");
 
-        // Step 1: try to find family by parent_id
-        const { data: byId } = await supabase
-          .from("families").select("*").eq("parent_id", userId).maybeSingle();
-        let familyData = byId || null;
+        // Run family lookup, children, and co-caregiver check in parallel where possible
+        const [{ data: byId }, { data: byEmail }] = await Promise.all([
+          supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
+          resolvedEmail
+            ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
 
-        // Step 2: fallback — find by invite_email
-        if (!familyData && resolvedEmail) {
-          const { data: byEmail } = await supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle();
-          if (byEmail) { familyData = byEmail; await supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id); }
+        let familyData = byId || byEmail || null;
+
+        // If found by email, link parent_id in background — don't await
+        if (!byId && byEmail) {
+          supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
         }
 
-        // Step 3: fallback — check if they're a co-caregiver
+        // Step 3: fallback — check co-caregiver only if still no family
         if (!familyData && resolvedEmail) {
           const { data: coRecord } = await supabase.from("co_caregivers").select("family_id").eq("email", resolvedEmail).in("status", ["pending", "active"]).maybeSingle();
           if (coRecord) {
@@ -330,39 +338,35 @@ export default function RCCShell() {
             if (coFamily) {
               familyData = coFamily;
               merged.role = "co_caregiver";
-              await supabase.from("co_caregivers").update({ status: "active" }).eq("family_id", coRecord.family_id).eq("email", resolvedEmail);
+              supabase.from("co_caregivers").update({ status: "active" }).eq("family_id", coRecord.family_id).eq("email", resolvedEmail);
             }
           }
         }
 
         if (familyData) {
           setFamilies([familyData]);
-          // Always sync activeFamilyId to the loaded family — stale localStorage
-          // values from a previous session cause activeFamily to resolve as null
           setActiveFamilyId(familyData.id);
 
-          // Step 4: load children — co-caregivers need the primary parent's children
+          // Load children and consultant in parallel
           const parentIdForKids = (familyData.parent_id && familyData.parent_id !== userId)
-            ? familyData.parent_id
-            : userId;
-          const { data: resolvedKids } = await supabase
-            .from("children").select("*")
-            .eq("parent_id", parentIdForKids)
-            .order("created_at", { ascending: true });
-          setChildren(resolvedKids || []);
+            ? familyData.parent_id : userId;
 
-          // Step 5: load consultant in background
-          if (familyData.consultant_id) {
-            supabase.from("profiles").select("id, name, user_email").eq("id", familyData.consultant_id).maybeSingle()
-              .then(({ data: cons }) => setConsultants(cons ? [{ ...cons, email: cons.user_email }] : []));
-          } else { setConsultants([]); }
+          const [{ data: resolvedKids }] = await Promise.all([
+            supabase.from("children").select("*").eq("parent_id", parentIdForKids).order("created_at", { ascending: true }),
+            // Consultant loads in background — don't block on it
+            familyData.consultant_id
+              ? supabase.from("profiles").select("id, name, user_email").eq("id", familyData.consultant_id).maybeSingle()
+                  .then(({ data: cons }) => setConsultants(cons ? [{ ...cons, email: cons.user_email }] : []))
+              : Promise.resolve(setConsultants([])),
+          ]);
+
+          setChildren(resolvedKids || []);
+          if (resolvedKids?.length > 0 && !activeChildId) setActiveChildId(resolvedKids[0].id);
 
           const hasChild = (resolvedKids || []).length > 0;
-          // Co-caregivers skip child onboarding and intake — go straight to home
           if (merged.role === "co_caregiver") {
             setOnboardingStep(null);
           } else if (!hasChild) {
-            // Always ask for child info if none exists — invited or self-registered
             setOnboardingStep("child");
           } else if (familyData.require_intake && !familyData.intake_complete) {
             setOnboardingStep("intake");
@@ -373,8 +377,7 @@ export default function RCCShell() {
           setFamilies([]); setConsultants([]); setChildren([]); setOnboardingStep(null);
         }
       }
-    } catch (err) { console.error("loadProfile error:", err); setAuthLoading(false); }
-    finally { setProfileReady(true); }
+    } catch (err) { console.error("loadProfile error:", err); setAuthLoading(false); setProfileReady(true); }
   }
 
   // ── AUTH ACTIONS ──────────────────────────────────────────
