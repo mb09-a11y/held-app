@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useT, useApp, Card, font, serif, Btn, Input } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { callAI } from "../../lib/ai.js";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
 import { NotificationSettings } from "../shared/NotificationSettings.jsx";
 
@@ -154,23 +155,10 @@ One or two sentences the consultant could use to open their next message with th
 ## ⚡ Recommended Action
 One concrete thing to do in the next 24–48 hours.`;
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 700,
-          messages: [{ role: "user", content: prompt }],
-        }),
+      const result = await callAI({
+        max_tokens: 700,
+        messages: [{ role: "user", content: prompt }],
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.message || "API error");
-      const result = data.content?.[0]?.text || "";
       setPulse(result);
       setLastGenerated(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {

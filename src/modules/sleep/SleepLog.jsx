@@ -202,15 +202,13 @@ async function fetchLogs(familyId) {
   return data || [];
 }
 
-async function insertLog(familyId, entry, userId) {
+async function insertLog(familyId, entry) {
   if (!familyId) { console.error("[SleepLog] insertLog: no familyId"); return null; }
   const { id: _localId, ...rest } = entry;
-  // Include user_id so RLS policies matching on auth.uid() = user_id pass correctly
   const safeEntry = {
     ...rest,
     family_id: familyId,
     ts: rest.ts || new Date().toISOString(),
-    ...(userId ? { user_id: userId } : {}),
   };
   // Retry up to 3 times on network blip
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -333,7 +331,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     setLogs(prev => [entry, ...prev]); // optimistic
     setSaveError(null);
     if (familyId) {
-      const saved = await insertLog(familyId, entry, user?.id);
+      const saved = await insertLog(familyId, entry);
       if (saved) {
         setLogs(prev => prev.map(l => l.id === localId ? saved : l));
         return saved;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useT, useApp, Card, font, serif, Btn } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { callAI } from "../../lib/ai.js";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
 import { NotificationSettings } from "../shared/NotificationSettings.jsx";
 
@@ -142,16 +143,10 @@ function useClientInsight(clientData, family) {
     if (!clientData || window.location.hostname === "localhost") return;
     setLoading(true);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 600,
-          system: `You are an RCC sleep consultant assistant. Generate a brief clinical insight for a consultant reviewing a family. Respond ONLY with valid JSON: { "summary": "2 sentences max", "likely_cause": "1 sentence", "adjustments": ["specific action 1", "specific action 2", "specific action 3"] }. No markdown.`,
-          messages: [{
-            role: "user",
-            content: `Family: ${family.display_name || family.invite_email}
+      const text = await callAI({
+        max_tokens: 600,
+        system: `You are an RCC sleep consultant assistant. Generate a brief clinical insight for a consultant reviewing a family. Respond ONLY with valid JSON: { "summary": "2 sentences max", "likely_cause": "1 sentence", "adjustments": ["specific action 1", "specific action 2", "specific action 3"] }. No markdown.`,
+        messages: [{ role: "user", content: `Family: ${family.display_name || family.invite_email}
 Child age: ${clientData.children[0] ? ageLabel(clientData.children[0].dob) : "unknown"}
 Sleep this week: ${clientData.sleepData.weekSessions} sessions, avg ${clientData.sleepData.nightWakesAvg} night wakings
 Today: ${clientData.sleepData.napCountToday} naps, ${clientData.sleepData.totalSleepTodayH}h sleep
@@ -159,12 +154,8 @@ Parent overwhelm: ${clientData.parentState.overwhelmLevel}/10
 Last NS state: ${clientData.parentState.recentState || "unknown"}
 Priority level: ${clientData.priority.level}
 Signals: ${clientData.priority.signals.join(", ")}
-Intake complete: ${family.intake_complete}`
-          }],
-        }),
+Intake complete: ${family.intake_complete}` }],
       });
-      const data = await res.json();
-      const text = data.content?.find(c => c.type === "text")?.text || "{}";
       setInsight(JSON.parse(text.replace(/```json|```/g, "").trim()));
     } catch { setInsight(null); }
     finally { setLoading(false); }
@@ -580,3 +571,4 @@ export function ConsultantHome({ user }) {
     </div>
   );
 }
+

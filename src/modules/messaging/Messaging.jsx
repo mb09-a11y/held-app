@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 // Import shared UI and logic from your core file
 import { useT, Card, Btn, font, serif, mono } from "../../core/shared.jsx";
+import { callAI } from "../../lib/ai.js";
 // Import the centralized supabase client
 import { supabase } from "../../lib/supabase.js";
 
@@ -388,34 +389,16 @@ function TypingIndicator() {
 // ─── AI CHAT ─────────────────────────────────────────────────────────────────
 async function callRCCAI(messages, familyContext) {
   const systemPrompt = RCC_SYSTEM_PROMPT + (familyContext || "");
-
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 600,
-        system: systemPrompt,
-        messages: messages.filter(m => m.type === "text" && !m.isTyping && (m.sender === "parent" || m.sender === "ai")).map(m => ({
-          role: m.sender === "parent" ? "user" : "assistant",
-          content: m.content,
-        })),
-      }),
+    return await callAI({
+      max_tokens: 600,
+      system: systemPrompt,
+      messages: messages
+        .filter(m => m.type === "text" && !m.isTyping && (m.sender === "parent" || m.sender === "ai"))
+        .map(m => ({ role: m.sender === "parent" ? "user" : "assistant", content: m.content })),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      console.error("Anthropic API error:", res.status, JSON.stringify(data));
-      return "API error " + res.status + ": " + (data?.error?.message || JSON.stringify(data));
-    }
-    return data.content?.[0]?.text || "I'm here — give me just a sec and try again 💙";
   } catch (e) {
-    console.error("callRCCAI fetch error:", e);
+    console.error("callRCCAI error:", e);
     return "Hey, something glitched on my end. You can still reach your consultant directly if you need anything urgent! 💙";
   }
 }

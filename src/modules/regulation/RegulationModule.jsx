@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useT, font, serif, mono, useStorage, useApp, genId } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { callAI } from "../../lib/ai.js";
 
 
 
@@ -878,13 +879,9 @@ function InsightsScreen({ logs, exerciseLogs, onBack, onExercise }) {
     };
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are the RCC Coach — a warm, grounded, nervous-system-informed support coach for parents at Rooted Connections Collective. You are generating weekly regulation insights for a parent.
+      const text = await callAI({
+        max_tokens: 1000,
+        system: `You are the RCC Coach — a warm, grounded, nervous-system-informed support coach for parents at Rooted Connections Collective. You are generating weekly regulation insights for a parent.
 
 Your tone is: warm, calm, validating, steady. Short sentences. No clinical jargon. No alarmism. No shame. No "you should." Speak like you're texting a parent you care about who is exhausted and trying their best.
 
@@ -901,11 +898,8 @@ Important:
 - Use language like "you may notice," "it looks like," "your nervous system might be"
 - End with something that reinforces competence, not fear
 - Include a "disclaimer" field: "This is not medical advice. These insights are based on your logged data and are meant as supportive reflection only."`,
-          messages: [{ role: "user", content: `Here is my regulation data from the last 3 weeks: ${JSON.stringify(summary)}` }],
-        }),
+        messages: [{ role: "user", content: `Here is my regulation data from the last 3 weeks: ${JSON.stringify(summary)}` }],
       });
-      const data = await res.json();
-      const text = data.content?.find(c => c.type === "text")?.text || "";
       const clean = text.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(clean);
       setInsights(parsed);

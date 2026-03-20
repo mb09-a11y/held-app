@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { callAI } from "../../lib/ai.js";
 import { HamburgerButton } from "../shared/AppDrawer.jsx";
 
 // ─── AGE LABEL ────────────────────────────────────────────────────────────────
@@ -235,27 +236,20 @@ function useAIInsight(familyState, isPremium) {
     setLoading(true);
     const { sleepData, parentState, childProfile } = familyState;
 
-    fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 600,
-        system: `You are the RCC Sleep Coach — warm, nervous-system-informed, non-judgmental. Generate a brief daily insight for a parent. Respond ONLY with valid JSON: { "pattern": "one sentence describing what you notice", "likely_cause": "one sentence on why", "reassurance": "one warm sentence", "focus_items": ["specific action 1", "specific action 2"] }. No markdown, no preamble.`,
-        messages: [{
-          role: "user",
-          content: `Child: ${childProfile.name || "baby"}, ${childProfile.age || "young"}.
+    callAI({
+      max_tokens: 600,
+      system: `You are the RCC Sleep Coach — warm, nervous-system-informed, non-judgmental. Generate a brief daily insight for a parent. Respond ONLY with valid JSON: { "pattern": "one sentence describing what you notice", "likely_cause": "one sentence on why", "reassurance": "one warm sentence", "focus_items": ["specific action 1", "specific action 2"] }. No markdown, no preamble.`,
+      messages: [{
+        role: "user",
+        content: `Child: ${childProfile.name || "baby"}, ${childProfile.age || "young"}.
 Sleep today: ${sleepData.totalSleepTodayHours}h across ${sleepData.napCountToday} nap(s).
 Recent night wakes average: ${sleepData.nightWakesAvg ?? "unknown"}.
 Parent nervous system trend: ${parentState.nervousSystemTrend || "unknown"}, overwhelm level: ${parentState.overwhelmLevel}/10.
 Consistency: ${sleepData.consistency}.
 Recent wake-up moods: ${sleepData.recentMoods.join(", ") || "none logged"}.`
-        }],
-      }),
+      }],
     })
-      .then(r => r.json())
-      .then(data => {
-        const text = data.content?.find(c => c.type === "text")?.text || "{}";
+      .then(text => {
         const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
         setInsight(parsed);
         localStorage.setItem(cacheKey, JSON.stringify(parsed));
@@ -338,21 +332,14 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
       : "";
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 350,
-          system: `You are the RCC Sleep Coach — warm, grounding, nervous-system informed. A parent just checked in. Respond in 2-4 sentences. Be specific to what they shared. Validate first, then offer one small, concrete thing they can do or notice right now. Never be dismissive. Never list bullet points.`,
-          messages: [{
-            role: "user",
-            content: `My ${childAge}, ${childName}, is ${babyContext}. ${parentContext}. ${sleepContext} What's happening and what's one thing I can do right now?`,
-          }],
-        }),
+      const text = await callAI({
+        max_tokens: 350,
+        system: `You are the RCC Sleep Coach — warm, grounding, nervous-system informed. A parent just checked in. Respond in 2-4 sentences. Be specific to what they shared. Validate first, then offer one small, concrete thing they can do or notice right now. Never be dismissive. Never list bullet points.`,
+        messages: [{
+          role: "user",
+          content: `My ${childAge}, ${childName}, is ${babyContext}. ${parentContext}. ${sleepContext} What's happening and what's one thing I can do right now?`,
+        }],
       });
-      const data = await res.json();
-      const text = data.content?.find(c => c.type === "text")?.text || "";
       setWhatResponse(text);
       setWhatStep("response");
     } catch {
