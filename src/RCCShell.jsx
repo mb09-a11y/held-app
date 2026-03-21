@@ -18,7 +18,7 @@ import { LoadingScreen, LoginScreen, PaymentPendingScreen, RegisterScreen, Child
 import { InviteFamilyPanel, InviteConsultantPanel, CoCaregiversModal } from "./views/shared/InvitePanels.jsx";
 
 // ── Parent
-import { ParentHome } from "./views/parent/ParentHome.jsx";
+import { ParentHome, ParentDashboard } from "./views/parent/ParentHome.jsx";
 import { AppDrawer, HamburgerButton } from "./views/shared/AppDrawer.jsx";
 import { NotificationSettings } from "./views/shared/NotificationSettings.jsx";
 import { FindConsultant } from "./views/shared/FindConsultant.jsx";
@@ -50,11 +50,11 @@ const isAdmin = role => role === ROLES.admin;
 
 // ─── TAB DEFINITIONS ─────────────────────────────────────────────────────────
 const PARENT_TABS = [
-  { id: "home", label: "Home", icon: "🏡" },
-  { id: "sleep", label: "Sleep", icon: "🌙" },
+  { id: "home",       label: "Home",       icon: "🏡" },
+  { id: "sleep",      label: "Sleep",      icon: "🌙" },
   { id: "regulation", label: "Regulation", icon: "🌿" },
-  { id: "messages", label: "Messages", icon: "💬" },
-  { id: "library", label: "Library", icon: "📚" },
+  { id: "messages",   label: "Messages",   icon: "💬" },
+  { id: "dashboard",  label: "Dashboard",  icon: "📊" },
 ];
 
 const CONSULTANT_TABS = [
@@ -658,11 +658,12 @@ export default function RCCShell() {
                   <SideNav tabs={PARENT_TABS} active={tab} setActive={setTab} onLogout={logout} onOpenNotifications={() => setShowNotificationSettings(true)} onOpenAccount={() => setDrawerOpen(true)} onOpenFindConsultant={() => setShowFindConsultant(true)} currentUser={currentUser} T={T} />
                   <div className="rcc-main">
                     <div className="rcc-content">
-                      {tab === "home" && <ParentHome user={currentUser} onLogout={logout} onInviteCo={() => setShowInviteCo(true)} onAddChild={() => setOnboardingStep("child")} onOpenDrawer={() => setDrawerOpen(true)} onFindConsultant={() => setShowFindConsultant(true)} />}
-                      {tab === "sleep" && <SleepTabView />}
+                      {tab === "home"       && <ParentHome user={currentUser} onLogout={logout} onInviteCo={() => setShowInviteCo(true)} onAddChild={() => setOnboardingStep("child")} onOpenDrawer={() => setDrawerOpen(true)} onFindConsultant={() => setShowFindConsultant(true)} />}
+                      {tab === "sleep"      && <SleepTabView />}
                       {tab === "regulation" && <RegulationModule />}
-                      {tab === "messages" && <Messaging user={currentUser} activeFamily={activeFamily} />}
-                      {tab === "library" && <LibraryModule />}
+                      {tab === "messages"   && <Messaging user={currentUser} activeFamily={activeFamily} />}
+                      {tab === "dashboard"  && <ParentDashboard user={currentUser} onFindConsultant={() => setShowFindConsultant(true)} onInviteCo={() => setShowInviteCo(true)} />}
+                      {tab === "library"    && <LibraryModule />}
                     </div>
                     <BottomNav tabs={PARENT_TABS} active={tab} setActive={setTab} unread={unread} />
                   </div>

@@ -238,19 +238,21 @@ async function fetchConfig(familyId) {
   if (!familyId) return null;
   const { data } = await supabase.from("sleep_configs").select("*").eq("family_id", familyId).maybeSingle();
   if (!data) return null;
-  // Map snake_case DB columns → camelCase app state
   return {
     ...data,
-    recommendedWakeWindows: data.recommended_wake_windows || [1.5, 1.75, 2, 2.25],
+    recommendedWakeWindows: data.recommended_wake_windows || null, // null = use age-based defaults
+    napDurations: data.nap_durations || null,                      // null = use age-based defaults
+    targetMorningWake: data.target_morning_wake || null,
     method: data.method || "Gradual Withdrawal",
   };
 }
 
 async function upsertConfig(familyId, config) {
-  // Map camelCase app state → snake_case DB columns
   await supabase.from("sleep_configs").upsert({
     family_id: familyId,
     recommended_wake_windows: config.recommendedWakeWindows,
+    nap_durations: config.napDurations,
+    target_morning_wake: config.targetMorningWake || null,
     method: config.method,
     updated_at: new Date().toISOString(),
   }, { onConflict: "family_id" });
@@ -265,7 +267,9 @@ export function SleepLog({ user, activeFamily, initialTab }) {
   const [logs, setLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [config, setConfigState] = useState({
-    recommendedWakeWindows: [1.5, 1.75, 2, 2.25],
+    recommendedWakeWindows: null,  // null = use age-based defaults
+    napDurations: null,            // null = use age-based defaults
+    targetMorningWake: null,
     method: "Gradual Withdrawal",
   });
 
@@ -278,9 +282,18 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     return;
   }
   setLoadingLogs(true);
-  Promise.all([fetchLogs(familyId), fetchConfig(familyId)]).then(([logData, cfgData]) => {
+  Promise.all([
+    fetchLogs(familyId),
+    fetchConfig(familyId),
+    supabase.from("intake_responses").select("ideal_wake_time, wake_time").eq("family_id", familyId).maybeSingle(),
+  ]).then(([logData, cfgData, { data: intakeData }]) => {
     setLogs(logData);
-    if (cfgData) setConfigState(cfgData);
+    const mergedConfig = cfgData || {};
+    // Populate targetMorningWake from intake if consultant hasn't set one
+    if (!mergedConfig.targetMorningWake && intakeData) {
+      mergedConfig.targetMorningWake = intakeData.ideal_wake_time || intakeData.wake_time || null;
+    }
+    setConfigState(prev => ({ ...prev, ...mergedConfig }));
     setLoadingLogs(false);
 
     // If there's an open session in localStorage with no sessionId,
@@ -824,9 +837,18 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const showSolids = totalMonths >= 4;
 
   // ── Next sleep suggestion — based on last woke-up event + wake window ──
-  const lastWakeUp = [...logs]
+  // Prefer the most recent completed NAP for the window reference, so that
+  // a night sleep ending at 7am doesn't push the "next nap" window too far.
+  // Fall back to any session if no nap exists yet today.
+  const completedSessions = [...logs]
     .filter(l => l.type === "sleep_session" && l.end_ts)
-    .sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts))[0];
+    .sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts));
+
+  const lastNapWakeUp = completedSessions.find(l => l.session_type === "nap");
+  const lastNightWakeUp = completedSessions.find(l => l.session_type === "night");
+  // If naps happened today, base off the most recent nap wake-up.
+  // Otherwise (morning, first nap pending) base off night wake-up.
+  const lastWakeUp = napCount > 0 ? (lastNapWakeUp || completedSessions[0]) : (lastNightWakeUp || completedSessions[0]);
 
   // Only count nap sessions today (not night sleep) so we pick the right wake window index.
   // A session is a nap if session_type === "nap", OR if session_type is unset and it started
@@ -841,7 +863,8 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     return hour >= 6;
   }).length;
 
-  // Use age-appropriate wake windows if child DOB is available, otherwise use config
+  // ── Wake window resolution ──
+  // Priority: 1) consultant-configured  2) RCC age-based defaults
   const { activeChild: sleepActiveChild } = useApp();
   const childDob = sleepActiveChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
   const ageMonthsForWindow = childDob
@@ -849,14 +872,59 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     : null;
   const ageBasedWindows = ageMonthsForWindow !== null
     ? defaultWakeWindowsForAge(ageMonthsForWindow)
-    : config.recommendedWakeWindows;
-  // Prefer consultant-configured windows if they've been customized, otherwise use age-based
-  const hasCustomWindows = JSON.stringify(config.recommendedWakeWindows) !== JSON.stringify([1.5, 1.75, 2, 2.25]);
-  const effectiveWindows = hasCustomWindows ? config.recommendedWakeWindows : ageBasedWindows;
+    : [1.5, 2.0, 2.5, 3.0]; // generic fallback if no DOB
+  // config.recommendedWakeWindows is null when consultant hasn't configured — use age-based
+  const effectiveWindows = config.recommendedWakeWindows || ageBasedWindows;
   const window_ = effectiveWindows[napCount] ?? effectiveWindows[effectiveWindows.length - 1];
+
+  // ── Nap duration resolution ──
+  // Priority: 1) consultant-configured  2) RCC age-based defaults
+  const ageBasedNapDuration = ageMonthsForWindow !== null
+    ? defaultNapDurationsForAge(ageMonthsForWindow)
+    : [60, 70, 90];
+  // config.napDurations is [minMins, targetMins, maxMins] or null
+  const effectiveNapDuration = config.napDurations || ageBasedNapDuration;
+  const napTargetMins = effectiveNapDuration[1] ?? 70;
+  const napMinMins = effectiveNapDuration[0] ?? 60;
   const suggestedTs = lastWakeUp ? new Date(new Date(lastWakeUp.end_ts).getTime() + window_ * 3600000) : null;
   const suggestedTime = suggestedTs ? fmtTime(suggestedTs.toISOString()) : "---";
   const minsUntil = suggestedTs ? Math.round((suggestedTs - Date.now()) / 60000) : null;
+
+  // ── Suggested wake-up time during an active session ──
+  // Night sleep: intake desired wake time → consultant target → 11.5h from bedtime
+  // Nap: consultant nap duration → age-based nap duration (target mins)
+  const suggestedWakeUpTime = (() => {
+    if (!session?.putDownTime) return null;
+    const putDownMs = new Date(session.putDownTime).getTime();
+    const asleepMs = session.asleepTime ? new Date(session.asleepTime).getTime() : putDownMs;
+    const isNight = session.sessionType === "night";
+
+    if (isNight) {
+      // Priority 1: parent's ideal_wake_time from intake (stored in config.targetMorningWake
+      // which we'll populate from intake on load)
+      const targetWakeStr = config.targetMorningWake;
+      if (targetWakeStr) {
+        // Parse "7:00am" / "7:00 AM" / "07:00" style strings
+        const match = targetWakeStr.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+        if (match) {
+          let h = parseInt(match[1]);
+          const m = parseInt(match[2]);
+          const meridiem = match[3]?.toLowerCase();
+          if (meridiem === "pm" && h < 12) h += 12;
+          if (meridiem === "am" && h === 12) h = 0;
+          const wakeDate = new Date(session.putDownTime);
+          wakeDate.setDate(wakeDate.getDate() + 1);
+          wakeDate.setHours(h, m, 0, 0);
+          if (wakeDate.getTime() > putDownMs + 7 * 3600000) return wakeDate; // sanity: at least 7h away
+        }
+      }
+      // Priority 2: 11.5 hours from bedtime (middle of 11-12h range)
+      return new Date(putDownMs + 11.5 * 3600000);
+    } else {
+      // Nap: use target duration from effective config
+      return new Date(asleepMs + napTargetMins * 60000);
+    }
+  })();
 
   // ── Local time helpers ──
   function nowTimeStr() {
@@ -988,24 +1056,57 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
       <style>{`@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
       <Toast message={toast.message} icon={toast.icon} visible={toast.visible} />
 
-      {/* Next Sleep Window */}
-      <Card style={{ background: `${C.teal}12`, borderColor: `${C.teal}30` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div>
-            <SectionLabel>Next Sleep Window</SectionLabel>
-            <p style={{ fontSize: 22, fontFamily: serif, color: C.teal, fontWeight: 700 }}>{suggestedTime}</p>
-            <p style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>based on last wake-up + {window_}h window</p>
+      {/* Next Sleep Window OR Suggested Wake-Up — context-aware */}
+      {!session ? (
+        /* No active session — show next sleep suggestion */
+        <Card style={{ background: `${C.teal}12`, borderColor: `${C.teal}30` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <SectionLabel>Next Sleep Window</SectionLabel>
+              <p style={{ fontSize: 22, fontFamily: serif, color: C.teal, fontWeight: 700 }}>{suggestedTime}</p>
+              <p style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>based on last wake-up + {window_}h window</p>
+            </div>
+            {minsUntil !== null && (
+              <div style={{ textAlign: "right" }}>
+                <p style={{ fontSize: 12, color: T.muted }}>in</p>
+                <p style={{ fontSize: 18, fontWeight: 700, color: minsUntil < 0 ? C.rose : C.teal }}>
+                  {minsUntil < 0 ? `${Math.abs(minsUntil)}m ago` : `${minsUntil}m`}
+                </p>
+              </div>
+            )}
           </div>
-          {minsUntil !== null && (
-            <div style={{ textAlign: "right" }}>
-              <p style={{ fontSize: 12, color: T.muted }}>in</p>
-              <p style={{ fontSize: 18, fontWeight: 700, color: minsUntil < 0 ? C.rose : C.teal }}>
-                {minsUntil < 0 ? `${Math.abs(minsUntil)}m ago` : `${minsUntil}m`}
+        </Card>
+      ) : (
+        /* Active session — show suggested wake-up time */
+        <Card style={{ background: `${C.sage}12`, borderColor: `${C.sage}30` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <SectionLabel>{session.sessionType === "night" ? "Target Morning Wake" : "Suggested Wake-Up"}</SectionLabel>
+              <p style={{ fontSize: 22, fontFamily: serif, color: C.sage, fontWeight: 700 }}>
+                {suggestedWakeUpTime ? fmtTime(suggestedWakeUpTime.toISOString()) : "---"}
+              </p>
+              <p style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                {session.sessionType === "night"
+                  ? config.targetMorningWake
+                    ? `target: ${config.targetMorningWake}`
+                    : "11–12 hours night sleep"
+                  : `target: ${napTargetMins}min${napMinMins !== napTargetMins ? ` (min ${napMinMins}min)` : ""}`}
               </p>
             </div>
-          )}
-        </div>
-      </Card>
+            {suggestedWakeUpTime && (() => {
+              const minsToWake = Math.round((suggestedWakeUpTime.getTime() - Date.now()) / 60000);
+              return (
+                <div style={{ textAlign: "right" }}>
+                  <p style={{ fontSize: 12, color: T.muted }}>{minsToWake < 0 ? "past" : "in"}</p>
+                  <p style={{ fontSize: 18, fontWeight: 700, color: minsToWake < 0 ? C.rose : C.sage }}>
+                    {minsToWake < 0 ? `${Math.abs(minsToWake)}m` : `${minsToWake}m`}
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+        </Card>
+      )}
 
       {/* Sleep Tracker */}
       <Card>
@@ -1973,43 +2074,146 @@ function ConsultantView({ config, setConfig, dbPin, isConsultant }) {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  // Work from age-based defaults when config values are null
+  const { activeChild: cvChild } = useApp();
+  const cvDob = cvChild?.dob;
+  const cvAgeMonths = cvDob ? Math.floor((Date.now() - new Date(cvDob)) / (1000*60*60*24*30.44)) : null;
+  const ageWindows = cvAgeMonths !== null ? defaultWakeWindowsForAge(cvAgeMonths) : [1.5, 2.0, 2.5, 3.0];
+  const ageNapDur = cvAgeMonths !== null ? defaultNapDurationsForAge(cvAgeMonths) : [60, 70, 90];
+
+  const wakeWindows = config.recommendedWakeWindows || ageWindows;
+  const napDurs = config.napDurations || ageNapDur;
+
+  const inputStyle = {
+    padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.border}`,
+    background: T.inputBg, color: T.text, fontFamily: font, fontSize: 14,
+    width: "100%", outline: "none",
+  };
+  const stepBtn = {
+    width: 30, height: 30, border: `1px solid ${T.border}`, borderRadius: 8,
+    background: T.inputBg, color: T.text, fontSize: 16, cursor: "pointer",
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* ── WAKE WINDOWS ── */}
       <Card>
-        <SectionLabel>Wake Window Configuration</SectionLabel>
-        <p style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Set recommended wake windows in sequence (hours between sleep periods).</p>
-        {config.recommendedWakeWindows.map((ww, i) => (
+        <SectionLabel>Wake Windows</SectionLabel>
+        <p style={{ fontSize: 12, color: T.muted, marginBottom: 4 }}>
+          Hours awake between sleeps. Windows grow through the day — last slot is always pre-bedtime.
+        </p>
+        {cvAgeMonths !== null && (
+          <p style={{ fontSize: 11, color: T.teal, marginBottom: 14 }}>
+            Age-based defaults loaded for {cvAgeMonths}mo · tap +/− to override
+          </p>
+        )}
+        {wakeWindows.map((ww, i) => (
           <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div>
-              <p style={{ fontSize: 13, fontWeight: 600 }}>Window {i + 1}</p>
-              <p style={{ fontSize: 11, color: T.muted }}>{i === 0 ? "First nap" : i === config.recommendedWakeWindows.length - 1 ? "Before bedtime" : `Nap ${i + 1}`}</p>
+              <p style={{ fontSize: 13, fontWeight: 600 }}>
+                {i === 0 ? "Before 1st nap" : i === wakeWindows.length - 1 ? "Before bedtime" : `Before nap ${i + 1}`}
+              </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button onClick={() => {
-                const n = [...config.recommendedWakeWindows]; n[i] = Math.max(0.5, parseFloat((n[i] - 0.25).toFixed(2)));
+                const n = [...wakeWindows]; n[i] = Math.max(0.5, parseFloat((n[i] - 0.25).toFixed(2)));
                 setConfig({ ...config, recommendedWakeWindows: n });
-              }} style={{ width: 30, height: 30, border: `1px solid ${T.border}`, borderRadius: 8, background: T.inputBg, color: T.text, fontSize: 16, cursor: "pointer" }}>−</button>
-              <span style={{ fontSize: 16, fontWeight: 700, color: C.teal, minWidth: 36, textAlign: "center" }}>{ww}h</span>
+              }} style={stepBtn}>−</button>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.teal, minWidth: 40, textAlign: "center" }}>{ww}h</span>
               <button onClick={() => {
-                const n = [...config.recommendedWakeWindows]; n[i] = parseFloat((n[i] + 0.25).toFixed(2));
+                const n = [...wakeWindows]; n[i] = parseFloat((n[i] + 0.25).toFixed(2));
                 setConfig({ ...config, recommendedWakeWindows: n });
-              }} style={{ width: 30, height: 30, border: `1px solid ${T.border}`, borderRadius: 8, background: T.inputBg, color: T.text, fontSize: 16, cursor: "pointer" }}>+</button>
+              }} style={stepBtn}>+</button>
             </div>
           </div>
         ))}
         <Divider />
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-          <Btn outline size="sm" onClick={() => setConfig({ ...config, recommendedWakeWindows: [...config.recommendedWakeWindows, 2.0] })}>
+          <Btn outline size="sm" onClick={() => setConfig({ ...config, recommendedWakeWindows: [...wakeWindows, parseFloat((wakeWindows[wakeWindows.length-1] + 0.5).toFixed(2))] })}>
             + Add Window
           </Btn>
-          {config.recommendedWakeWindows.length > 1 && (
-            <Btn outline size="sm" onClick={() => setConfig({ ...config, recommendedWakeWindows: config.recommendedWakeWindows.slice(0, -1) })}>
+          {wakeWindows.length > 1 && (
+            <Btn outline size="sm" onClick={() => setConfig({ ...config, recommendedWakeWindows: wakeWindows.slice(0, -1) })}>
               − Remove Last
             </Btn>
           )}
+          <Btn outline size="sm" onClick={() => setConfig({ ...config, recommendedWakeWindows: null })}>
+            Reset to age defaults
+          </Btn>
         </div>
       </Card>
 
+      {/* ── NAP DURATIONS ── */}
+      <Card>
+        <SectionLabel>Nap Durations</SectionLabel>
+        <p style={{ fontSize: 12, color: T.muted, marginBottom: 4 }}>
+          Target nap length. 60 min minimum to teach the crib hour.
+        </p>
+        {cvAgeMonths !== null && (
+          <p style={{ fontSize: 11, color: T.teal, marginBottom: 14 }}>
+            Age-based defaults: {ageNapDur[0]}min min · {ageNapDur[1]}min target
+          </p>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+          {[
+            { label: "Minimum", key: 0, color: C.warm },
+            { label: "Target",  key: 1, color: C.teal },
+            { label: "Maximum", key: 2, color: C.sage },
+          ].map(({ label, key, color }) => (
+            <div key={key} style={{ textAlign: "center" }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>{label}</p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                <button onClick={() => {
+                  const n = [...napDurs]; n[key] = Math.max(key === 0 ? 60 : napDurs[0], n[key] - 5);
+                  setConfig({ ...config, napDurations: n });
+                }} style={{ ...stepBtn, width: 24, height: 24, fontSize: 14 }}>−</button>
+                <span style={{ fontSize: 15, fontWeight: 700, color, minWidth: 44, textAlign: "center" }}>{napDurs[key]}m</span>
+                <button onClick={() => {
+                  const n = [...napDurs]; n[key] = Math.min(key === 2 ? 180 : napDurs[2], n[key] + 5);
+                  setConfig({ ...config, napDurations: n });
+                }} style={{ ...stepBtn, width: 24, height: 24, fontSize: 14 }}>+</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Btn outline size="sm" onClick={() => setConfig({ ...config, napDurations: null })}>
+          Reset to age defaults
+        </Btn>
+      </Card>
+
+      {/* ── MORNING WAKE TARGET ── */}
+      <Card>
+        <SectionLabel>Target Morning Wake Time</SectionLabel>
+        <p style={{ fontSize: 12, color: T.muted, marginBottom: 12 }}>
+          Overrides parent's intake preference. Used to calculate suggested wake-up during night sleep.
+          Leave blank to calculate from bedtime (11–12h).
+        </p>
+        <input
+          type="time"
+          value={(() => {
+            const t = config.targetMorningWake;
+            if (!t) return "";
+            const m = t.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+            if (!m) return "";
+            let h = parseInt(m[1]);
+            const min = m[2];
+            const mer = m[3]?.toLowerCase();
+            if (mer === "pm" && h < 12) h += 12;
+            if (mer === "am" && h === 12) h = 0;
+            return `${String(h).padStart(2,"0")}:${min}`;
+          })()}
+          onChange={e => setConfig({ ...config, targetMorningWake: e.target.value || null })}
+          style={{ ...inputStyle, marginBottom: 8 }}
+        />
+        {config.targetMorningWake && (
+          <Btn outline size="sm" onClick={() => setConfig({ ...config, targetMorningWake: null })}>
+            Clear (use calculated)
+          </Btn>
+        )}
+      </Card>
+
+      {/* ── SLEEP METHOD ── */}
       <Card>
         <SectionLabel>Sleep Method</SectionLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -2042,16 +2246,52 @@ function calculateAge(birthDate) {
 // Based on RCC methodology (Beyond Birth Basics)
 // Each array = wake windows per nap slot for that age range
 // Last value is always the pre-bedtime wake window
+// ─── RCC WAKE WINDOWS (Beyond Birth Basics methodology) ─────────────────────
+// Windows grow through the day — last slot is always the longest (pre-bedtime).
+// Source: beyondbirthbasics.com Wake Windows chart © 2023
 function defaultWakeWindowsForAge(ageMonths) {
   const weeks = ageMonths * 4.33;
-  if (weeks < 4)      return [0.75, 0.75, 0.75, 0.75, 0.75, 1.0]; // 0-4wk: 45-60min, 5-6 naps
-  if (weeks < 12)     return [1.0, 1.0, 1.25, 1.25, 1.25, 1.5];   // 4-12wk: 60-90min, 5-6 naps
-  if (ageMonths < 5)  return [1.25, 1.5, 1.75, 2.0, 2.0];         // 3-4mo: 75-120min, 4-5 naps
-  if (ageMonths < 7)  return [2.0, 2.25, 2.5, 3.0];               // 5-7mo: 2-3h, 3-4 naps
-  if (ageMonths < 11) return [2.5, 3.0, 3.5];                      // 7-10mo: 2.5-3.5h, 2-3 naps
-  if (ageMonths < 14) return [3.0, 3.5, 4.0];                      // 11-13mo: 3-4h, 1-2 naps
-  if (ageMonths < 37) return [4.0, 6.0];                           // 14-36mo: 4-6h, 1 nap
-  return [11.0, 12.0];                                              // 3y+: no nap, bedtime window
+  // 0-4 weeks: 45-60min, 5-6 naps. Slight grow toward end of day.
+  if (weeks < 4)      return [0.75, 0.75, 0.75, 0.75, 0.75, 1.0];
+  // 4-12 weeks: 60-90min, 5-6 naps. Last window notably longer.
+  if (weeks < 12)     return [1.0, 1.0, 1.25, 1.25, 1.5, 1.75];
+  // 3-4 months: 75-120min, 4-5 naps. Grow from 1.25 → 2.0h.
+  if (ageMonths < 5)  return [1.25, 1.5, 1.75, 2.0, 2.25];
+  // 5-7 months: 2-3h, 3-4 naps. Grow from 2.0 → 3.0h.
+  if (ageMonths < 7)  return [2.0, 2.25, 2.75, 3.0];
+  // 7-10 months: 2.5-3.5h, 2-3 naps. Grow from 2.5 → 3.5h.
+  if (ageMonths < 11) return [2.5, 3.0, 3.5];
+  // 11-13 months: 3-4h, 1-2 naps. Grow from 3.0 → 4.0h.
+  if (ageMonths < 14) return [3.0, 4.0];
+  // 14-36 months: 4-6h, 1 nap. Pre-nap window 4-5h, pre-bed 5.5-6h.
+  if (ageMonths < 37) return [4.5, 5.75];
+  // 3y+: no nap. One long window before bedtime.
+  return [11.0];
+}
+
+// ─── RCC NAP DURATIONS (Beyond Birth Basics methodology) ─────────────────────
+// Returns [minMins, targetMins, maxMins] per nap slot for the age.
+// Floor: 60 min (crib hour). Cap: 120 min for newborns, 90 for most others.
+// Derived from Total Sleep Needs chart: daytime hours ÷ number of naps.
+// Source: beyondbirthbasics.com Total Sleep Needs chart © 2023
+function defaultNapDurationsForAge(ageMonths) {
+  const weeks = ageMonths * 4.33;
+  // 0-4wk: 4-6h daytime / 5-6 naps → ~45-75min each, cap 120min
+  if (weeks < 4)      return [60, 60, 120]; // [min, target, max]
+  // 4-12wk: 4-6h daytime / 5-6 naps → ~45-75min each, cap 120min
+  if (weeks < 12)     return [60, 70, 120];
+  // 3-5mo: 4-5h daytime / 4-5 naps → ~55-75min each
+  if (ageMonths < 5)  return [60, 70, 90];
+  // 5-7mo: 2-3.5h daytime / 3-4 naps → ~45-70min each
+  if (ageMonths < 7)  return [60, 65, 90];
+  // 7-10mo: 2-3.5h daytime / 2-3 naps → ~60-75min each
+  if (ageMonths < 11) return [60, 70, 90];
+  // 11-13mo: 2-3.5h daytime / 1-2 naps → 75-90min each
+  if (ageMonths < 14) return [60, 80, 90];
+  // 14-36mo: 2-3h daytime / 1 nap → 90min target
+  if (ageMonths < 37) return [60, 90, 90];
+  // 3y+: no nap
+  return [0, 0, 0];
 }
 
 function isWithin24h(ts) { return new Date(ts) > new Date(Date.now() - 86400000); }
