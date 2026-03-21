@@ -364,7 +364,9 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     let totalCribMs = 0, wakingMs = 0;
     sessions.forEach(s => {
       if (s.end_ts) {
-        totalCribMs += new Date(s.end_ts) - new Date(s.ts);
+        const cribMs = new Date(s.end_ts) - new Date(s.ts);
+        if (cribMs <= 0) return; // skip bad legacy logs with negative duration
+        totalCribMs += cribMs;
         const internalWakes = dayLogs.filter(l => l.type === "night_waking" && l.ts > s.ts && l.ts < s.end_ts);
         internalWakes.forEach(w => (wakingMs += (w.duration || 10) * 60000));
       }
@@ -497,24 +499,39 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
     return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
 
-  // Convert local time string back to ISO, keeping the same date as the original
+  // Convert local time string back to ISO. Uses originalIso as the base date.
+  // If the resulting time would be before originalIso, advances one day to
+  // handle overnight / midnight-crossing sessions correctly.
   function timeStrToISO(timeStr, originalIso) {
     if (!timeStr) return null;
     const base = originalIso ? new Date(originalIso) : new Date();
     const [h, m] = timeStr.split(":").map(Number);
     const result = new Date(base);
     result.setHours(h, m, 0, 0);
+    // If the result is before the reference, it crossed midnight — advance one day
+    if (originalIso && result < new Date(originalIso)) {
+      result.setDate(result.getDate() + 1);
+    }
     return result.toISOString();
   }
 
   const isSleep = log.type === "sleep_session";
   const isWaking = log.type === "night_waking";
 
+  function isoToDateStr(iso) {
+    if (!iso) return new Date().toISOString().split("T")[0];
+    return new Date(iso).toISOString().split("T")[0];
+  }
+
   const [putDown, setPutDown] = useState(isoToTimeStr(log.ts));
+  const [putDownDate, setPutDownDate] = useState(isoToDateStr(log.ts));
   const [fellAsleep, setFellAsleep] = useState(isoToTimeStr(log.fell_asleep_ts));
+  const [fellAsleepDate, setFellAsleepDate] = useState(isoToDateStr(log.fell_asleep_ts || log.ts));
   const [wakeUp, setWakeUp] = useState(isoToTimeStr(log.end_ts));
+  const [wakeUpDate, setWakeUpDate] = useState(isoToDateStr(log.end_ts || log.ts));
   const [mood, setMood] = useState(log.mood || "");
   const [wakingTime, setWakingTime] = useState(isoToTimeStr(log.ts));
+  const [wakingDate, setWakingDate] = useState(isoToDateStr(log.ts));
   const [duration, setDuration] = useState(log.duration || 10);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -524,14 +541,23 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
     try {
       let changes = {};
       if (isSleep) {
-        const putDownISO = timeStrToISO(putDown, log.ts);
-        const fellAsleepISO = fellAsleep ? timeStrToISO(fellAsleep, log.ts) : null;
-        const wakeUpISO = wakeUp ? timeStrToISO(wakeUp, log.end_ts || log.ts) : null;
+        // Build ISO from date + time fields
+        function dtISO(dateStr, timeStr, refISO) {
+          const [h, m] = timeStr.split(":").map(Number);
+          const d = new Date(dateStr + "T00:00:00");
+          d.setHours(h, m, 0, 0);
+          if (refISO && d < new Date(refISO)) d.setDate(d.getDate() + 1);
+          return d.toISOString();
+        }
+        const putDownISO = dtISO(putDownDate, putDown);
+        const fellAsleepISO = fellAsleep ? dtISO(fellAsleepDate, fellAsleep, putDownISO) : null;
+        const wakeReference = fellAsleepISO || putDownISO;
+        const wakeUpISO = wakeUp ? dtISO(wakeUpDate, wakeUp, wakeReference) : null;
         const fallAsleepSecs = fellAsleepISO && putDownISO
           ? Math.round((new Date(fellAsleepISO) - new Date(putDownISO)) / 1000)
           : log.fall_asleep_secs;
         const totalSleepMs = wakeUpISO && (fellAsleepISO || putDownISO)
-          ? new Date(wakeUpISO) - new Date(fellAsleepISO || putDownISO)
+          ? Math.max(0, new Date(wakeUpISO) - new Date(fellAsleepISO || putDownISO))
           : log.total_sleep_ms;
         changes = {
           ts: putDownISO,
@@ -542,13 +568,18 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
           total_sleep_ms: totalSleepMs,
         };
       } else if (isWaking) {
+        const [wh, wm] = wakingTime.split(":").map(Number);
+        const wd = new Date(wakingDate + "T00:00:00");
+        wd.setHours(wh, wm, 0, 0);
         changes = {
-          ts: timeStrToISO(wakingTime, log.ts),
+          ts: wd.toISOString(),
           duration: parseInt(duration) || 10,
         };
       } else {
-        // Generic entry — just allow time edit
-        changes = { ts: timeStrToISO(wakingTime, log.ts) };
+        const [wh, wm] = wakingTime.split(":").map(Number);
+        const wd = new Date(wakingDate + "T00:00:00");
+        wd.setHours(wh, wm, 0, 0);
+        changes = { ts: wd.toISOString() };
       }
       await onSave(log.id, changes);
       onClose();
@@ -574,20 +605,32 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
         {isSleep && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Put down time</div>
-              <input type="time" value={putDown} onChange={e => setPutDown(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Put down</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="date" value={putDownDate} onChange={e => setPutDownDate(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 14, boxSizing: "border-box" }} />
+                <input type="time" value={putDown} onChange={e => setPutDown(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              </div>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Fell asleep</div>
-              <input type="time" value={fellAsleep} onChange={e => setFellAsleep(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="date" value={fellAsleepDate} onChange={e => setFellAsleepDate(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 14, boxSizing: "border-box" }} />
+                <input type="time" value={fellAsleep} onChange={e => setFellAsleep(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              </div>
             </div>
             {log.end_ts && (
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Wake up time</div>
-                <input type="time" value={wakeUp} onChange={e => setWakeUp(e.target.value)}
-                  style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Wake up</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="date" value={wakeUpDate} onChange={e => setWakeUpDate(e.target.value)}
+                    style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 14, boxSizing: "border-box" }} />
+                  <input type="time" value={wakeUp} onChange={e => setWakeUp(e.target.value)}
+                    style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+                </div>
               </div>
             )}
             <div>
@@ -608,9 +651,13 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
         {isWaking && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Time</div>
-              <input type="time" value={wakingTime} onChange={e => setWakingTime(e.target.value)}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Date &amp; Time</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="date" value={wakingDate} onChange={e => setWakingDate(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 14, boxSizing: "border-box" }} />
+                <input type="time" value={wakingTime} onChange={e => setWakingTime(e.target.value)}
+                  style={{ flex: 1, padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontSize: 16, boxSizing: "border-box" }} />
+              </div>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Duration (minutes)</div>
@@ -714,7 +761,7 @@ function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
               <p style={{ fontSize: 13, fontWeight: 600 }}>{logLabel(l)}</p>
               <p style={{ fontSize: 11, color: T.muted }}>{fmtTime(l.ts)}</p>
             </div>
-            {l.type === "sleep_session" && l.end_ts && (
+            {l.type === "sleep_session" && l.end_ts && (new Date(l.end_ts) - new Date(l.ts)) > 0 && (
               <span style={{ fontSize: 11, color: C.teal, fontWeight: 700 }}>
                 {((new Date(l.end_ts) - new Date(l.ts)) / 3600000).toFixed(1)}h
               </span>
@@ -767,6 +814,9 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     else localStorage.removeItem(SESSION_KEY);
   }
 
+  // ── Nap vs Night toggle ──
+  const [sessionType, setSessionType] = useState("nap");
+
   const age = calculateAge(activeFamily?.birth_date || activeFamily?.birthDate);
   const totalMonths = age.years * 12 + age.months;
   const showFeeding = totalMonths < 12;
@@ -777,7 +827,19 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const lastWakeUp = [...logs]
     .filter(l => l.type === "sleep_session" && l.end_ts)
     .sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts))[0];
-  const napCount = logs.filter(l => l.type === "sleep_session" && isToday(l.ts)).length;
+
+  // Only count nap sessions today (not night sleep) so we pick the right wake window index.
+  // A session is a nap if session_type === "nap", OR if session_type is unset and it started
+  // after 6am (legacy logs without session_type).
+  const napCount = logs.filter(l => {
+    if (l.type !== "sleep_session") return false;
+    if (!isToday(l.ts)) return false;
+    if (l.session_type === "night") return false;
+    if (l.session_type === "nap") return true;
+    // Legacy log with no session_type — treat as nap if it started after 6am
+    const hour = new Date(l.ts).getHours();
+    return hour >= 6;
+  }).length;
 
   // Use age-appropriate wake windows if child DOB is available, otherwise use config
   const { activeChild: sleepActiveChild } = useApp();
@@ -797,17 +859,28 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const minsUntil = suggestedTs ? Math.round((suggestedTs - Date.now()) / 60000) : null;
 
   // ── Local time helpers ──
-  // Always use local time for display and input pre-fill
   function nowTimeStr() {
     const now = new Date();
     return `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   }
-  // Convert HH:MM input to ISO, keeping today's local date
-  function timeStrToISO(timeStr) {
+  function nowDateStr() {
+    return new Date().toISOString().split("T")[0];
+  }
+  // Convert date (YYYY-MM-DD) + time (HH:MM) to ISO.
+  // If referenceISO provided and result would be before it, advances one day (midnight crossing).
+  function dateTimeToISO(dateStr, timeStr, referenceISO) {
     const [h, m] = timeStr.split(":").map(Number);
-    const d = new Date();
+    const d = new Date(dateStr + "T00:00:00");
     d.setHours(h, m, 0, 0);
+    if (referenceISO) {
+      const ref = new Date(referenceISO);
+      if (d < ref) d.setDate(d.getDate() + 1);
+    }
     return d.toISOString();
+  }
+  // Backwards-compat wrapper for non-sleep buttons that only have a time field.
+  function timeStrToISO(timeStr, referenceISO) {
+    return dateTimeToISO(nowDateStr(), timeStr, referenceISO);
   }
 
   const openSheet = (cfg) => setSheet(cfg);
@@ -820,27 +893,35 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
 
   // ── Step 1: Put Down ──
   const handlePutDown = (vals) => {
-    const putDownTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    updateSession({ putDownTime, asleepTime: null, sessionId: null });
+    const putDownTime = (vals?.date && vals?.time)
+      ? dateTimeToISO(vals.date, vals.time)
+      : new Date().toISOString();
+    updateSession({ putDownTime, asleepTime: null, sessionId: null, sessionType });
     showToast("Put down logged", "🛏️");
   };
 
   // ── Step 2: Fell Asleep — saves to DB, gets real session ID ──
   const handleAsleep = async (vals) => {
-    const asleepTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
+    const asleepTime = (vals?.date && vals?.time)
+      ? dateTimeToISO(vals.date, vals.time, session?.putDownTime)
+      : new Date().toISOString();
     const putDownTime = session?.putDownTime || asleepTime;
     showToast("Falling asleep logged", "💤");
     const saved = await onLog("sleep_session", {
       ts: putDownTime,
       fell_asleep_ts: asleepTime,
       end_ts: null,
+      session_type: session?.sessionType || sessionType,
     });
-    updateSession({ putDownTime, asleepTime, sessionId: saved?.id || null });
+    updateSession({ putDownTime, asleepTime, sessionId: saved?.id || null, sessionType });
   };
 
   // ── Step 3: Woke Up — completes the session with all calculations ──
   const handleWakeUp = async (vals) => {
-    const endTime = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
+    const reference = session?.asleepTime || session?.putDownTime || null;
+    const endTime = (vals?.date && vals?.time)
+      ? dateTimeToISO(vals.date, vals.time, reference)
+      : new Date().toISOString();
     const { putDownTime, asleepTime, sessionId } = session || {};
 
     const fallAsleepSecs = asleepTime && putDownTime
@@ -856,6 +937,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
         mood: vals?.mood || null,
         fall_asleep_secs: fallAsleepSecs,
         total_sleep_ms: totalSleepMs,
+        session_type: session?.sessionType || sessionType,
       });
     } else {
       await onLog("sleep_session", {
@@ -865,6 +947,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
         fall_asleep_secs: fallAsleepSecs,
         total_sleep_ms: totalSleepMs,
         mood: vals?.mood || null,
+        session_type: session?.sessionType || sessionType,
       });
     }
     updateSession(null);
@@ -928,6 +1011,30 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
       <Card>
         <SectionLabel>Sleep Tracker</SectionLabel>
 
+        {/* Nap vs Night toggle — only show when no session is in progress */}
+        {!session && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            {[
+              { id: "nap", label: "☀️ Nap" },
+              { id: "night", label: "🌙 Night Sleep" },
+            ].map(opt => (
+              <button key={opt.id} onClick={() => setSessionType(opt.id)} style={{
+                flex: 1, padding: "9px 0", borderRadius: 10,
+                border: `1.5px solid ${sessionType === opt.id ? C.teal : T.border}`,
+                background: sessionType === opt.id ? `${C.teal}18` : "transparent",
+                color: sessionType === opt.id ? C.teal : T.muted,
+                fontFamily: font, fontSize: 13, fontWeight: sessionType === opt.id ? 700 : 500,
+                cursor: "pointer", transition: "all .18s",
+              }}>{opt.label}</button>
+            ))}
+          </div>
+        )}
+        {session && (
+          <div style={{ fontSize: 11, color: T.muted, marginBottom: 10 }}>
+            {session.sessionType === "night" ? "🌙 Night sleep in progress" : "☀️ Nap in progress"}
+          </div>
+        )}
+
         {/* In-progress session status */}
         {session && (
           <div style={{
@@ -980,7 +1087,10 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
           <button
             onClick={() => openSheet({
               title: "🛏️ Put Down",
-              fields: [{ key: "time", label: "Time put down", type: "time", default: nowTimeStr() }],
+              fields: [
+                { key: "date", label: "Date", type: "date", default: nowDateStr() },
+                { key: "time", label: "Time put down", type: "time", default: nowTimeStr() },
+              ],
               onConfirm: handlePutDown,
             })}
             style={{
@@ -1005,7 +1115,10 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
           <button
             onClick={() => openSheet({
               title: "💤 Fell Asleep",
-              fields: [{ key: "time", label: "Time fell asleep", type: "time", default: nowTimeStr() }],
+              fields: [
+                { key: "date", label: "Date", type: "date", default: nowDateStr() },
+                { key: "time", label: "Time fell asleep", type: "time", default: nowTimeStr() },
+              ],
               onConfirm: handleAsleep,
             })}
             style={{
@@ -1033,6 +1146,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
             onClick={() => openSheet({
               title: "☀️ Woke Up",
               fields: [
+                { key: "date", label: "Date", type: "date", default: nowDateStr() },
                 { key: "time", label: "Wake up time", type: "time", default: nowTimeStr() },
                 { key: "mood", label: "Wake-up mood", type: "select", options: MOODS.map(m => m.id), default: "" },
               ],
@@ -1151,7 +1265,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
               style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
               💦 Wet
             </button>
-            <button onClick={() => openSheet({ title: "💩 Dirty Diaper", fields: [{ key: "description", label: "Notes (optional)", type: "text", default: "" }], onConfirm: (v) => logAndToast("diaper", { sub_type: "dirty", description: v.description }, "Dirty diaper logged", "💩") })}
+            <button onClick={() => openSheet({ title: "💩 Dirty Diaper", fields: [{ key: "poop_type", label: "Type", type: "select", options: POOP_TYPES, default: "" }, { key: "description", label: "Notes (optional)", type: "text", default: "" }], onConfirm: (v) => logAndToast("diaper", { sub_type: "dirty", description: [v.poop_type, v.description].filter(Boolean).join(" · ") || null }, "Dirty diaper logged", "💩") })}
               style={{ padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>
               💩 Dirty
             </button>
@@ -1413,7 +1527,9 @@ function TrendsView({ logs, onPatch, onDelete }) {
               {s.fall_asleep_secs != null && (
                 <p style={{ fontSize: 11, color: T.muted }}>
                   Settled in {Math.round(s.fall_asleep_secs / 60)}m
-                  {s.end_ts ? ` · Slept ${((new Date(s.end_ts) - new Date(s.ts)) / 3600000).toFixed(1)}h` : " · In progress"}
+                  {s.end_ts && (new Date(s.end_ts) - new Date(s.ts)) > 0
+                    ? ` · Slept ${((new Date(s.end_ts) - new Date(s.ts)) / 3600000).toFixed(1)}h`
+                    : s.end_ts ? "" : " · In progress"}
                 </p>
               )}
             </div>
