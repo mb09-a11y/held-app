@@ -285,8 +285,9 @@ export function SleepLog({ user, activeFamily, initialTab }) {
   Promise.all([
     fetchLogs(familyId),
     fetchConfig(familyId),
-    supabase.from("intake_responses").select("ideal_wake_time, wake_time").eq("family_id", familyId).maybeSingle(),
-  ]).then(([logData, cfgData, { data: intakeData }]) => {
+    supabase.from("intake_responses").select("ideal_wake_time, wake_time").eq("family_id", familyId).maybeSingle()
+      .then(({ data }) => data).catch(() => null), // never let intake failure break the whole load
+  ]).then(([logData, cfgData, intakeData]) => {
     setLogs(logData);
     const mergedConfig = cfgData || {};
     // Populate targetMorningWake from intake if consultant hasn't set one
@@ -306,6 +307,9 @@ export function SleepLog({ user, activeFamily, initialTab }) {
         localStorage.setItem(`rcc_sleep_session_${familyId}`, JSON.stringify(recovered));
       }
     }
+  }).catch(err => {
+    console.error("[SleepLog] load error:", err);
+    setLoadingLogs(false);
   });
 }, [familyId]);
 
