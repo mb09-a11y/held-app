@@ -7,8 +7,14 @@ import { HamburgerButton } from "../shared/AppDrawer.jsx";
 // ─── AGE LABEL ────────────────────────────────────────────────────────────────
 function ageLabel(dob) {
   if (!dob) return null;
-  const months = Math.floor((Date.now() - new Date(dob)) / (1000 * 60 * 60 * 24 * 30.44));
-  return months < 24 ? `${months}mo` : `${Math.floor(months / 12)}y`;
+  const birth = new Date(dob);
+  const now = new Date();
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  if (now.getDate() < birth.getDate()) months--;
+  if (months < 0) { years--; months += 12; }
+  const totalMonths = years * 12 + months;
+  return totalMonths < 24 ? `${totalMonths}mo` : `${years}y`;
 }
 
 // ─── LOCKED CONTENT WRAPPER ───────────────────────────────────────────────────
@@ -152,8 +158,11 @@ function useFamilyState(familyId, childId, userId) {
         { data: child },
         { data: intakeData },
       ] = await Promise.all([
-        supabase.from("sleep_logs").select("*").eq("family_id", familyId)
-          .gte("ts", since7).order("ts", { ascending: false }),
+        (() => {
+          let q = supabase.from("sleep_logs").select("*").eq("family_id", familyId).gte("ts", since7);
+          if (childId) q = q.eq("child_id", childId);
+          return q.order("ts", { ascending: false });
+        })(),
         supabase.from("regulation_checkins").select("*").eq("user_id", userId)
           .gte("checked_in_at", since7).order("checked_in_at", { ascending: false }),
         childId ? supabase.from("children").select("*").eq("id", childId).maybeSingle() : Promise.resolve({ data: null }),
@@ -365,7 +374,7 @@ function useCheckinHistory(userId, familyId) {
 // ─── PARENT HOME ──────────────────────────────────────────────────────────────
 export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawer, onFindConsultant }) {
   const T = useT();
-  const { setTab, consultants, currentUser, activeChild, activeFamily, isPremium, hasConsultantAssigned } = useApp();
+  const { setTab, consultants, currentUser, activeChild, activeFamily, isPremium, hasConsultantAssigned, setPendingSleepAction } = useApp();
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [whatStep, setWhatStep] = useState("idle"); // idle | baby | parent | loading | response
   const [whatAnswers, setWhatAnswers] = useState({});
@@ -390,8 +399,15 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   }
 
   function answerBaby(val) {
-    setWhatAnswers(a => ({ ...a, baby: val }));
-    setWhatStep("parent");
+    if (val === "just_understand") {
+      // Skip "how are you?" — go straight to insight mode
+      const answers = { baby: val, parent: "curious" };
+      setWhatAnswers(answers);
+      submitCheckin(answers);
+    } else {
+      setWhatAnswers(a => ({ ...a, baby: val }));
+      setWhatStep("parent");
+    }
   }
 
   function answerParent(val) {
@@ -405,13 +421,21 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
 
     const childAge = activeChild?.dob
       ? (() => {
-          const m = Math.floor((Date.now() - new Date(activeChild.dob)) / (1000*60*60*24*30.44));
-          return m < 12 ? `${m} month old` : `${Math.floor(m/12)} year old`;
+          const birth = new Date(activeChild.dob);
+          const now = new Date();
+          let years = now.getFullYear() - birth.getFullYear();
+          let mos = now.getMonth() - birth.getMonth();
+          if (now.getDate() < birth.getDate()) mos--;
+          if (mos < 0) { years--; mos += 12; }
+          const totalMonths = years * 12 + mos;
+          // Always use months up to 24 for sleep coaching — a 19mo and 12mo are very different
+          return totalMonths < 24 ? `${totalMonths} month old` : `${years} year old`;
         })()
       : "young baby";
     const childName = activeChild?.name || "your baby";
 
     const situationLabels = {
+      just_understand: "I don't have a specific problem — I just want to understand what might be going on for my baby developmentally and what's normal for this age",
       bedtime_mess:  "bedtime has been a real struggle — it feels chaotic and hard",
       short_naps:    "naps have been short today and I'm not sure why",
       wont_settle:   "baby won't settle and nothing seems to be working",
@@ -482,28 +506,48 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
       ? `Sleep data context: ${sleepContext}`
       : `No sleep data has been logged yet — this parent is brand new or just getting started. Do not reference any data. Instead, respond entirely from the situation and feeling they described, and from what you know developmentally about a ${childAge}. Make them feel completely seen without needing any numbers.`;
 
-    try {
-      const raw = await callAI({
-        max_tokens: 700,
-        system: `You are the RCC Sleep Coach — the voice of Manu, a master certified parent coach with a nervous system and attachment lens. You are warm, grounding, specific, and never preachy. A parent has just told you what's going on.
+    const isInsightMode = answers.baby === "just_understand";
+
+    const insightSystemPrompt = `You are the RCC Sleep Coach — the voice of Manu, a master certified parent coach with a nervous system and attachment lens. You are warm, grounding, specific, and never preachy.
+
+INSIGHT MODE: This parent hasn't described a specific problem — they want to understand what's developmentally normal for their baby right now. Lead with curiosity and warmth, not problem-solving. Use the sleep data and age to paint a picture of what's likely happening developmentally. This should feel like sitting down with a knowledgeable friend who genuinely loves this age and stage. The "what_you_might_be_feeling" section should reflect the emotional experience of parenting at this age in general — the mix of wonder and exhaustion, the identity shifts, the love that surprises you.
+
+Return ONLY valid JSON, no markdown, no preamble:
+{
+  "what_this_might_be": "2-3 sentences. Share what is developmentally normal and interesting about this age. Use sleep data if available to make it specific. Sound like someone who genuinely knows and loves this stage.",
+  "what_you_might_be_feeling": "2 sentences. Reflect something true about the emotional experience of parenting at this age. Not a problem to solve — just an honest, warm acknowledgment of this season.",
+  "what_baby_might_be_communicating": "2-3 sentences. What is typical baby behavior at this age communicating through a nervous system lens? Help the parent see their baby with fresh eyes.",
+  "try_this": [
+    "One thing to notice or tune into over the next day or two — observational, not a task",
+    "One thing to hold lightly — a reframe or permission slip",
+    "One small thing for the parent's own nervous system"
+  ]
+}`;
+
+    const standardSystemPrompt = `You are the RCC Sleep Coach — the voice of Manu, a master certified parent coach with a nervous system and attachment lens. You are warm, grounding, specific, and never preachy. A parent has just told you what's going on.
 
 When there is no logged data, lean fully into the emotional and developmental response. The situation they described and how they're feeling is enough — you don't need numbers to make someone feel seen. Lead with the human experience.
 
 When data is available, weave it in naturally — never as a list of stats, always as evidence that you actually know their baby.
 
-When check-in history and patterns are available, use them thoughtfully. If you notice a recurring pattern, name it gently — not as a diagnosis but as an observation from someone who has been paying attention. "I've noticed bedtime has been hard a few evenings in a row" lands very differently than "you have a bedtime problem." If there is progress (fewer hard check-ins this week), acknowledge it warmly — parents rarely hear that they're doing better.
+When check-in history and patterns are available, use them thoughtfully. If you notice a recurring pattern, name it gently — not as a diagnosis but as an observation from someone who has been paying attention. If there is progress (fewer hard check-ins this week), acknowledge it warmly — parents rarely hear that they're doing better.
 
 Return ONLY valid JSON, no markdown, no preamble:
 {
-  "what_this_might_be": "2-3 sentences. Name what's likely happening developmentally or physiologically. If a pattern exists in their history, weave it in naturally — e.g. 'I've noticed bedtime has been hard a few evenings this week, which makes me wonder if...' Sound like someone who has been paying attention, not a search result.",
-  "what_you_might_be_feeling": "2 sentences. Gently name the emotion underneath what they described. If they've been feeling this way repeatedly, acknowledge that without making it heavier — e.g. 'This kind of sustained exhaustion has a particular weight to it.' Make them feel seen, not analyzed.",
+  "what_this_might_be": "2-3 sentences. Name what's likely happening developmentally or physiologically. If a pattern exists in their history, weave it in naturally. Sound like someone who has been paying attention, not a search result.",
+  "what_you_might_be_feeling": "2 sentences. Gently name the emotion underneath what they described. If they've been feeling this way repeatedly, acknowledge that without making it heavier. Make them feel seen, not analyzed.",
   "what_baby_might_be_communicating": "2-3 sentences. Translate the baby's behavior through a nervous system lens. What is baby's body trying to say? Help the parent hear their baby differently — not as a problem to solve but as a little person communicating the only way they know how.",
   "try_this": [
     "One specific, doable action for right now — concrete and time-bound, not vague",
-    "One thing to notice or hold lightly — a reframe, not another task",
+    "One thing to hold lightly — a reframe or permission slip, not another task",
     "One small thing for the parent's own nervous system — because they matter too"
   ]
-}`,
+}`;
+
+    try {
+      const raw = await callAI({
+        max_tokens: 700,
+        system: isInsightMode ? insightSystemPrompt : standardSystemPrompt,
         messages: [{
           role: "user",
           content: `My ${childAge}, ${childName}: ${situation}. I'm feeling ${parentState}. ${dataNote}${patternContext ? " " + patternContext : ""}
@@ -531,14 +575,68 @@ ${historyContext}`,
 
 
 
-  // ── Smart status card data ──
-  // Shows context-aware sleep status: active session, recent wake, or next window
-  const sleepLogs = familyState?.sleepData?.weekSessions || [];
+  // ── Smart status card data — filtered to active child ──
+  const sleepLogs = (familyState?.sleepData?.weekSessions || [])
+    .filter(l => !activeChild?.id || !l.child_id || l.child_id === activeChild.id);
   const recentSessions = [...sleepLogs].sort((a,b) => new Date(b.ts) - new Date(a.ts));
   const openSession = recentSessions.find(s => !s.end_ts);
   const lastCompleted = recentSessions.find(s => s.end_ts);
   const lastWokeMs = lastCompleted ? new Date(lastCompleted.end_ts).getTime() : null;
   const minsAwake = lastWokeMs ? Math.round((Date.now() - lastWokeMs) / 60000) : null;
+
+  // ── Next put-down suggestion (when awake) ──
+  // Use age-based wake windows — rough but meaningful without full SleepLog config here
+  const childDobHome = activeChild?.dob;
+  const ageMonthsHome = (() => {
+    if (!childDobHome) return null;
+    const birth = new Date(childDobHome);
+    const now = new Date();
+    let years = now.getFullYear() - birth.getFullYear();
+    let mos = now.getMonth() - birth.getMonth();
+    if (now.getDate() < birth.getDate()) mos--;
+    if (mos < 0) { years--; mos += 12; }
+    return years * 12 + mos;
+  })();
+  const napCountToday = sleepLogs.filter(l =>
+    l.type === "sleep_session" && l.end_ts &&
+    new Date(l.ts).toDateString() === new Date().toDateString() &&
+    l.session_type !== "night"
+  ).length;
+  // Simple age-based wake window lookup (mirrors SleepLog logic)
+  function homeWakeWindow(months, napIdx) {
+    const ww = months === null ? [2.0, 3.0] :
+      months * 4.33 < 4   ? [0.75, 0.75, 0.75, 0.75, 0.75, 1.0] :
+      months * 4.33 < 12  ? [1.0,  1.0,  1.25, 1.25, 1.5,  1.75] :
+      months < 5  ? [1.25, 1.5,  1.75, 2.0,  2.25] :
+      months < 7  ? [2.0,  2.25, 2.75, 3.0] :
+      months < 11 ? [2.5,  3.0,  3.5] :
+      months < 14 ? [3.0,  4.0] :
+      months < 37 ? [4.5,  5.75] : [11.0];
+    return ww[napIdx] ?? ww[ww.length - 1];
+  }
+  const nextWindowHrs = homeWakeWindow(ageMonthsHome, napCountToday);
+  const nextPutDownTs = lastWokeMs ? new Date(lastWokeMs + nextWindowHrs * 3600000) : null;
+  const nextPutDownStr = nextPutDownTs ? nextPutDownTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const minsUntilPutDown = nextPutDownTs ? Math.round((nextPutDownTs - Date.now()) / 60000) : null;
+
+  // ── Suggested wake time (when sleeping) ──
+  const putDownMs = openSession ? new Date(openSession.ts).getTime() : null;
+  const asleepMs = openSession?.fell_asleep_ts ? new Date(openSession.fell_asleep_ts).getTime() : putDownMs;
+  const isNightSession = openSession?.session_type === "night";
+  const suggestedWakeTs = (() => {
+    if (!openSession) return null;
+    if (isNightSession) {
+      // 11.5h from bedtime
+      const w = new Date((putDownMs || Date.now()) + 11.5 * 3600000);
+      return w;
+    } else {
+      // Age-based nap target: 45min <6mo, 60min 6-12mo, 75min 12mo+
+      const napMins = ageMonthsHome === null ? 60 : ageMonthsHome < 6 ? 45 : ageMonthsHome < 12 ? 60 : 75;
+      return new Date((asleepMs || Date.now()) + napMins * 60000);
+    }
+  })();
+  const suggestedWakeStr = suggestedWakeTs ? suggestedWakeTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const minsUntilWake = suggestedWakeTs ? Math.round((suggestedWakeTs - Date.now()) / 60000) : null;
 
   return (
     <div style={{ paddingBottom: 20 }}>
@@ -592,10 +690,14 @@ ${historyContext}`,
                 </div>
               </div>
               <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText, lineHeight: 1.3, marginBottom: 4 }}>
-                What's going on right now?
+                {openSession
+                  ? "How are you doing right now?"
+                  : "How's the rhythm today?"}
               </div>
               <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
-                Tell me what's happening — I'll help you make sense of it
+                {openSession
+                  ? `${activeChild?.name || "Baby"} is sleeping — a moment just for you`
+                  : "Tell me what's happening — I'll help you make sense of it"}
               </div>
             </div>
           </button>
@@ -610,11 +712,11 @@ ${historyContext}`,
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {[
-                { label: "🛏️ Put down" },
-                { label: "☀️ Woke up" },
-                { label: "🌙 Night waking" },
+                { label: "🛏️ Put down",     action: "put_down" },
+                { label: "☀️ Woke up",      action: "woke_up" },
+                { label: "🌙 Night waking", action: "night_waking" },
               ].map(q => (
-                <button key={q.label} onClick={() => setTab("sleep")} style={{
+                <button key={q.label} onClick={() => { setPendingSleepAction(q.action); setTab("sleep"); }} style={{
                   padding: "7px 13px", borderRadius: 20,
                   border: `1px solid ${T.border}`,
                   background: T.faint, color: T.text,
@@ -633,17 +735,25 @@ ${historyContext}`,
             background: T.card, padding: "14px 16px", marginBottom: 10,
           }}>
             {openSession ? (
-              // Active session
+              // ── SLEEPING: show suggested wake time ──
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: openSession.session_type === "night" ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
-                    {openSession.session_type === "night" ? "🌙 Night sleep" : "☀️ Nap"} in progress
+                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: isNightSession ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
+                    {isNightSession ? "🌙 Night sleep" : "☀️ Nap"} in progress
                   </div>
-                  <div style={{ fontFamily: serif, fontSize: 18, color: T.headingText }}>
-                    {openSession.session_type === "night" ? "Sleeping through the night" : `${Math.round((Date.now() - new Date(openSession.ts).getTime()) / 60000)}m in crib`}
+                  <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
+                    Wake by {suggestedWakeStr || "—"}
+                  </div>
+                  <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+                    {minsUntilWake === null ? "" :
+                      minsUntilWake < 0 ? `${Math.abs(minsUntilWake)}m past target` :
+                      minsUntilWake < 60 ? `in ${minsUntilWake}m` :
+                      `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
+                    {" · "}
+                    {isNightSession ? "11–12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
                   </div>
                 </div>
-                <button onClick={() => setTab("sleep")} style={{
+                <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
                   padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
                   background: `${T.teal}12`, color: T.teal,
                   fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
@@ -652,31 +762,46 @@ ${historyContext}`,
                 </button>
               </div>
             ) : minsAwake !== null ? (
-              // Recent wake
+              // ── AWAKE: show next put-down time ──
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
-                    {lastCompleted?.session_type === "night" ? "🌅 Morning wake" : "☀️ Awake"}
+                    {lastCompleted?.session_type === "night" ? "🌅 Good morning" : "☀️ Awake"}
+                    {" · "}{minsAwake < 60 ? `${minsAwake}m` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m`}
                   </div>
-                  <div style={{ fontFamily: serif, fontSize: 18, color: T.headingText }}>
-                    {minsAwake < 60 ? `${minsAwake}m ago` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m ago`}
-                  </div>
-                  {familyState && (
-                    <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>
+                  {nextPutDownStr ? (
+                    <>
+                      <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
+                        Next {napCountToday === 0 && lastCompleted?.session_type !== "night" ? "nap" : napCountToday >= 1 ? "nap" : "sleep"} ~ {nextPutDownStr}
+                      </div>
+                      <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+                        {minsUntilPutDown !== null && minsUntilPutDown < 0
+                          ? `${Math.abs(minsUntilPutDown)}m past window — watch for tired cues`
+                          : minsUntilPutDown !== null && minsUntilPutDown < 30
+                          ? `${minsUntilPutDown}m — start winding down soon`
+                          : minsUntilPutDown !== null
+                          ? `in ${minsUntilPutDown < 60 ? minsUntilPutDown + "m" : Math.floor(minsUntilPutDown/60) + "h " + minsUntilPutDown%60 + "m"} · ${nextWindowHrs}h wake window`
+                          : `${nextWindowHrs}h wake window`}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
                       woke at {new Date(lastCompleted.end_ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </div>
                   )}
                 </div>
-                <button onClick={() => setTab("sleep")} style={{
-                  padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.border}`,
-                  background: T.faint, color: T.muted,
-                  fontFamily: font, fontSize: 12, cursor: "pointer",
+                <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
+                  padding: "8px 14px", borderRadius: 10,
+                  border: `1px solid ${minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.border}`,
+                  background: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? `${T.teal}12` : T.faint,
+                  color: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.muted,
+                  fontFamily: font, fontSize: 12, fontWeight: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? 600 : 400, cursor: "pointer",
                 }}>
-                  Log →
+                  Log put down →
                 </button>
               </div>
             ) : (
-              // No data yet
+              // ── NO DATA: first use ──
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
@@ -686,7 +811,7 @@ ${historyContext}`,
                     No sessions logged yet today
                   </div>
                 </div>
-                <button onClick={() => setTab("sleep")} style={{
+                <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
                   padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
                   background: `${T.teal}12`, color: T.teal,
                   fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
@@ -729,6 +854,27 @@ ${historyContext}`,
                   Step 1 of 2 · What's going on right now?
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {/* ✨ Insight option — visually elevated */}
+                  <button onClick={() => answerBaby("just_understand")} style={{
+                    padding: "12px 16px", borderRadius: 20,
+                    border: `1.5px solid ${T.teal}`,
+                    background: `linear-gradient(135deg, ${T.teal}15 0%, #A87B8A12 100%)`,
+                    color: T.teal,
+                    fontFamily: font, fontSize: 13, fontWeight: 700,
+                    cursor: "pointer", transition: "all .15s", textAlign: "left",
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}>
+                    <span>✨</span>
+                    <span>Just help me understand what might be going on</span>
+                  </button>
+
+                  {/* Divider */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0" }}>
+                    <div style={{ flex: 1, height: 1, background: T.border }} />
+                    <span style={{ fontFamily: font, fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".08em" }}>or something specific</span>
+                    <div style={{ flex: 1, height: 1, background: T.border }} />
+                  </div>
+
                   {[
                     { val: "bedtime_mess",    label: "🌙 Bedtime is a mess" },
                     { val: "short_naps",      label: "😩 Naps were short today" },
@@ -837,7 +983,7 @@ ${historyContext}`,
                 {whatResponse.try_this?.length > 0 && (
                   <div style={{ padding: "13px 15px", borderRadius: 12, background: "#7BAA8A0f", border: "1px solid #7BAA8A25" }}>
                     <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#7BAA8A", marginBottom: 10 }}>
-                      🌿 Try this
+                      🌿 If it feels right, you could try…
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {whatResponse.try_this.map((item, i) => (
@@ -1130,7 +1276,13 @@ export function ParentDashboard({ user, onFindConsultant, onInviteCo }) {
             const totalMonths = (() => {
               const dob = activeChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
               if (!dob) return 3;
-              return Math.floor((Date.now() - new Date(dob)) / (1000*60*60*24*30.44));
+              const birth = new Date(dob);
+              const now = new Date();
+              let years = now.getFullYear() - birth.getFullYear();
+              let mos = now.getMonth() - birth.getMonth();
+              if (now.getDate() < birth.getDate()) mos--;
+              if (mos < 0) { years--; mos += 12; }
+              return years * 12 + mos;
             })();
             const defaults = totalMonths < 4
               ? ["Watch for sleepy cues — yawning, eye-rubbing, or a brief stare", "Keep nap environment consistent: same place, same wind-down", "Your baby is still learning day from night — this takes time"]

@@ -813,6 +813,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const [sheet, setSheet] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: "", icon: "✓" });
   const toastTimer = useRef(null);
+  const { pendingSleepAction, setPendingSleepAction } = useApp();
 
   function showToast(message, icon = "✅") {
     clearTimeout(toastTimer.current);
@@ -830,6 +831,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
     else localStorage.removeItem(SESSION_KEY);
   }
+
 
   // ── Nap vs Night toggle ──
   const [sessionType, setSessionType] = useState("nap");
@@ -850,9 +852,6 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
 
   const lastNapWakeUp = completedSessions.find(l => l.session_type === "nap");
   const lastNightWakeUp = completedSessions.find(l => l.session_type === "night");
-  // If naps happened today, base off the most recent nap wake-up.
-  // Otherwise (morning, first nap pending) base off night wake-up.
-  const lastWakeUp = napCount > 0 ? (lastNapWakeUp || completedSessions[0]) : (lastNightWakeUp || completedSessions[0]);
 
   // Only count nap sessions today (not night sleep) so we pick the right wake window index.
   // A session is a nap if session_type === "nap", OR if session_type is unset and it started
@@ -867,13 +866,15 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     return hour >= 6;
   }).length;
 
+  // If naps happened today, base off the most recent nap wake-up.
+  // Otherwise (morning, first nap pending) base off night wake-up.
+  const lastWakeUp = napCount > 0 ? (lastNapWakeUp || completedSessions[0]) : (lastNightWakeUp || completedSessions[0]);
+
   // ── Wake window resolution ──
   // Priority: 1) consultant-configured  2) RCC age-based defaults
   const { activeChild: sleepActiveChild } = useApp();
   const childDob = sleepActiveChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate;
-  const ageMonthsForWindow = childDob
-    ? Math.floor((Date.now() - new Date(childDob)) / (1000 * 60 * 60 * 24 * 30.44))
-    : null;
+  const ageMonthsForWindow = calcAgeMonths(childDob);
   const ageBasedWindows = ageMonthsForWindow !== null
     ? defaultWakeWindowsForAge(ageMonthsForWindow)
     : [1.5, 2.0, 2.5, 3.0]; // generic fallback if no DOB
@@ -1041,6 +1042,51 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   const sleepingMins = session?.asleepTime
     ? Math.round((Date.now() - new Date(session.asleepTime)) / 60000)
     : null;
+
+  // ── Auto-open sheet if navigated here from a quick-log button ──
+  // Capture the action in a ref immediately on mount before any re-render can clear it.
+  const pendingActionRef = useRef(pendingSleepAction);
+  useEffect(() => {
+    const action = pendingActionRef.current;
+    if (!action) return;
+    if (setPendingSleepAction) setPendingSleepAction(null);
+    const t = setTimeout(() => {
+      const d = nowDateStr();
+      const ti = nowTimeStr();
+      if (action === "put_down") {
+        openSheet({
+          title: "🛏️ Put Down",
+          fields: [
+            { key: "date", label: "Date", type: "date", default: d },
+            { key: "time", label: "Time put down", type: "time", default: ti },
+          ],
+          onConfirm: handlePutDown,
+        });
+      } else if (action === "woke_up") {
+        openSheet({
+          title: "☀️ Woke Up",
+          fields: [
+            { key: "date", label: "Date", type: "date", default: d },
+            { key: "time", label: "Wake up time", type: "time", default: ti },
+            { key: "mood", label: "Wake-up mood", type: "select", options: ["happy","neutral","fussy","sleepy","upset"], default: "" },
+          ],
+          onConfirm: handleWakeUp,
+        });
+      } else if (action === "night_waking") {
+        openSheet({
+          title: "🌛 Night Waking",
+          fields: [
+            { key: "date", label: "Date", type: "date", default: d },
+            { key: "time", label: "Time", type: "time", default: ti },
+            { key: "duration", label: "Duration (minutes)", type: "number", default: "10" },
+            { key: "notes", label: "Notes (optional)", type: "text", default: "" },
+          ],
+          onConfirm: (vals) => handleNightWaking(vals),
+        });
+      }
+    }, 80);
+    return () => clearTimeout(t);
+  }, []); // runs once on mount — action is captured in ref above
 
   const MOODS = [
     { id: "happy",   emoji: "😊" },
@@ -1750,7 +1796,7 @@ function GrowthChart({ data, dob, metric, T }) {
 
   // X axis: 0 to max(24, child's current age + 1) months
   const dobDate = new Date(dob);
-  const currentAgeMonths = Math.floor((Date.now() - dobDate) / (1000 * 60 * 60 * 24 * 30.44));
+  const currentAgeMonths = calcAgeMonths(dob) ?? 0;
   const xMax = Math.max(24, currentAgeMonths + 1);
   const xMin = 0;
 
@@ -2081,7 +2127,7 @@ function ConsultantView({ config, setConfig, dbPin, isConsultant }) {
   // Work from age-based defaults when config values are null
   const { activeChild: cvChild } = useApp();
   const cvDob = cvChild?.dob;
-  const cvAgeMonths = cvDob ? Math.floor((Date.now() - new Date(cvDob)) / (1000*60*60*24*30.44)) : null;
+  const cvAgeMonths = calcAgeMonths(cvDob);
   const ageWindows = cvAgeMonths !== null ? defaultWakeWindowsForAge(cvAgeMonths) : [1.5, 2.0, 2.5, 3.0];
   const ageNapDur = cvAgeMonths !== null ? defaultNapDurationsForAge(cvAgeMonths) : [60, 70, 90];
 
@@ -2296,6 +2342,18 @@ function defaultNapDurationsForAge(ageMonths) {
   if (ageMonths < 37) return [60, 90, 90];
   // 3y+: no nap
   return [0, 0, 0];
+}
+
+// Accurate age-in-months using calendar math (avoids 30.44-day float drift)
+function calcAgeMonths(dob) {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  const now = new Date();
+  let years = now.getFullYear() - birth.getFullYear();
+  let mos = now.getMonth() - birth.getMonth();
+  if (now.getDate() < birth.getDate()) mos--;
+  if (mos < 0) { years--; mos += 12; }
+  return years * 12 + mos;
 }
 
 function isWithin24h(ts) { return new Date(ts) > new Date(Date.now() - 86400000); }

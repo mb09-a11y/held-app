@@ -84,9 +84,10 @@ const CONSULTANT_VIEW_TABS = [
 
 function SleepTabView() {
   const T = useT();
-  const { activeFamily, currentUser, pendingSleepTab, setPendingSleepTab } = useApp();
+  const { activeFamily, currentUser, pendingSleepTab, setPendingSleepTab, pendingSleepAction } = useApp();
   const [view, setView] = useState("log");
-  const [sleepInitialTab] = useState(() => pendingSleepTab || "dashboard");
+  // If a quick-log action is pending, always open on Today tab
+  const [sleepInitialTab] = useState(() => pendingSleepAction ? "today" : (pendingSleepTab || "today"));
 
   useEffect(() => {
     if (pendingSleepTab) setPendingSleepTab(null);
@@ -573,6 +574,7 @@ export default function RCCShell() {
   const isPremium = isConsultantRole || hasConsultantAssigned || subscriptionTier === "premium";
 
   const [pendingSleepTab, setPendingSleepTab] = useState(null);
+  const [pendingSleepAction, setPendingSleepAction] = useState(null); // "put_down" | "woke_up" | "night_waking"
 
   const appContext = {
     themeMode, themeToggle: toggleTheme, supabase, currentUser, session,
@@ -581,6 +583,7 @@ export default function RCCShell() {
     tab, setTab, logout, selectedConsultantFamily, setSelectedConsultantFamily,
     isPremium, subscriptionTier, hasConsultantAssigned,
     pendingSleepTab, setPendingSleepTab,
+    pendingSleepAction, setPendingSleepAction,
   };
 
   // ── GLOBAL STYLES ─────────────────────────────────────────
