@@ -324,12 +324,10 @@ function ConsultantAccount({ user, onLogout }) {
   const [pinSaving, setPinSaving] = useState(false);
   const [pinSaved, setPinSaved] = useState(false);
   const [pinError, setPinError] = useState("");
-  const [templateSaving, setTemplateSaving] = useState(false);
-  const [templateSaved, setTemplateSaved] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
-    supabase.from("profiles").select("subscription_active, subscription_id, stripe_customer_id, grace_period_until, consultant_pin, role, intake_template, sleep_plan_template").eq("id", user.id).single().then(({ data }) => setProfile(data));
+    supabase.from("profiles").select("subscription_active, subscription_id, stripe_customer_id, grace_period_until, consultant_pin, role").eq("id", user.id).single().then(({ data }) => setProfile(data));
   }, [user?.id]);
 
   async function savePin() {
@@ -342,88 +340,11 @@ function ConsultantAccount({ user, onLogout }) {
     setPinSaving(false);
   }
 
-  async function saveTemplate(field, value) {
-    setTemplateSaving(true);
-    const { error } = await supabase.from("profiles").update({ [field]: value }).eq("id", user.id);
-    if (!error) {
-      setProfile(p => ({ ...p, [field]: value }));
-      setTemplateSaved(true);
-      setTimeout(() => setTemplateSaved(false), 2000);
-    }
-    setTemplateSaving(false);
-  }
-
   const isInternal = user?.role === "consultant_internal";
   const isActive = profile?.subscription_active;
   const inGrace = profile?.grace_period_until && new Date(profile.grace_period_until) > new Date();
   const subLabel = isInternal ? "Internal · No subscription required" : isActive ? "Active" : inGrace ? "Grace period" : profile ? "Inactive" : "—";
   const subColor = isInternal ? "#7BAA8A" : isActive ? "#7BAA8A" : inGrace ? "#A89B5A" : "#A87B8A";
-
-  // Template toggle component — inline for reuse
-  function TemplateToggle({ field, label, description, value, lockedReason }) {
-
-    return (
-      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: font, fontSize: 13.5, fontWeight: 600, color: T.text, marginBottom: 3 }}>
-              {label}
-            </div>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-              {description}
-            </div>
-          </div>
-          {lockedReason ? (
-            <div style={{ flexShrink: 0, padding: "4px 10px", borderRadius: 20, background: T.faint, border: `1px solid ${T.border}`, fontFamily: font, fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>
-              🔒 RCC only
-            </div>
-          ) : (
-            <div style={{ flexShrink: 0, display: "flex", gap: 4 }}>
-              {["rcc", "custom"].map(opt => (
-                <button
-                  key={opt}
-                  onClick={() => !templateSaving && saveTemplate(field, opt)}
-                  style={{
-                    padding: "5px 12px", borderRadius: 9,
-                    border: `1.5px solid ${value === opt ? T.teal : T.border}`,
-                    background: value === opt ? `${T.teal}18` : "transparent",
-                    color: value === opt ? T.teal : T.muted,
-                    fontFamily: font, fontSize: 12, fontWeight: value === opt ? 700 : 400,
-                    cursor: templateSaving ? "default" : "pointer",
-                    transition: "all .15s",
-                  }}
-                >
-                  {opt === "rcc" ? "RCC" : "Custom"}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* State-specific messaging */}
-        {!lockedReason && value === "rcc" && (
-          <div style={{ marginTop: 8, fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.5, fontStyle: "italic" }}>
-            Using Manu's template — works great as a starting point.
-          </div>
-        )}
-        {!lockedReason && value === "custom" && (
-          <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 9, background: `${T.teal}10`, border: `1px solid ${T.teal}25` }}>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.teal, fontWeight: 600, marginBottom: 2 }}>
-              Custom template selected
-            </div>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.5 }}>
-              Custom builder coming soon — for now your families will see Manu's template until yours is ready.
-            </div>
-          </div>
-        )}
-        {lockedReason && (
-          <div style={{ marginTop: 6, fontFamily: font, fontSize: 12, color: T.subText, fontStyle: "italic" }}>
-            {lockedReason}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div style={{ maxWidth: 560 }}>
@@ -461,42 +382,6 @@ function ConsultantAccount({ user, onLogout }) {
           </div>
         )}
       </Card>
-
-      {/* ── TEMPLATE SETTINGS ── only shown when profile is loaded ── */}
-      {profile && (
-        <Card style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4, fontFamily: font }}>
-            Templates
-          </div>
-          <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6, marginBottom: 16 }}>
-            {isInternal
-              ? "As an RCC team member, you use Manu's intake form and sleep plan templates with all families."
-              : "Choose whether to use Manu's templates or build your own for your practice."}
-          </div>
-
-          <TemplateToggle
-            field="intake_template"
-            label="Intake Form"
-            description="The questionnaire your families complete before you start working together."
-            value={profile?.intake_template || "rcc"}
-            lockedReason={isInternal ? "Internal consultants use the RCC intake form." : null}
-          />
-          <TemplateToggle
-            field="sleep_plan_template"
-            label="Sleep Plan Templates"
-            description="The sleep training methods and plan structure shown to your families."
-            value={profile?.sleep_plan_template || "rcc"}
-            lockedReason={isInternal ? "Internal consultants use RCC sleep plan templates." : null}
-          />
-
-          {templateSaved && (
-            <div style={{ fontFamily: font, fontSize: 12, color: "#7BAA8A", fontWeight: 600 }}>
-              ✓ Saved
-            </div>
-          )}
-        </Card>
-      )}
-
       <Card style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 12, fontFamily: font }}>Consultant PIN</div>
         <div style={{ fontSize: 13, color: T.muted, fontFamily: font, lineHeight: 1.6, marginBottom: 12 }}>Your PIN is used to access the Sleep Log configure tab for families. Keep it somewhere safe.</div>

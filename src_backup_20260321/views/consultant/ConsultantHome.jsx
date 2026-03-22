@@ -4,10 +4,6 @@ import { supabase } from "../../lib/supabase.js";
 import { callAI } from "../../lib/ai.js";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
 import { NotificationSettings } from "../shared/NotificationSettings.jsx";
-import { InsightGenerator } from "../../modules/consultant/InsightGenerator.jsx";
-import { ResponseDraftGenerator } from "../../modules/consultant/ResponseDraftGenerator.jsx";
-import { PriorityEngine } from "../../modules/consultant/PriorityEngine.jsx";
-import { ClientMemoryEngine } from "../../modules/consultant/ClientMemoryEngine.jsx";
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function ageLabel(dob) {
@@ -138,6 +134,36 @@ function useClientData(families) {
   return { clientData, loading };
 }
 
+// ─── AI INSIGHT FOR CLIENT ────────────────────────────────────────────────────
+function useClientInsight(clientData, family) {
+  const [insight, setInsight] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const generate = useCallback(async () => {
+    if (!clientData || window.location.hostname === "localhost") return;
+    setLoading(true);
+    try {
+      const text = await callAI({
+        max_tokens: 600,
+        system: `You are an RCC sleep consultant assistant. Generate a brief clinical insight for a consultant reviewing a family. Respond ONLY with valid JSON: { "summary": "2 sentences max", "likely_cause": "1 sentence", "adjustments": ["specific action 1", "specific action 2", "specific action 3"] }. No markdown.`,
+        messages: [{ role: "user", content: `Family: ${family.display_name || family.invite_email}
+Child age: ${clientData.children[0] ? ageLabel(clientData.children[0].dob) : "unknown"}
+Sleep this week: ${clientData.sleepData.weekSessions} sessions, avg ${clientData.sleepData.nightWakesAvg} night wakings
+Today: ${clientData.sleepData.napCountToday} naps, ${clientData.sleepData.totalSleepTodayH}h sleep
+Parent overwhelm: ${clientData.parentState.overwhelmLevel}/10
+Last NS state: ${clientData.parentState.recentState || "unknown"}
+Priority level: ${clientData.priority.level}
+Signals: ${clientData.priority.signals.join(", ")}
+Intake complete: ${family.intake_complete}` }],
+      });
+      setInsight(JSON.parse(text.replace(/```json|```/g, "").trim()));
+    } catch { setInsight(null); }
+    finally { setLoading(false); }
+  }, [clientData, family]);
+
+  return { insight, loading, generate };
+}
+
 // ─── PRIORITY BADGE ───────────────────────────────────────────────────────────
 function PriorityBadge({ level, T }) {
   const colors = {
@@ -159,14 +185,9 @@ function FamilyDeepDive({ clientData, onBack, onOpenTab, onOpenSleepTab }) {
   const T = useT();
   const { family, children, priority, sleepData, parentState, recentMessages, lastLog, lastMessage } = clientData;
   const [viewingIntake, setViewingIntake] = useState(false);
-  const [draftSeed, setDraftSeed] = useState(null);
-  const [showDraft, setShowDraft] = useState(false);
+  const { insight, loading: insightLoading, generate } = useClientInsight(clientData, family);
 
-  // "Use as draft →" from InsightGenerator pre-fills the ResponseDraftGenerator
-  function handleDraftFromInsight(insight) {
-    setDraftSeed(insight.suggested_message_to_parent);
-    setShowDraft(true);
-  }
+  useEffect(() => { generate(); }, []);
 
   if (viewingIntake) {
     return <IntakeViewer family={family} onBack={() => setViewingIntake(false)} />;
@@ -208,51 +229,41 @@ function FamilyDeepDive({ clientData, onBack, onOpenTab, onOpenSleepTab }) {
         </div>
       )}
 
-      {/* ── 2. AI INSIGHT — powered by InsightGenerator module ── */}
+      {/* ── 2. AI INSIGHT ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
-        <InsightGenerator
-          clientData={clientData}
-          family={family}
-          onDraft={handleDraftFromInsight}
-        />
-      </div>
-
-      {/* ── 2b. RESPONSE DRAFT — shown when consultant clicks "Use as draft →" ── */}
-      {showDraft && (
-        <div style={{ marginBottom: 14 }}>
-          <ResponseDraftGenerator
-            insight={null}
-            clientData={clientData}
-            family={family}
-            seedMessage={draftSeed}
-            onInsert={(text) => {
-              // Copy to clipboard and prompt — messaging tab handles actual send
-              navigator.clipboard.writeText(text).then(() => {
-                alert("Draft copied — paste it into the Messages tab to send.");
-              }).catch(() => {
-                alert(`Draft ready:\n\n${text}`);
-              });
-              setShowDraft(false);
-              setDraftSeed(null);
-            }}
-          />
-          <button
-            onClick={() => { setShowDraft(false); setDraftSeed(null); }}
-            style={{ marginTop: 6, background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer" }}
-          >
-            ✕ Dismiss draft
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font }}>✦ AI Insight</div>
+          <button onClick={generate} disabled={insightLoading}
+            style={{ background: "none", border: "none", fontFamily: font, fontSize: 11.5, color: T.teal, cursor: "pointer" }}>
+            {insightLoading ? "Reading…" : "↻ Refresh"}
           </button>
         </div>
-      )}
+        {insightLoading ? (
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>Analyzing family data…</div>
+        ) : insight ? (
+          <>
+            <p style={{ fontFamily: font, fontSize: 14, color: T.text, lineHeight: 1.65, marginBottom: 8, fontWeight: 600 }}>{insight.summary}</p>
+            <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, fontStyle: "italic", marginBottom: 12 }}>{insight.likely_cause}</p>
+            {insight.adjustments?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 8 }}>Suggested Adjustments</div>
+                {insight.adjustments.map((a, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: `${T.teal}20`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: T.teal, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                    <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.6, margin: 0 }}>{a}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
+            {window.location.hostname === "localhost" ? "AI insights available in production." : "Not enough data yet to generate insight."}
+          </p>
+        )}
+      </div>
 
-      {/* ── 3. CLIENT MEMORY — patterns across time ── */}
-      <ClientMemoryEngine
-        family={family}
-        clientData={clientData}
-        childName={child?.name}
-      />
-
-      {/* ── 4. COMBINED DATA VIEW ── */}
+      {/* ── 3. COMBINED DATA VIEW ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 12 }}>📊 This Week at a Glance</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
@@ -330,43 +341,6 @@ function FamilyDeepDive({ clientData, onBack, onOpenTab, onOpenSleepTab }) {
             </div>
           </Card>
         ))}
-      </div>
-
-      {/* ── 5. END RELATIONSHIP ── */}
-      <div style={{ marginTop: 8, paddingTop: 16, borderTop: `1px solid ${T.border}` }}>
-        <div style={{ fontFamily: font, fontSize: 11, color: T.subText, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
-          End Client Relationship
-        </div>
-        <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.6, marginBottom: 12 }}>
-          This will remove your connection to this family. Their app access will step down from VIP to Free. Their data stays safe — they can always upgrade on their own.
-        </div>
-        <button
-          onClick={async () => {
-            const familyName = family.display_name || family.invite_email || "this family";
-            if (!window.confirm(`End your relationship with ${familyName}?\n\nThey'll lose VIP access and step down to the free tier. Their sleep logs and data are preserved.`)) return;
-            try {
-              // Call the Supabase function that handles downgrade + removes consultant_id
-              const { error } = await supabase.rpc("remove_family_from_consultant", {
-                p_family_id: family.id,
-              });
-              if (error) throw error;
-              window.alert(`Relationship with ${familyName} ended. They've been moved to the free tier.`);
-              onBack();
-            } catch (e) {
-              window.alert(`Something went wrong: ${e.message}`);
-            }
-          }}
-          style={{
-            padding: "10px 16px", borderRadius: 10,
-            border: `1px solid ${T.rose || "#A87B8A"}40`,
-            background: `${T.rose || "#A87B8A"}10`,
-            color: T.rose || "#A87B8A",
-            fontFamily: font, fontSize: 13, fontWeight: 600,
-            cursor: "pointer", width: "100%",
-          }}
-        >
-          End relationship with {family.display_name || family.invite_email?.split("@")[0] || "this family"} →
-        </button>
       </div>
     </div>
   );
@@ -483,13 +457,7 @@ export function ConsultantHome({ user }) {
         </div>
       </div>
 
-      {/* ── 2. PRIORITY ENGINE ── */}
-      <PriorityEngine
-        clientData={clientData}
-        onOpenClient={openClient}
-      />
-
-      {/* ── 3. NEEDS ATTENTION (rule-based fallback) ── */}
+      {/* ── 2. NEEDS ATTENTION ── */}
       {needsAttention.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>

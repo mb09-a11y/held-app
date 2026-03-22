@@ -1120,7 +1120,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
               <div style={{ textAlign: "right" }}>
                 <p style={{ fontSize: 12, color: T.muted }}>in</p>
                 <p style={{ fontSize: 18, fontWeight: 700, color: minsUntil < 0 ? C.rose : C.teal }}>
-                  {minsUntil < 0 ? `${fmtDuration(Math.abs(minsUntil))} ago` : fmtDuration(minsUntil)}
+                  {minsUntil < 0 ? `${Math.abs(minsUntil)}m ago` : `${minsUntil}m`}
                 </p>
               </div>
             )}
@@ -1149,7 +1149,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
                 <div style={{ textAlign: "right" }}>
                   <p style={{ fontSize: 12, color: T.muted }}>{minsToWake < 0 ? "past" : "in"}</p>
                   <p style={{ fontSize: 18, fontWeight: 700, color: minsToWake < 0 ? C.rose : C.sage }}>
-                    {minsToWake < 0 ? `${fmtDuration(Math.abs(minsToWake))}` : fmtDuration(minsToWake)}
+                    {minsToWake < 0 ? `${Math.abs(minsToWake)}m` : `${minsToWake}m`}
                   </p>
                 </div>
               );
@@ -1209,13 +1209,13 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
               {inCribMins !== null && !session.asleepTime && (
                 <div>
                   <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>In crib</p>
-                  <p style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{fmtDuration(inCribMins)}</p>
+                  <p style={{ fontSize: 16, fontWeight: 700, color: C.amber }}>{inCribMins}m</p>
                 </div>
               )}
               {sleepingMins !== null && (
                 <div>
                   <p style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Sleeping</p>
-                  <p style={{ fontSize: 16, fontWeight: 700, color: C.sage }}>{fmtDuration(sleepingMins)}</p>
+                  <p style={{ fontSize: 16, fontWeight: 700, color: C.sage }}>{sleepingMins}m</p>
                 </div>
               )}
             </div>
@@ -2367,13 +2367,6 @@ function fmtTime(iso) {
 function fmtDateTime(iso) {
   return new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
     + " · " + fmtTime(iso);
-}
-function fmtDuration(mins) {
-  const m = Math.abs(Math.round(mins));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem > 0 ? `${h}h ${rem}m` : `${h}h`;
 }
 
 function logIcon(l) {

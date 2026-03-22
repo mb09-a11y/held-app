@@ -38,8 +38,6 @@ import { SleepLog } from "./modules/sleep/SleepLog.jsx";
 import { SleepPlanTracker } from "./modules/sleep/SleepPlanTracker.jsx";
 import { IntakeForm } from "./modules/intake/IntakeForm.jsx";
 
-import { useTier } from "./hooks/useTier.js";
-
 // ─── ROLES ────────────────────────────────────────────────────────────────────
 const ROLES = {
   parent: "parent",
@@ -55,7 +53,6 @@ const PARENT_TABS = [
   { id: "home",       label: "Home",       icon: "🏡" },
   { id: "sleep",      label: "Sleep",      icon: "🌙" },
   { id: "regulation", label: "Regulation", icon: "🌿" },
-  { id: "library",    label: "Library",    icon: "📚" },
   { id: "messages",   label: "Messages",   icon: "💬" },
   { id: "dashboard",  label: "Dashboard",  icon: "📊" },
 ];
@@ -87,7 +84,7 @@ const CONSULTANT_VIEW_TABS = [
 
 function SleepTabView() {
   const T = useT();
-  const { activeFamily, currentUser, pendingSleepTab, setPendingSleepTab, pendingSleepAction, canAccessSleepPlan, subscriptionTier } = useApp();
+  const { activeFamily, currentUser, pendingSleepTab, setPendingSleepTab, pendingSleepAction } = useApp();
   const [view, setView] = useState("log");
   // If a quick-log action is pending, always open on Today tab
   const [sleepInitialTab] = useState(() => pendingSleepAction ? "today" : (pendingSleepTab || "today"));
@@ -107,67 +104,34 @@ function SleepTabView() {
     );
   }
 
-  // Tabs: Sleep Log always visible; Sleep Plan only for Plus+
-  const sleepTabs = [
-    { id: "log", label: "Sleep Log", icon: "🌙" },
-    ...(canAccessSleepPlan ? [{ id: "plan", label: "Sleep Plan", icon: "📋" }] : []),
-  ];
-
   return (
     <div>
-      {/* Tab bar — only show toggle if there's more than one tab */}
-      {sleepTabs.length > 1 && (
-        <div style={{ display: "flex", gap: 4, background: T.faint, borderRadius: 12, padding: 4, marginBottom: 20 }}>
-          {sleepTabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setView(t.id)}
-              style={{
-                flex: 1,
-                padding: "9px 4px",
-                borderRadius: 9,
-                border: "none",
-                fontFamily: font,
-                fontSize: 13,
-                fontWeight: view === t.id ? 700 : 400,
-                background: view === t.id ? `${T.teal}26` : "transparent",
-                color: view === t.id ? T.teal : T.muted,
-                cursor: "pointer",
-                transition: "all .2s"
-              }}
-            >
-              {t.icon} {t.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Upgrade nudge for free users — shown below the log, not blocking it */}
-      {!canAccessSleepPlan && (
-        <div style={{
-          margin: "0 0 20px",
-          padding: "12px 16px",
-          borderRadius: 12,
-          background: `${T.teal}12`,
-          border: `1px solid ${T.teal}30`,
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-        }}>
-          <div style={{ fontSize: 20 }}>📋</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: font, fontSize: 13, fontWeight: 600, color: T.headingText, marginBottom: 2 }}>
-              Want a personalized sleep plan?
-            </div>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>
-              Plus members get an AI-generated plan tailored to your child's rhythm — starting at $10/mo.
-            </div>
-          </div>
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 4, background: T.faint, borderRadius: 12, padding: 4, marginBottom: 20 }}>
+        {[{ id: "log", label: "Sleep Log", icon: "🌙" }, { id: "plan", label: "Sleep Plan", icon: "📋" }].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setView(t.id)}
+            style={{
+              flex: 1,
+              padding: "9px 4px",
+              borderRadius: 9,
+              border: "none",
+              fontFamily: font,
+              fontSize: 13,
+              fontWeight: view === t.id ? 700 : 400,
+              background: view === t.id ? `${T.teal}26` : "transparent",
+              color: view === t.id ? T.teal : T.muted,
+              cursor: "pointer",
+              transition: "all .2s"
+            }}
+          >
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
 
       {view === "log" && <SleepLog key={sleepInitialTab} user={currentUser} activeFamily={activeFamily} initialTab={sleepInitialTab} />}
-      {view === "plan" && canAccessSleepPlan && <SleepPlanTracker user={currentUser} activeFamily={activeFamily} />}
+      {view === "plan" && <SleepPlanTracker user={currentUser} activeFamily={activeFamily} />}
     </div>
   );
 }
@@ -224,26 +188,6 @@ export default function RCCShell() {
   const [consultantInviteToken] = useState(() => { try { return new URLSearchParams(window.location.search).get("consultant_invite"); } catch { return null; } });
   // NEW: co-caregiver invite — carries the invited email directly
   const [coInviteToken] = useState(() => { try { return new URLSearchParams(window.location.search).get("co_invite"); } catch { return null; } });
-  // Stripe upgrade success — refresh profile to pick up new tier
-  const [upgradeSuccess] = useState(() => { try { return new URLSearchParams(window.location.search).get("upgrade_success") === "true"; } catch { return null; } });
-  const [upgradeTier] = useState(() => { try { return new URLSearchParams(window.location.search).get("tier"); } catch { return null; } });
-
-  // On Stripe redirect back, refresh the user's profile to pick up the new tier
-  useEffect(() => {
-    if (!upgradeSuccess || !session?.user) return;
-    // Small delay to give the webhook time to update the DB
-    const timer = setTimeout(async () => {
-      await loadProfile(session.user.id, session.user.email, true);
-      // Clean URL
-      try {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("upgrade_success");
-        url.searchParams.delete("tier");
-        window.history.replaceState({}, "", url.toString());
-      } catch {}
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [upgradeSuccess, session]);
 
   const [inviteRecord, setInviteRecord] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken || !!consultantInviteToken || !!coInviteToken);
@@ -251,14 +195,6 @@ export default function RCCShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
   const [showFindConsultant, setShowFindConsultant] = useState(false);
-  const [showUpgradeToast, setShowUpgradeToast] = useState(upgradeSuccess);
-
-  // Auto-dismiss upgrade toast after 5 seconds
-  useEffect(() => {
-    if (!showUpgradeToast) return;
-    const t = setTimeout(() => setShowUpgradeToast(false), 5000);
-    return () => clearTimeout(t);
-  }, [showUpgradeToast]);
   const [childSaving, setChildSaving] = useState(false);
 
   // ── BOOT ──────────────────────────────────────────────────
@@ -427,20 +363,6 @@ export default function RCCShell() {
 
           setChildren(resolvedKids || []);
           if (resolvedKids?.length > 0 && !activeChildId) setActiveChildId(resolvedKids[0].id);
-
-          // ── Auto-grant VIP tier if consultant is assigned and parent is on free tier ──
-          // This runs silently in the background — doesn't block the UI
-          if (familyData.consultant_id && merged.subscription_tier === "free") {
-            supabase.from("profiles")
-              .update({ subscription_tier: "vip" })
-              .eq("id", userId)
-              .then(() => {
-                // Update local user object so tier reflects immediately
-                const updated = { ...merged, subscription_tier: "vip" };
-                setCurrentUser(updated);
-                try { localStorage.setItem("rcc_user", JSON.stringify(updated)); } catch {}
-              });
-          }
 
           const hasChild = (resolvedKids || []).length > 0;
           if (merged.role === "co_caregiver") {
@@ -645,27 +567,11 @@ export default function RCCShell() {
   const needsIntake = currentUser?.role === ROLES.parent && families[0]?.require_intake && !families[0]?.intake_complete;
 
   // ── TIER DETECTION ─────────────────────────────────────────
-  const tierAccess = useTier({ currentUser, families });
-  const {
-    tier: subscriptionTier,
-    isPremium,
-    isPlus,
-    isVIP,
-    isFree,
-    hasConsultantAssigned,
-    isConsultantRole,
-    canSendAIMessage,
-    aiMessagesRemaining,
-    aiMessageLimit,
-    canAccessSleepPlan,
-    canAccessHumanMessaging,
-    canAccessFilesTab,
-    canAccessFullLibrary,
-    canAccessDashboardInsights,
-    canAccessRegulationInsights,
-    canAccessTroubleshootingPDFs,
-    canAccessConsultantReviewedPlan,
-  } = tierAccess;
+  // Premium if: consultant role, OR has assigned consultant, OR subscription_tier = 'premium'
+  const hasConsultantAssigned = !!(families[0]?.consultant_id);
+  const subscriptionTier = currentUser?.subscription_tier || "free";
+  const isConsultantRole = currentUser?.role === ROLES.consultant || currentUser?.role === ROLES.consultant_internal || currentUser?.role === ROLES.admin;
+  const isPremium = isConsultantRole || hasConsultantAssigned || subscriptionTier === "premium";
 
   const [pendingSleepTab, setPendingSleepTab] = useState(null);
   const [pendingSleepAction, setPendingSleepAction] = useState(null); // "put_down" | "woke_up" | "night_waking"
@@ -675,26 +581,7 @@ export default function RCCShell() {
     families, setFamilies, consultants, children, activeFamily, setActiveFamily,
     activeChild, setActiveChildId,
     tab, setTab, logout, selectedConsultantFamily, setSelectedConsultantFamily,
-    // ── Tier access — use these throughout the app ──────────────────────────
-    tierAccess,
-    subscriptionTier,
-    isPremium,
-    isPlus,
-    isVIP,
-    isFree,
-    hasConsultantAssigned,
-    isConsultantRole,
-    canSendAIMessage,
-    aiMessagesRemaining,
-    aiMessageLimit,
-    canAccessSleepPlan,
-    canAccessHumanMessaging,
-    canAccessFilesTab,
-    canAccessFullLibrary,
-    canAccessDashboardInsights,
-    canAccessRegulationInsights,
-    canAccessTroubleshootingPDFs,
-    canAccessConsultantReviewedPlan,
+    isPremium, subscriptionTier, hasConsultantAssigned,
     pendingSleepTab, setPendingSleepTab,
     pendingSleepAction, setPendingSleepAction,
   };
@@ -706,7 +593,7 @@ export default function RCCShell() {
   body { background: ${T.bg}; }
   button { cursor: pointer; }
   input, select, textarea { color-scheme: auto; }
-  @keyframes slideDown { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  ::-webkit-scrollbar { width: 3px; }
   ::-webkit-scrollbar-thumb { background: rgba(128,100,80,0.15); }
   .rcc-shell { display: flex; min-height: 100vh; width: 100%; overflow-x: hidden; }
   .rcc-hamburger { display: flex; }
@@ -769,12 +656,9 @@ export default function RCCShell() {
             const unread = {};
 
             if (role === ROLES.parent || role === "co_caregiver") {
-              // Messages tab always visible — free/plus users see AI coach only,
-              // Premium/VIP users see human messaging thread too
-              const visibleParentTabs = PARENT_TABS.filter(t => t.id !== "messages" ? true : true);
               return (
                 <div className="rcc-shell">
-                  <SideNav tabs={visibleParentTabs} active={tab} setActive={setTab} onLogout={logout} onOpenNotifications={() => setShowNotificationSettings(true)} onOpenAccount={() => setDrawerOpen(true)} onOpenFindConsultant={() => setShowFindConsultant(true)} currentUser={currentUser} T={T} />
+                  <SideNav tabs={PARENT_TABS} active={tab} setActive={setTab} onLogout={logout} onOpenNotifications={() => setShowNotificationSettings(true)} onOpenAccount={() => setDrawerOpen(true)} onOpenFindConsultant={() => setShowFindConsultant(true)} currentUser={currentUser} T={T} />
                   <div className="rcc-main">
                     <div className="rcc-content">
                       {tab === "home"       && <ParentHome user={currentUser} onLogout={logout} onInviteCo={() => setShowInviteCo(true)} onAddChild={() => setOnboardingStep("child")} onOpenDrawer={() => setDrawerOpen(true)} onFindConsultant={() => setShowFindConsultant(true)} />}
@@ -784,7 +668,7 @@ export default function RCCShell() {
                       {tab === "dashboard"  && <ParentDashboard user={currentUser} onFindConsultant={() => setShowFindConsultant(true)} onInviteCo={() => setShowInviteCo(true)} />}
                       {tab === "library"    && <LibraryModule />}
                     </div>
-                    <BottomNav tabs={visibleParentTabs} active={tab} setActive={setTab} unread={unread} />
+                    <BottomNav tabs={PARENT_TABS} active={tab} setActive={setTab} unread={unread} />
                   </div>
                 </div>
               );
@@ -867,25 +751,6 @@ export default function RCCShell() {
 
             return null;
           })()}
-
-          {/* Upgrade success toast */}
-          {showUpgradeToast && (
-            <div style={{
-              position: "fixed", top: 20, left: "50%", transform: "translateX(-50%)",
-              zIndex: 400, background: T.teal, color: "#fff",
-              padding: "12px 20px", borderRadius: 14,
-              fontFamily: font, fontSize: 13.5, fontWeight: 600,
-              boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-              display: "flex", alignItems: "center", gap: 10,
-              animation: "slideDown .3s ease",
-              whiteSpace: "nowrap",
-            }}>
-              <span>🌿</span>
-              <span>Welcome to {upgradeTier ? upgradeTier.charAt(0).toUpperCase() + upgradeTier.slice(1) : "your new plan"}! Your access is now active.</span>
-              <button onClick={() => setShowUpgradeToast(false)}
-                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 16, cursor: "pointer", padding: 0, marginLeft: 4 }}>×</button>
-            </div>
-          )}
 
           {/* App Drawer */}
           <AppDrawer

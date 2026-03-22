@@ -8,20 +8,6 @@ function InviteFamilyPanel({ form, setForm, onSend, onClose, busy, error, succes
         <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText }}>Invite Family</div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: T.muted, fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
       </div>
-
-      {/* VIP context — explains what the family gets */}
-      <div style={{
-        marginBottom: 16, padding: "12px 14px", borderRadius: 10,
-        background: `${T.teal}10`, border: `1px solid ${T.teal}25`,
-      }}>
-        <div style={{ fontFamily: font, fontSize: 12.5, fontWeight: 700, color: T.teal, marginBottom: 4 }}>
-          🌿 This family gets VIP access — free
-        </div>
-        <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6 }}>
-          Families you invite get full Held access for the duration of your work together — sleep plan, full library, messaging, and everything in between. It's included in your client relationship.
-        </div>
-      </div>
-
       <Input label="Parent email" value={form.email} onChange={v => setForm(f => ({ ...f, email: v }))} type="email" required />
       <Input label="Family display name (optional)" value={form.display_name} onChange={v => setForm(f => ({ ...f, display_name: v }))} placeholder="e.g. The Johnson Family" />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>

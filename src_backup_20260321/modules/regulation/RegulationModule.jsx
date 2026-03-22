@@ -276,28 +276,16 @@ function HomeScreen({ onCheckIn, onTrends, onInsights, onExercise, logs, isConsu
 
       {/* Nav */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 4 }}>
-        <button onClick={onTrends} style={{
-          padding: "13px", borderRadius: 12, border: `1px solid ${T.border}`,
-          background: T.card, fontFamily: font, fontSize: 13.5, fontWeight: 600,
-          color: T.text, cursor: "pointer",
-        }}>📈 Trends</button>
-
-        {onInsights ? (
-          <button onClick={onInsights} style={{
+        {[
+          { label: "📈 Trends", onClick: onTrends },
+          { label: "✦ Insights", onClick: onInsights },
+        ].map(n => (
+          <button key={n.label} onClick={n.onClick} style={{
             padding: "13px", borderRadius: 12, border: `1px solid ${T.border}`,
             background: T.card, fontFamily: font, fontSize: 13.5, fontWeight: 600,
             color: T.text, cursor: "pointer",
-          }}>✦ Insights</button>
-        ) : (
-          <button style={{
-            padding: "13px", borderRadius: 12, border: `1px solid ${T.border}`,
-            background: T.faint, fontFamily: font, fontSize: 13.5, fontWeight: 600,
-            color: T.muted, cursor: "default", position: "relative",
-          }} title="Upgrade to Plus to unlock AI Insights">
-            🔒 Insights
-            <span style={{ display: "block", fontSize: 10, fontWeight: 400, color: T.muted, marginTop: 2 }}>Plus feature</span>
-          </button>
-        )}
+          }}>{n.label}</button>
+        ))}
       </div>
     </div>
   );
@@ -1047,7 +1035,7 @@ function CrisisBanner() {
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export function RegulationModule() {
   const T = useT();
-  const { currentUser, canAccessRegulationInsights } = useApp();
+  const { currentUser } = useApp();
   const isConsultant = currentUser?.role === "consultant" || currentUser?.role === "consultant_internal" || currentUser?.role === "admin";
   const [logs, setLogs] = useState([]);
   const [exerciseLogs, setExerciseLogs] = useState([]);
@@ -1166,7 +1154,7 @@ export function RegulationModule() {
               <HomeScreen
                 onCheckIn={startCheckIn}
                 onTrends={() => setScreen("trends")}
-                onInsights={canAccessRegulationInsights ? () => setScreen("insights") : null}
+                onInsights={() => setScreen("insights")}
                 onExercise={openExercise}
                 logs={logs}
                 isConsultant={isConsultant}
@@ -1210,21 +1198,8 @@ export function RegulationModule() {
             <TrendsScreen logs={logs} exerciseLogs={exerciseLogs} onBack={() => setScreen("home")} />
           )}
 
-          {screen === "insights" && canAccessRegulationInsights && (
+          {screen === "insights" && (
             <InsightsScreen logs={logs} exerciseLogs={exerciseLogs} onBack={() => setScreen("home")} onExercise={openExercise} />
-          )}
-
-          {screen === "insights" && !canAccessRegulationInsights && (
-            <div style={{ padding: "40px 20px", textAlign: "center" }}>
-              <div style={{ fontSize: 36, marginBottom: 12 }}>🔒</div>
-              <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText, marginBottom: 8 }}>AI Insights</div>
-              <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 20 }}>
-                Upgrade to Plus to unlock AI-powered insights that help you make sense of your regulation patterns — not just the trends, but what to do with them.
-              </div>
-              <button onClick={() => setScreen("home")} style={{ padding: "10px 20px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontFamily: font, fontSize: 13, cursor: "pointer" }}>
-                ← Back
-              </button>
-            </div>
           )}
 
           {screen === "notifications" && (

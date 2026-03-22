@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 // Import shared UI and logic from your core file
-import { useT, useApp, Card, Btn, font, serif, mono } from "../../core/shared.jsx";
+import { useT, Card, Btn, font, serif, mono } from "../../core/shared.jsx";
 import { callAI } from "../../lib/ai.js";
 // Import the centralized supabase client
 import { supabase } from "../../lib/supabase.js";
@@ -477,28 +477,10 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export function Messaging({ user, activeFamily, families, onFamilyChange, children }) {
-  const [mode, setMode] = useState("ai"); // default to AI tab — free users only see this
+  const [mode, setMode] = useState("messages"); // messages | files | ai
   const [searchQuery, setSearchQuery] = useState("");
   const T = useT();
   const [input, setInput] = useState("");
-
-  // ── Tier access ──────────────────────────────────────────────────────────
-  const {
-    canAccessHumanMessaging,
-    canAccessFilesTab,
-    canSendAIMessage,
-    aiMessagesRemaining,
-    aiMessageLimit,
-    subscriptionTier,
-    asyncSupportCopy,
-    supabase: sbCtx,
-  } = useApp();
-
-  // Ensure mode stays valid for tier
-  useEffect(() => {
-    if (mode === "messages" && !canAccessHumanMessaging) setMode("ai");
-    if (mode === "files" && !canAccessFilesTab) setMode("ai");
-  }, [canAccessHumanMessaging, canAccessFilesTab, mode]);
 
   // ── Supabase-backed messages for Messages tab; ephemeral state for AI tab ──
   const [dbMessages, setDbMessages] = useState([]);
@@ -714,21 +696,11 @@ Use the child's name naturally. Know what method they're on and what day — don
   }
 
   function sendText() {
-    if (!input.trim()) return;
-    if (mode !== "ai" && !activeFamily) return;
-    // AI message limit check
-    if (mode === "ai" && !canSendAIMessage) return;
+    if (!input.trim() || !activeFamily) return;
     const content = input.trim();
     setInput("");
     if (mode === "ai") {
       const msg = sendAi({ type: "text", content, sender: "parent" });
-      // Increment usage counter in Supabase (fire and forget)
-      if (user?.id && aiMessageLimit !== Infinity) {
-        supabase.from("profiles")
-          .update({ ai_messages_used: (user.ai_messages_used || 0) + 1 })
-          .eq("id", user.id)
-          .then(() => {});
-      }
       triggerAI([...aiMessages, msg]);
     } else {
       sendToDb({ type: "text", content });
@@ -779,11 +751,10 @@ Use the child's name naturally. Know what method they're on and what day — don
     ? displayMessages.filter(m => (m.content || m.fileName || "").toLowerCase().includes(searchQuery.toLowerCase()))
     : displayMessages;
 
-  // Only show tabs the user has access to
   const tabs = [
+    { id: "messages", label: "Messages", emoji: "💬" },
     { id: "ai", label: "RCC Coach ✦", emoji: "" },
-    ...(canAccessHumanMessaging ? [{ id: "messages", label: "Messages", emoji: "💬" }] : []),
-    ...(canAccessFilesTab ? [{ id: "files", label: "Files", emoji: "📁" }] : []),
+    { id: "files", label: "Files", emoji: "📁" },
   ];
 
   return (
@@ -883,30 +854,6 @@ Use the child's name naturally. Know what method they're on and what day — don
             </div>
           )}
 
-          {/* AI message limit counter */}
-          {mode === "ai" && aiMessageLimit !== Infinity && (
-            <div style={{ marginTop: 6, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
-              {!canSendAIMessage ? (
-                <div style={{ fontSize: 11, color: T.rose || "#A87B8A", fontFamily: font, fontWeight: 600 }}>
-                  Message limit reached — upgrade to keep going
-                </div>
-              ) : (
-                <div style={{ fontSize: 11, color: T.muted, fontFamily: font }}>
-                  {aiMessagesRemaining} of {aiMessageLimit} messages remaining this month
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Async support copy for Premium/VIP in Messages tab */}
-          {mode === "messages" && asyncSupportCopy && (
-            <div style={{ marginTop: 6, padding: "7px 12px", borderRadius: 8, background: `${T.teal}12`, border: `1px solid ${T.teal}25` }}>
-              <div style={{ fontSize: 11, color: T.teal, fontFamily: font }}>
-                🕐 {asyncSupportCopy}
-              </div>
-            </div>
-          )}
-
           {/* Tabs */}
           <div style={{ display: "flex", gap: 4, background: T.faint, borderRadius: 12, padding: 4, marginBottom: 4 }}>
             {tabs.map(t => (
@@ -1002,27 +949,6 @@ Use the child's name naturally. Know what method they're on and what day — don
               borderTop: `1px solid ${T.faint}`
             }}
           >
-            {/* AI limit reached — upgrade prompt */}
-            {mode === "ai" && !canSendAIMessage && (
-              <div style={{ marginBottom: 12, padding: "14px 16px", borderRadius: 14, background: `${T.teal}12`, border: `1px solid ${T.teal}30`, textAlign: "center" }}>
-                <div style={{ fontFamily: font, fontSize: 13, fontWeight: 600, color: T.headingText, marginBottom: 4 }}>
-                  You've used all {aiMessageLimit} messages this month
-                </div>
-                <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 10 }}>
-                  {subscriptionTier === "free"
-                    ? "Upgrade to Plus for 50 messages/month — $10/mo"
-                    : subscriptionTier === "plus"
-                    ? "Upgrade to Premium for 100 messages/month — $50/mo"
-                    : "Messages reset at the start of your next billing cycle"}
-                </div>
-                {(subscriptionTier === "free" || subscriptionTier === "plus") && (
-                  <button style={{ padding: "8px 20px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                    Upgrade Now
-                  </button>
-                )}
-              </div>
-            )}
-
             {/* Voice recording indicator */}
             {voice.recording && (
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 12, background: `${C.rose}15`, border: `1px solid ${C.rose}40`, marginBottom: 10 }}>
@@ -1054,7 +980,7 @@ Use the child's name naturally. Know what method they're on and what day — don
               <textarea
                 ref={textRef}
                 value={input}
-                disabled={(!activeFamily && mode !== "ai") || (mode === "ai" && !canSendAIMessage)}
+                disabled={!activeFamily && mode !== "ai"}
                 onChange={e => {
                   setInput(e.target.value);
                   e.target.style.height = "auto";
