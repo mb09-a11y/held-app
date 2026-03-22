@@ -28,7 +28,7 @@ import { ConsultantFamilies, ConsultantAccount } from "./views/consultant/Consul
 import { ConsultantHome } from "./views/consultant/ConsultantHome.jsx";
 
 // ── Admin
-import { AdminDashboard, AdminConsultants, AdminBilling } from "./views/admin/AdminViews.jsx";
+import { AdminDashboard, AdminConsultants, AdminBilling, AdminFamilies, AdminSettings } from "./views/admin/AdminViews.jsx";
 
 // ── Feature modules (unchanged)
 import { LibraryModule } from "./modules/library/LibraryModule.jsx";
@@ -836,18 +836,12 @@ export default function RCCShell() {
                         </button>
                       </div>
                       {!adminConsultantView && (
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginBottom: 20 }}>
-                          {tab === "consultants" && <button onClick={() => { closeInvitePanels(); setShowInviteConsultant(true); }} style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>+ Invite Consultant</button>}
-                          {tab === "families" && <button onClick={() => { closeInvitePanels(); setShowInviteFamily(true); }} style={{ padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.card, color: T.text, fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>+ Invite Family</button>}
-                        </div>
-                      )}
-                      {!adminConsultantView && (
                         <>
                           {tab === "dashboard" && <AdminDashboard consultants={consultants} families={families} />}
-                          {tab === "consultants" && <AdminConsultants consultants={consultants} />}
-                          {tab === "families" && <ConsultantHome user={currentUser} />}
+                          {tab === "consultants" && <AdminConsultants consultants={consultants} onInviteConsultant={() => { closeInvitePanels(); setShowInviteConsultant(true); }} />}
+                          {tab === "families" && <AdminFamilies families={families} consultants={consultants} onInviteFamily={() => { closeInvitePanels(); setShowInviteFamily(true); }} />}
                           {tab === "billing" && <AdminBilling />}
-                          {tab === "settings" && <div style={{ padding: "40px 0", textAlign: "center", color: T.muted, fontFamily: font, fontSize: 13 }}>Settings coming soon.</div>}
+                          {tab === "settings" && <AdminSettings />}
                         </>
                       )}
                       {adminConsultantView && (
