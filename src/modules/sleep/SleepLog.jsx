@@ -990,12 +990,52 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
   };
 
   // ── Step 3: Woke Up — completes the session with all calculations ──
+  // Co-caregiver safe: if no local sessionId, query DB for any open session
+  // for this child started by any family member and close that instead.
   const handleWakeUp = async (vals) => {
     const reference = session?.asleepTime || session?.putDownTime || null;
     const endTime = (vals?.date && vals?.time)
       ? dateTimeToISO(vals.date, vals.time, reference)
       : new Date().toISOString();
-    const { putDownTime, asleepTime, sessionId } = session || {};
+    const { putDownTime, asleepTime } = session || {};
+    let { sessionId } = session || {};
+
+    // ── Family-aware open session lookup ──
+    // If this device has no sessionId (e.g. co-caregiver logging wake after
+    // primary parent logged put-down), find any open session in the DB for
+    // this child and close it rather than creating a duplicate.
+    if (!sessionId && activeFamily?.id) {
+      const { data: openRows } = await supabase
+        .from("sleep_logs")
+        .select("id, ts, fell_asleep_ts")
+        .eq("family_id", activeFamily.id)
+        .eq("type", "sleep_session")
+        .is("end_ts", null)
+        .order("ts", { ascending: false })
+        .limit(1);
+
+      if (openRows?.length > 0) {
+        const openRow = openRows[0];
+        sessionId = openRow.id;
+        const dbPutDown = openRow.ts;
+        const dbAsleep = openRow.fell_asleep_ts;
+        const fallAsleepSecs = dbAsleep && dbPutDown
+          ? Math.round((new Date(dbAsleep) - new Date(dbPutDown)) / 1000)
+          : null;
+        const totalSleepMs = dbAsleep
+          ? Math.max(0, new Date(endTime) - new Date(dbAsleep))
+          : Math.max(0, new Date(endTime) - new Date(dbPutDown));
+        await onPatch(sessionId, {
+          end_ts: endTime,
+          mood: vals?.mood || null,
+          fall_asleep_secs: fallAsleepSecs,
+          total_sleep_ms: totalSleepMs,
+        });
+        updateSession(null);
+        showToast("Wake up logged ✓", "☀️");
+        return;
+      }
+    }
 
     const fallAsleepSecs = asleepTime && putDownTime
       ? Math.round((new Date(asleepTime) - new Date(putDownTime)) / 1000)

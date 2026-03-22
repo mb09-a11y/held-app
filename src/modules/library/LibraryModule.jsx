@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
+import { RegulationModule } from "../regulation/RegulationModule.jsx";
 
 const C = {
   teal:"#7B9EA8", mauve:"#A8907B", purple:"#8A7BAA", sage:"#7BAA8A",
@@ -14,6 +15,7 @@ const TABS = [
   { id: "sleep",      label: "Sleep",       emoji: "🌙" },
   { id: "toddler",    label: "Toddler+",    emoji: "🌱" },
   { id: "parenting",  label: "Parenting",   emoji: "💛" },
+  { id: "grounding",  label: "Grounding",   emoji: "🌿" },
 ];
 
 const CONTENT = {
@@ -80,6 +82,11 @@ const CONTENT = {
         { title: "Survival Mode Playbook", desc: "For the seasons when you're just getting through. Permission to simplify, lower the bar, and still show up for your kids.", type: "pdf", url: BASE + "Survival%20Mode%20Playbook%20(3).pdf", color: C.mauve, emoji: "🛡️", tier: "free" },
       ],
     }],
+  },
+  grounding: {
+    intro: "Tools to help you and your little one come back to yourselves. Choose what feels right in the moment — there's no wrong way to ground.",
+    sections: [{ items: [] }],
+    isRegulationModule: true,
   },
 };
 
@@ -168,6 +175,7 @@ export function LibraryModule() {
   const { canAccessFullLibrary } = useApp();
   const [activeTab, setActiveTab] = useState("postpartum");
   const tabContent = CONTENT[activeTab];
+  const isGrounding = activeTab === "grounding";
 
   return (
     <div style={{ fontFamily: font, color: T.text, paddingBottom: 80 }}>
@@ -205,9 +213,13 @@ export function LibraryModule() {
 
       {activeTab === "parenting" && <OvercorrectingCard />}
 
-      {tabContent.sections.map((section, i) => (
-        <SectionBlock key={i} section={section} canAccessFullLibrary={canAccessFullLibrary} />
-      ))}
+      {isGrounding ? (
+        <RegulationModule />
+      ) : (
+        tabContent.sections.map((section, i) => (
+          <SectionBlock key={i} section={section} canAccessFullLibrary={canAccessFullLibrary} />
+        ))
+      )}
 
       {(activeTab === "postpartum" || activeTab === "parenting") && (
         <div style={{ borderRadius: 14, border: `1px dashed ${T.border}`, padding: "20px 18px", textAlign: "center", marginTop: 8 }}>

@@ -54,10 +54,9 @@ const isAdmin = role => role === ROLES.admin;
 const PARENT_TABS = [
   { id: "home",       label: "Home",       icon: "🏡" },
   { id: "sleep",      label: "Sleep",      icon: "🌙" },
-  { id: "regulation", label: "Regulation", icon: "🌿" },
   { id: "library",    label: "Library",    icon: "📚" },
   { id: "messages",   label: "Messages",   icon: "💬" },
-  { id: "dashboard",  label: "Dashboard",  icon: "📊" },
+  { id: "insights",   label: "Insights",   icon: "📊" },
 ];
 
 const CONSULTANT_TABS = [
@@ -365,7 +364,7 @@ export default function RCCShell() {
       setProfileReady(true);
 
       if (isAdmin(merged.role)) {
-        setTab("dashboard");
+        setTab("insights");
         const [{ data: fams }, { data: cons }] = await Promise.all([
           supabase.from("families").select("*"),
           supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal"]),
@@ -781,7 +780,7 @@ export default function RCCShell() {
                       {tab === "sleep"      && <SleepTabView />}
                       {tab === "regulation" && <RegulationModule />}
                       {tab === "messages"   && <Messaging user={currentUser} activeFamily={activeFamily} />}
-                      {tab === "dashboard"  && <ParentDashboard user={currentUser} onFindConsultant={() => setShowFindConsultant(true)} onInviteCo={() => setShowInviteCo(true)} />}
+                      {(tab === "dashboard" || tab === "insights")  && <ParentDashboard user={currentUser} onFindConsultant={() => setShowFindConsultant(true)} onInviteCo={() => setShowInviteCo(true)} />}
                       {tab === "library"    && <LibraryModule />}
                     </div>
                     <BottomNav tabs={visibleParentTabs} active={tab} setActive={setTab} unread={unread} />
@@ -837,7 +836,7 @@ export default function RCCShell() {
                       </div>
                       {!adminConsultantView && (
                         <>
-                          {tab === "dashboard" && <AdminDashboard consultants={consultants} families={families} />}
+                          {(tab === "dashboard" || tab === "insights") && <AdminDashboard consultants={consultants} families={families} />}
                           {tab === "consultants" && <AdminConsultants consultants={consultants} onInviteConsultant={() => { closeInvitePanels(); setShowInviteConsultant(true); }} />}
                           {tab === "families" && <AdminFamilies families={families} consultants={consultants} onInviteFamily={() => { closeInvitePanels(); setShowInviteFamily(true); }} />}
                           {tab === "billing" && <AdminBilling />}
