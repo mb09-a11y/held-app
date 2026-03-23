@@ -160,6 +160,7 @@ function useFamilyState(familyId, childId, userId) {
         { data: checkins },
         { data: child },
         { data: intakeData },
+        { data: sleepConfig },
       ] = await Promise.all([
         (() => {
           let q = supabase.from("sleep_logs").select("*").eq("family_id", familyId).gte("ts", since7);
@@ -170,6 +171,7 @@ function useFamilyState(familyId, childId, userId) {
           .gte("checked_in_at", since7).order("checked_in_at", { ascending: false }),
         childId ? supabase.from("children").select("*").eq("id", childId).maybeSingle() : Promise.resolve({ data: null }),
         supabase.from("intake_responses").select("*").eq("family_id", familyId).maybeSingle(),
+        supabase.from("sleep_configs").select("recommended_wake_windows").eq("family_id", familyId).maybeSingle(),
       ]);
 
       const logs = sleepLogs || [];
@@ -224,6 +226,7 @@ function useFamilyState(familyId, childId, userId) {
           hasIntake: !!intakeData,
           currentPhase: intake.sleep_phase || null,
           targetMorningWake: intake.ideal_wake_time || intake.wake_time || null,
+          recommendedWakeWindows: sleepConfig?.recommended_wake_windows || null,
         },
       });
       setLoading(false);
@@ -590,7 +593,11 @@ ${historyContext}`,
       months < 37 ? [4.5,  5.75] : [11.0];
     return ww[napIdx] ?? ww[ww.length - 1];
   }
-  const nextWindowHrs = homeWakeWindow(ageMonthsHome, napCountToday);
+  // Use consultant-configured wake windows if available, fall back to age-based
+  const consultantWindows = familyState?.planData?.recommendedWakeWindows;
+  const nextWindowHrs = consultantWindows
+    ? (consultantWindows[napCountToday] ?? consultantWindows[consultantWindows.length - 1])
+    : homeWakeWindow(ageMonthsHome, napCountToday);
   const nextPutDownTs = lastWokeMs ? new Date(lastWokeMs + nextWindowHrs * 3600000) : null;
   const nextPutDownStr = nextPutDownTs ? nextPutDownTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
   const minsUntilPutDown = nextPutDownTs ? Math.round((nextPutDownTs - Date.now()) / 60000) : null;

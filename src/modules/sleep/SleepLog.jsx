@@ -526,8 +526,7 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
   const isWaking = log.type === "night_waking";
 
   function isoToDateStr(iso) {
-    if (!iso) return new Date().toISOString().split("T")[0];
-    return new Date(iso).toISOString().split("T")[0];
+    return localDateStr(iso ? new Date(iso) : new Date());
   }
 
   const [putDown, setPutDown] = useState(isoToTimeStr(log.ts));
@@ -846,8 +845,14 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
   // Prefer the most recent completed NAP for the window reference, so that
   // a night sleep ending at 7am doesn't push the "next nap" window too far.
   // Fall back to any session if no nap exists yet today.
+  const nowMs = Date.now();
+  const FUTURE_TOLERANCE_MS = 5 * 60 * 1000; // 5 min grace for clock skew
   const completedSessions = [...logs]
-    .filter(l => l.type === "sleep_session" && l.end_ts)
+    .filter(l => {
+      if (l.type !== "sleep_session" || !l.end_ts) return false;
+      const endMs = new Date(l.end_ts).getTime();
+      return Number.isFinite(endMs) && endMs <= nowMs + FUTURE_TOLERANCE_MS;
+    })
     .sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts));
 
   const lastNapWakeUp = completedSessions.find(l => l.session_type === "nap");
@@ -892,8 +897,8 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
   const napTargetMins = effectiveNapDuration[1] ?? 70;
   const napMinMins = effectiveNapDuration[0] ?? 60;
   const suggestedTs = lastWakeUp ? new Date(new Date(lastWakeUp.end_ts).getTime() + window_ * 3600000) : null;
-  const suggestedTime = suggestedTs ? fmtTime(suggestedTs.toISOString()) : "---";
-  const minsUntil = suggestedTs ? Math.round((suggestedTs - Date.now()) / 60000) : null;
+  const suggestedTime = suggestedTs ? suggestedTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---";
+  const minsUntil = suggestedTs ? Math.round((suggestedTs.getTime() - Date.now()) / 60000) : null;
 
   // ── Suggested wake-up time during an active session ──
   // Night sleep: intake desired wake time → consultant target → 11.5h from bedtime
@@ -917,16 +922,16 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
           const meridiem = match[3]?.toLowerCase();
           if (meridiem === "pm" && h < 12) h += 12;
           if (meridiem === "am" && h === 12) h = 0;
-          // Find the next occurrence of target wake time that is >= 7h after put-down.
-          // Use local date arithmetic so UTC offsets don't shift the calendar day.
+          // Find the correct wake date: first occurrence >= 7h and <= 14h after put-down
           const wakeDate = new Date(putDownMs);
           wakeDate.setHours(h, m, 0, 0);
-          // If that time is not at least 7h after put-down, advance to next day
-          if (wakeDate.getTime() <= putDownMs + 7 * 3600000) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const hoursAfter = (wakeDate.getTime() - putDownMs) / 3600000;
+            if (hoursAfter >= 7 && hoursAfter <= 14) return wakeDate;
+            if (hoursAfter > 14) break;
             wakeDate.setDate(wakeDate.getDate() + 1);
             wakeDate.setHours(h, m, 0, 0);
           }
-          if (wakeDate.getTime() > putDownMs + 7 * 3600000) return wakeDate;
         }
       }
       // Priority 2: 12 hours from bedtime
@@ -943,7 +948,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
     return `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
   }
   function nowDateStr() {
-    return new Date().toISOString().split("T")[0];
+    return localDateStr(new Date());
   }
   // Convert date (YYYY-MM-DD) + time (HH:MM) to ISO.
   // If referenceISO provided and result would be before it, advances one day (midnight crossing).
@@ -1202,7 +1207,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
             <div>
               <SectionLabel>{session.sessionType === "night" ? "Target Morning Wake" : "Suggested Wake-Up"}</SectionLabel>
               <p style={{ fontSize: 22, fontFamily: serif, color: C.sage, fontWeight: 700 }}>
-                {suggestedWakeUpTime ? fmtTime(suggestedWakeUpTime.toISOString()) : "---"}
+                {suggestedWakeUpTime ? suggestedWakeUpTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
               </p>
               <p style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
                 {session.sessionType === "night"
@@ -1545,7 +1550,7 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSessio
         <button onClick={() => openSheet({
           title: "📏 Growth Measurement",
           fields: [
-            { key: "date", label: "Date", type: "date", default: new Date().toISOString().split("T")[0] },
+            { key: "date", label: "Date", type: "date", default: localDateStr(new Date()) },
             { key: "weight_lbs", label: "Weight (lbs)", type: "number", default: "" },
             { key: "weight_oz", label: "Weight (oz)", type: "number", default: "" },
             { key: "length", label: "Length (inches)", type: "number", default: "" },
@@ -2440,6 +2445,10 @@ function calcAgeMonths(dob) {
   return years * 12 + mos;
 }
 
+function localDateStr(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 function isWithin24h(ts) { return new Date(ts) > new Date(Date.now() - 86400000); }
 function isWithin7Days(ts) { return new Date(ts) > new Date(Date.now() - 7 * 86400000); }
 function isToday(ts) { return new Date(ts).toDateString() === new Date().toDateString(); }
