@@ -69,7 +69,7 @@ const CONTENT = {
     sections: [{
       items: [
         { title: "Quiet Time Implementation", desc: "Transitioning away from naps? Quiet time is the bridge. Here's how to make it work.", type: "pdf", url: BASE + "Quiet%20Time%20Implementation.pdf", color: C.sage, emoji: "🤫", tier: "free" },
-        { title: "A Parent's Guide to Potty Training", desc: "A gentle, practical approach to potty training that follows your child's readiness rather than a rigid timeline.", type: "pdf", url: BASE + "A%20Parents%20Guide%20to%20Potty%20Training%20(2).pdf", color: C.teal, emoji: "🚽", tier: "free" },
+        { title: "A Parent's Guide to Potty Training", desc: "A gentle, practical approach to potty training that follows your child's readiness rather than a rigid timeline.", type: "pdf", url: BASE + "A%20Parents%20Guide%20to%20Potty%20Training%20(2).pdf", color: C.teal, emoji: "🚽", tier: "plus" },
         { title: "When Your Child Refuses Dinner", desc: "Mealtime battles, food refusal, and how to take the power struggle out of eating.", type: "image", url: BASE + "When%20Your%20Child%20Refuses%20Dinner.png", color: C.warm, emoji: "🥦", tier: "free" },
         { title: "Preschool Evaluation Questions", desc: "Questions to ask when evaluating preschools — what to look for, what to listen for.", type: "pdf", url: BASE + "Preschool_Evaluation_Questions.pdf.pdf", color: C.purple, emoji: "🏫", tier: "free" },
       ],

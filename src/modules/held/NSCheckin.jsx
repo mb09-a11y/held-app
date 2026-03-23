@@ -30,7 +30,39 @@ export function NSCheckin() {
   const [inputText, setInputText] = useState("");
   const [response, setResponse] = useState(null);
   const [error, setError] = useState(null);
+  const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  // ── Voice input setup ──
+  const speechSupported = typeof window !== "undefined" &&
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  function startListening() {
+    if (!speechSupported) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join("");
+      setInputText(transcript);
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognition.start();
+    setIsListening(true);
+  }
+
+  function stopListening() {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  }
 
   // ── Restore sticky response from sessionStorage ──
   useEffect(() => {
@@ -221,7 +253,7 @@ export function NSCheckin() {
           onKeyDown={e => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) handleSubmit();
           }}
-          placeholder="I'm so frustrated, my kid did x… or We had a really good morning… or I don't know what's going on but something feels off…"
+          placeholder="I'm so frustrated… or We had a really good morning… or tap the mic and just talk to me"
           rows={4}
           style={{
             width: "100%", boxSizing: "border-box",
@@ -234,6 +266,28 @@ export function NSCheckin() {
           onFocus={e => e.target.style.borderColor = `${T.teal}80`}
           onBlur={e => e.target.style.borderColor = T.border}
         />
+
+        {/* Voice input button */}
+        {speechSupported && (
+          <div style={{ display: "flex", justifyContent: "center", margin: "8px 0" }}>
+            <button
+              onClick={isListening ? stopListening : startListening}
+              style={{
+                padding: "8px 18px", borderRadius: 20,
+                border: `1.5px solid ${isListening ? T.rose : T.border}`,
+                background: isListening ? `${T.rose}15` : T.faint,
+                color: isListening ? T.rose : T.muted,
+                fontFamily: font, fontSize: 12.5, fontWeight: isListening ? 700 : 400,
+                cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+                transition: "all .2s",
+              }}
+            >
+              <span style={{ fontSize: 15 }}>{isListening ? "⏹" : "🎤"}</span>
+              {isListening ? "Tap to stop" : "Or speak instead"}
+            </button>
+          </div>
+        )}
 
         <div style={{
           display: "flex", alignItems: "center",
@@ -248,7 +302,7 @@ export function NSCheckin() {
           </button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-              {inputText.trim().length > 0 && "⌘↵ to send"}
+              {inputText.trim().length > 0 && !isListening && "⌘↵ to send"}
             </span>
             <button
               onClick={handleSubmit}

@@ -3,6 +3,7 @@ import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { callAI } from "../../lib/ai.js";
 import { getPrompt } from "../../lib/prompts.js";
+import { getCurrentWonderWeeksLeap, getMilestonesForAge } from "../../modules/milestones/data/milestones.js";
 import { HamburgerButton } from "../shared/AppDrawer.jsx";
 import { NSCheckin } from "../../modules/held/NSCheckin.jsx";
 
@@ -804,7 +805,7 @@ ${historyContext}`,
             color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
           }}>
-            <span>📊</span> View full dashboard
+            <span>📊</span> View Insights
           </button>
         </div>
       )}
@@ -1160,7 +1161,7 @@ export function ParentDashboard({ user, onFindConsultant, onInviteCo }) {
       {/* ── PROGRESS ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
-          📈 Progress
+          📈 Sleep Progress
         </div>
         {isPremium && familyState ? (
           <div>
@@ -1230,6 +1231,58 @@ export function ParentDashboard({ user, onFindConsultant, onInviteCo }) {
         )}
       </div>
 
+      {/* ── GROWING ── */}
+      {(() => {
+        const dob = activeChild?.dob || activeFamily?.birth_date;
+        if (!dob) return null;
+        const birth = new Date(dob);
+        const now = new Date();
+        let years = now.getFullYear() - birth.getFullYear();
+        let mos = now.getMonth() - birth.getMonth();
+        if (now.getDate() < birth.getDate()) mos--;
+        if (mos < 0) { years--; mos += 12; }
+        const ageMonths = years * 12 + mos;
+        const weeksFromDue = Math.floor((Date.now() - birth.getTime()) / (7 * 24 * 60 * 60 * 1000));
+        const leap = getCurrentWonderWeeksLeap(weeksFromDue);
+        const upcomingMilestones = getMilestonesForAge(ageMonths).slice(0, 2);
+        return (
+          <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
+            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
+              🌱 Growing
+            </div>
+            {leap && (
+              <div style={{ padding: "10px 13px", borderRadius: 10, background: `${T.purple}0a`, border: `1px solid ${T.purple}20`, marginBottom: 10 }}>
+                <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.purple, marginBottom: 4 }}>
+                  {leap.status === "active" ? "🌀 Wonder Weeks leap active" : "🔭 Leap approaching"}
+                </div>
+                <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.65, margin: 0 }}>
+                  <strong>{leap.title}</strong> — {leap.what_baby_is_learning.slice(0, 100)}{leap.what_baby_is_learning.length > 100 ? "…" : ""}
+                </p>
+              </div>
+            )}
+            {upcomingMilestones.length > 0 && (
+              <div>
+                <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginBottom: 8 }}>Coming up for {activeChild?.name || "your child"}:</div>
+                {upcomingMilestones.map(m => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 14 }}>🌱</span>
+                    <span style={{ fontFamily: font, fontSize: 13, color: T.text }}>{m.title}</span>
+                    <span style={{ fontFamily: font, fontSize: 11, color: T.muted, marginLeft: "auto" }}>{m.typical_range[0]}–{m.typical_range[1]}mo</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setTab("milestones")} style={{
+              marginTop: 10, background: "none", border: "none",
+              fontFamily: font, fontSize: 12.5, color: T.teal,
+              cursor: "pointer", padding: 0, fontWeight: 600,
+            }}>
+              View all milestones →
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ── FOCUS FOR TODAY ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
@@ -1266,6 +1319,14 @@ export function ParentDashboard({ user, onFindConsultant, onInviteCo }) {
               : totalMonths < 14
               ? ["Consistency in the bedtime routine matters more than timing right now", "Night waking at this age is often developmental — not a regression", "If naps are short, try extending wake windows by 15 minutes"]
               : ["One consistent nap time anchors the whole day", "Big feelings before sleep are normal — name them, don't fix them", "Sleep pressure builds — outdoor time and movement help"];
+
+            // Weave in Wonder Weeks leap context if active
+            const leapWeeks = Math.floor((Date.now() - new Date(activeChild?.dob || Date.now()).getTime()) / (7 * 24 * 60 * 60 * 1000));
+            const activeLeap = getCurrentWonderWeeksLeap(leapWeeks);
+            if (activeLeap?.status === "active") {
+              defaults.unshift(`${activeLeap.title} leap is active right now — extra fussiness, clinginess, or sleep disruption this week is likely developmental, not a setback`);
+              if (defaults.length > 3) defaults.pop();
+            }
             return (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {defaults.map((item, i) => (

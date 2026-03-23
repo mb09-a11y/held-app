@@ -7,6 +7,7 @@ import {
   useStorage, font, serif
 } from "./core/shared.jsx";
 import { supabase } from "./lib/supabase.js";
+import { warmAI } from "./lib/ai.js";
 
 // ── Layout
 import { SideNav, BottomNav } from "./layout/Layout.jsx";
@@ -32,6 +33,7 @@ import { AdminDashboard, AdminConsultants, AdminBilling, AdminFamilies, AdminSet
 
 // ── Feature modules (unchanged)
 import { LibraryModule } from "./modules/library/LibraryModule.jsx";
+import { MilestonesModule } from "./modules/milestones/MilestonesModule.jsx";
 import { RegulationModule } from "./modules/regulation/RegulationModule.jsx";
 import { Messaging } from "./modules/messaging/Messaging.jsx";
 import { SleepLog } from "./modules/sleep/SleepLog.jsx";
@@ -54,6 +56,7 @@ const isAdmin = role => role === ROLES.admin;
 const PARENT_TABS = [
   { id: "home",       label: "Home",       icon: "🏡" },
   { id: "sleep",      label: "Sleep",      icon: "🌙" },
+  { id: "milestones", label: "Milestones", icon: "🌱" },
   { id: "library",    label: "Library",    icon: "📚" },
   { id: "messages",   label: "Messages",   icon: "💬" },
   { id: "insights",   label: "Insights",   icon: "📊" },
@@ -362,12 +365,15 @@ export default function RCCShell() {
       setAuthLoading(false);
       // Mark profile ready immediately so the app shell renders — data loads below in background
       setProfileReady(true);
+      // Warm the AI edge function silently so first user interaction is fast
+      warmAI().catch(() => {});
 
       if (isAdmin(merged.role)) {
         setTab("insights");
         const [{ data: fams }, { data: cons }] = await Promise.all([
           supabase.from("families").select("*"),
-          supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal"]),
+          // Include admin role so admin users appear as assignable consultants
+          supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal", "admin"]),
         ]);
         setFamilies(fams || []); setConsultants(cons || []); setChildren([]); setOnboardingStep(null);
 
@@ -781,6 +787,7 @@ export default function RCCShell() {
                       {tab === "regulation" && <RegulationModule />}
                       {tab === "messages"   && <Messaging user={currentUser} activeFamily={activeFamily} />}
                       {(tab === "dashboard" || tab === "insights")  && <ParentDashboard user={currentUser} onFindConsultant={() => setShowFindConsultant(true)} onInviteCo={() => setShowInviteCo(true)} />}
+                      {tab === "milestones" && <MilestonesModule />}
                       {tab === "library"    && <LibraryModule />}
                     </div>
                     <BottomNav tabs={visibleParentTabs} active={tab} setActive={setTab} unread={unread} />

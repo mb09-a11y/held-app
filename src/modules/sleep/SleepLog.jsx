@@ -949,7 +949,16 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
       const ref = new Date(referenceISO);
       if (d < ref) d.setDate(d.getDate() + 1);
     }
-    return d.toISOString();
+    // Build ISO string in local time to avoid UTC date rollover after 8 PM EST.
+    // toISOString() always returns UTC which shifts the date for evening logs.
+    const pad = n => String(n).padStart(2, "0");
+    const localISO = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+    // Append timezone offset so Supabase stores the correct local time
+    const off = -d.getTimezoneOffset();
+    const sign = off >= 0 ? "+" : "-";
+    const offH = pad(Math.floor(Math.abs(off) / 60));
+    const offM = pad(Math.abs(off) % 60);
+    return `${localISO}${sign}${offH}:${offM}`;
   }
   // Backwards-compat wrapper for non-sleep buttons that only have a time field.
   function timeStrToISO(timeStr, referenceISO) {

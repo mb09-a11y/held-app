@@ -432,13 +432,14 @@ export function AdminFamilies({ families, consultants, onInviteFamily }) {
   const [saving, setSaving] = useState(null);
   const [resent, setResent] = useState(null);
 
-  // Include admin themselves as a selectable consultant
-  const allConsultants = [
-    ...consultants,
-    ...(currentUser?.role === "admin" && !consultants.find(c => c.id === currentUser.id)
-      ? [{ id: currentUser.id, name: `${currentUser.name} (you)`, user_email: currentUser.email }]
-      : []),
-  ];
+  // Build consultant list — admin is now included in the consultants query,
+  // but add a fallback in case they aren't, and label them clearly
+  const allConsultants = consultants.map(c =>
+    c.id === currentUser?.id ? { ...c, name: `${c.name || "Admin"} (you)` } : c
+  );
+  if (currentUser?.role === "admin" && !allConsultants.find(c => c.id === currentUser.id)) {
+    allConsultants.unshift({ id: currentUser.id, name: `${currentUser.name || "Admin"} (you)`, user_email: currentUser.email });
+  }
 
   const filtered = families.filter(f =>
     !search || (f.display_name || f.invite_email || "").toLowerCase().includes(search.toLowerCase())
