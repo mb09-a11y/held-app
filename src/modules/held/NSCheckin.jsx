@@ -13,6 +13,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { callAI } from "../../lib/ai.js";
+import { getPrompt } from "../../lib/prompts.js";
 import { supabase } from "../../lib/supabase.js";
 
 // ─── SESSION STORAGE KEY ─────────────────────────────────────────────────────
@@ -53,15 +54,16 @@ export function NSCheckin() {
         .join("");
       setInputText(transcript);
     };
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => { setIsListening(false); recognitionRef.current = null; };
+    recognition.onerror = () => { setIsListening(false); recognitionRef.current = null; };
     recognition.start();
     setIsListening(true);
   }
 
   function stopListening() {
-    recognitionRef.current?.stop();
-    setIsListening(false);
+    try { recognitionRef.current?.stop(); } catch {}
+    recognitionRef.current = null;
+    setIsListening(false); // force it — don't rely on onend (unreliable on iOS/Safari)
   }
 
   // ── Restore sticky response from sessionStorage ──
@@ -132,7 +134,7 @@ export function NSCheckin() {
 
     try {
       const raw = await callAI({
-        promptType: "ns_checkin",
+        system: getPrompt("ns_checkin"),
         max_tokens: 700,
         messages: [{ role: "user", content: userMessage }],
       });
@@ -158,7 +160,8 @@ export function NSCheckin() {
           checked_in_at: new Date().toISOString(),
         }).catch(() => {}); // non-blocking
       }
-    } catch {
+    } catch (err) {
+      console.error("[NSCheckin] AI call failed:", err);
       setResponse({
         validation: "Something got in the way of that response — but the fact that you reached out matters.",
         what_might_be_happening: "Whatever is going on right now is real and valid. You don't need an AI to tell you that.",

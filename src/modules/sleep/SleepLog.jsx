@@ -297,16 +297,6 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     setConfigState(prev => ({ ...prev, ...mergedConfig }));
     setLoadingLogs(false);
 
-    // If there's an open session in localStorage with no sessionId,
-    // try to recover it from the most recent open sleep_session in DB
-    const storedSession = (() => { try { return JSON.parse(localStorage.getItem(`rcc_sleep_session_${familyId}`)); } catch { return null; } })();
-    if (storedSession && !storedSession.sessionId) {
-      const openLog = (logData || []).find(l => l.type === "sleep_session" && !l.end_ts);
-      if (openLog) {
-        const recovered = { ...storedSession, sessionId: openLog.id };
-        localStorage.setItem(`rcc_sleep_session_${familyId}`, JSON.stringify(recovered));
-      }
-    }
   }).catch(err => {
     console.error("[SleepLog] load error:", err);
     setLoadingLogs(false);
@@ -492,7 +482,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
         ) : (
           <>
             {tab === "dashboard"   && <DashboardView analytics={analytics} logs={childLogs} activeFamily={activeFamily} onPatch={patchEntry} onDelete={deleteEntry} />}
-            {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={childLogs} config={config} activeFamily={activeFamily} />}
+            {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={childLogs} config={config} activeFamily={activeFamily} hasOpenDBSession={childLogs.some(l => l.type === "sleep_session" && !l.end_ts)} />}
             {tab === "history"     && <TrendsView logs={childLogs} onPatch={patchEntry} onDelete={deleteEntry} />}
             {tab === "growth"      && <GrowthView logs={childLogs} activeFamily={activeFamily} />}
             {tab === "configure"  && <ConsultantView config={config} setConfig={setConfig} dbPin={dbPin} isConsultant={isConsultantUser} />}
@@ -808,7 +798,7 @@ function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
 }
 
 // ─── TODAY TAB ────────────────────────────────────────────────────────────────
-function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
+function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenDBSession }) {
   const T = useT();
   const [sheet, setSheet] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: "", icon: "✓" });
@@ -821,15 +811,25 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     toastTimer.current = setTimeout(() => setToast(t => ({ ...t, visible: false })), 2500);
   }
 
-  // ── Persistent in-progress session (survives tab switches) ──
-  const SESSION_KEY = `rcc_sleep_session_${activeFamily?.id || "default"}`;
-  const [session, setSession] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(SESSION_KEY)) || null; } catch { return null; }
-  });
-  function updateSession(next) {
-    setSession(next);
-    if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-    else localStorage.removeItem(SESSION_KEY);
+  // ── Active session — derived entirely from Supabase logs (no localStorage) ──
+  // Find any open sleep_session (no end_ts) for the active child.
+  // This means session state survives page reloads, tab switches, and multi-device use.
+  const openLog = logs.find(l =>
+    l.type === "sleep_session" && !l.end_ts &&
+    (!activeFamily?.activeChild?.id || !l.child_id || l.child_id === activeFamily?.activeChild?.id)
+  );
+  const session = openLog ? {
+    sessionId: openLog.id,
+    sessionType: openLog.session_type || "nap",
+    putDownTime: openLog.ts,
+    asleepTime: openLog.fell_asleep_ts || null,
+  } : null;
+
+  // updateSession is now a no-op for state (session is derived from logs),
+  // but we keep the signature so all call sites stay clean.
+  // Callers that pass null trigger a log refresh to pick up the closed session.
+  function updateSession(_next) {
+    // session is derived from logs — nothing to write here
   }
 
 
@@ -917,14 +917,20 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
           const meridiem = match[3]?.toLowerCase();
           if (meridiem === "pm" && h < 12) h += 12;
           if (meridiem === "am" && h === 12) h = 0;
-          const wakeDate = new Date(session.putDownTime);
-          wakeDate.setDate(wakeDate.getDate() + 1);
+          // Find the next occurrence of target wake time that is >= 7h after put-down.
+          // Use local date arithmetic so UTC offsets don't shift the calendar day.
+          const wakeDate = new Date(putDownMs);
           wakeDate.setHours(h, m, 0, 0);
-          if (wakeDate.getTime() > putDownMs + 7 * 3600000) return wakeDate; // sanity: at least 7h away
+          // If that time is not at least 7h after put-down, advance to next day
+          if (wakeDate.getTime() <= putDownMs + 7 * 3600000) {
+            wakeDate.setDate(wakeDate.getDate() + 1);
+            wakeDate.setHours(h, m, 0, 0);
+          }
+          if (wakeDate.getTime() > putDownMs + 7 * 3600000) return wakeDate;
         }
       }
-      // Priority 2: 11.5 hours from bedtime (middle of 11-12h range)
-      return new Date(putDownMs + 11.5 * 3600000);
+      // Priority 2: 12 hours from bedtime
+      return new Date(putDownMs + 12 * 3600000);
     } else {
       // Nap: use target duration from effective config
       return new Date(asleepMs + napTargetMins * 60000);
@@ -973,29 +979,43 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
     showToast(message, icon);
   }
 
-  // ── Step 1: Put Down ──
-  const handlePutDown = (vals) => {
+  // ── Step 1: Put Down — write to Supabase immediately so it's durable ──
+  // We create the sleep_session row now with no fell_asleep_ts and no end_ts.
+  // The open record is what drives session state on next render.
+  const handlePutDown = async (vals) => {
     const putDownTime = (vals?.date && vals?.time)
       ? dateTimeToISO(vals.date, vals.time)
       : new Date().toISOString();
-    updateSession({ putDownTime, asleepTime: null, sessionId: null, sessionType });
     showToast("Put down logged", "🛏️");
+    await onLog("sleep_session", {
+      ts: putDownTime,
+      fell_asleep_ts: null,
+      end_ts: null,
+      session_type: sessionType,
+    });
+    // session state will auto-update on next logs refresh (optimistic update via onLog)
   };
 
-  // ── Step 2: Fell Asleep — saves to DB, gets real session ID ──
+  // ── Step 2: Fell Asleep — patch the open DB record with fell_asleep_ts ──
   const handleAsleep = async (vals) => {
     const asleepTime = (vals?.date && vals?.time)
       ? dateTimeToISO(vals.date, vals.time, session?.putDownTime)
       : new Date().toISOString();
-    const putDownTime = session?.putDownTime || asleepTime;
     showToast("Falling asleep logged", "💤");
-    const saved = await onLog("sleep_session", {
-      ts: putDownTime,
-      fell_asleep_ts: asleepTime,
-      end_ts: null,
-      session_type: session?.sessionType || sessionType,
-    });
-    updateSession({ putDownTime, asleepTime, sessionId: saved?.id || null, sessionType });
+    if (session?.sessionId) {
+      // Patch existing put-down record
+      await onPatch(session.sessionId, { fell_asleep_ts: asleepTime });
+    } else {
+      // No put-down logged yet — create the full record now
+      const putDownTime = session?.putDownTime || asleepTime;
+      await onLog("sleep_session", {
+        ts: putDownTime,
+        fell_asleep_ts: asleepTime,
+        end_ts: null,
+        session_type: session?.sessionType || sessionType,
+      });
+    }
+    // session state auto-updates from logs
   };
 
   // ── Step 3: Woke Up — completes the session with all calculations ──
@@ -1272,7 +1292,18 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
               <p style={{ fontSize: 11, color: T.muted }}>
                 {session.asleepTime ? "💤 Baby is sleeping" : "⏳ Waiting for sleep…"}
               </p>
-              <button onClick={() => { if (window.confirm("Clear current session?")) updateSession(null); }}
+              <button onClick={async () => {
+                if (window.confirm("Clear current session? This will delete the open sleep record.")) {
+                  if (session?.sessionId) {
+                    await supabase.from("sleep_logs").delete().eq("id", session.sessionId);
+                    // Trigger a logs refresh so session derived state clears
+                    const logData = await fetchLogs(activeFamily?.id);
+                    // onLog optimistic path won't help here — signal parent to refresh
+                    // For now, force a page reload as the nuclear option
+                    window.location.reload();
+                  }
+                }
+              }}
                 style={{ background: "none", border: "none", color: T.muted, fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>
                 Clear
               </button>
@@ -1496,7 +1527,11 @@ function TodayView({ onLog, onPatch, logs, config, activeFamily }) {
           ],
           onConfirm: (v) => {
             const ts = v.time ? timeStrToISO(v.time) : new Date().toISOString();
-            logAndToast("medicine", { ts, description: v.description, amount: v.amount }, "Medicine logged", "💊");
+            // amount is a free-text dose string (e.g. "5ml", "160mg") — the sleep_logs
+            // amount column is numeric, so we store the dose in description and leave
+            // amount null to avoid a type-mismatch insert failure.
+            const fullDescription = [v.description, v.amount].filter(Boolean).join(" · ");
+            logAndToast("medicine", { ts, description: fullDescription, amount: null }, "Medicine logged", "💊");
           },
         })}
           style={{ width: "100%", padding: "12px", borderRadius: 12, border: `1px solid ${T.border}`, background: T.faint, fontFamily: font, fontSize: 13, fontWeight: 600, color: T.text, cursor: "pointer" }}>

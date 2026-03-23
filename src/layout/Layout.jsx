@@ -12,9 +12,9 @@ function BottomNav({ tabs, active, setActive, unread }) {
         const badge = unread?.[t.id];
         return (
           <button key={t.id} onClick={() => setActive(t.id)}
-            style={{ flex: 1, background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "6px 0", cursor: "pointer", position: "relative", color: active === t.id ? T.teal : T.muted, fontFamily: font, fontSize: 10, fontWeight: active === t.id ? 700 : 400, transition: "color .2s" }}>
+            style={{ flex: 1, minWidth: 0, background: "none", border: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "6px 0", cursor: "pointer", position: "relative", color: active === t.id ? T.teal : T.muted, fontFamily: font, fontSize: 10, fontWeight: active === t.id ? 700 : 400, transition: "color .2s", overflow: "hidden" }}>
             <span style={{ fontSize: 20 }}>{t.icon}</span>
-            {t.label}
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", width: "100%", textAlign: "center" }}>{t.label}</span>
             {badge > 0 && (
               <div style={{ position: "absolute", top: 4, right: "50%", transform: "translateX(10px)", width: 16, height: 16, borderRadius: "50%", background: T.rose, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff" }}>
                 {badge}

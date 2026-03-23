@@ -174,7 +174,9 @@ function useFamilyState(familyId, childId, userId) {
 
       const logs = sleepLogs || [];
       const todayLogs = logs.filter(l => new Date(l.ts) > new Date(since24));
+      // Include open sessions (no end_ts) so the home screen can detect an active sleep
       const sessions = logs.filter(l => l.type === "sleep_session" && l.end_ts);
+      const allSessions = logs.filter(l => l.type === "sleep_session"); // includes open
       const todaySessions = todayLogs.filter(l => l.type === "sleep_session" && l.end_ts);
 
       // Sleep metrics
@@ -215,12 +217,13 @@ function useFamilyState(familyId, childId, userId) {
           nightWakesAvg: avgNightWakes,
           lastWakeUp,
           recentMoods,
-          weekSessions: sessions.slice(0, 14),
+          weekSessions: allSessions.slice(0, 14), // includes open session if one exists
           consistency: sessions.length >= 5 ? "building" : sessions.length >= 2 ? "starting" : "new",
         },
         planData: {
           hasIntake: !!intakeData,
           currentPhase: intake.sleep_phase || null,
+          targetMorningWake: intake.ideal_wake_time || intake.wake_time || null,
         },
       });
       setLoading(false);
@@ -599,9 +602,30 @@ ${historyContext}`,
   const suggestedWakeTs = (() => {
     if (!openSession) return null;
     if (isNightSession) {
-      // 11.5h from bedtime
-      const w = new Date((putDownMs || Date.now()) + 11.5 * 3600000);
-      return w;
+      // Check for a targetMorningWake time from family config/intake
+      const targetWakeStr = familyState?.planData?.targetMorningWake || null;
+      if (targetWakeStr) {
+        const match = targetWakeStr.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
+        if (match) {
+          let h = parseInt(match[1]);
+          const m = parseInt(match[2]);
+          const meridiem = match[3]?.toLowerCase();
+          if (meridiem === "pm" && h < 12) h += 12;
+          if (meridiem === "am" && h === 12) h = 0;
+          // Find the next occurrence of target wake time >= 7h after put-down.
+          // Use local date so UTC offsets don't shift the calendar day.
+          const ref = putDownMs || Date.now();
+          const wakeDate = new Date(ref);
+          wakeDate.setHours(h, m, 0, 0);
+          if (wakeDate.getTime() <= ref + 7 * 3600000) {
+            wakeDate.setDate(wakeDate.getDate() + 1);
+            wakeDate.setHours(h, m, 0, 0);
+          }
+          if (wakeDate.getTime() > ref + 7 * 3600000) return wakeDate;
+        }
+      }
+      // Fallback: 12h from bedtime
+      return new Date((putDownMs || Date.now()) + 12 * 3600000);
     } else {
       // Age-based nap target: 45min <6mo, 60min 6-12mo, 75min 12mo+
       const napMins = ageMonthsHome === null ? 60 : ageMonthsHome < 6 ? 45 : ageMonthsHome < 12 ? 60 : 75;
@@ -726,7 +750,7 @@ ${historyContext}`,
                       minsUntilWake < 60 ? `in ${minsUntilWake}m` :
                       `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
                     {" · "}
-                    {isNightSession ? "11–12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
+                    {isNightSession ? "12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
                   </div>
                 </div>
                 <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
