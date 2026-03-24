@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useT, useApp, font, serif, genId } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { QuickMessage } from "../messaging/QuickMessage.jsx";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const C = {
@@ -481,7 +482,7 @@ export function SleepLog({ user, activeFamily, initialTab }) {
           </div>
         ) : (
           <>
-            {tab === "dashboard"   && <DashboardView analytics={analytics} logs={childLogs} activeFamily={activeFamily} onPatch={patchEntry} onDelete={deleteEntry} />}
+            {tab === "dashboard"   && <DashboardView analytics={analytics} logs={childLogs} activeFamily={activeFamily} onPatch={patchEntry} onDelete={deleteEntry} user={user} isConsultant={isConsultantUser} />}
             {tab === "today"       && <TodayView onLog={addEntry} onPatch={patchEntry} logs={childLogs} config={config} activeFamily={activeFamily} hasOpenDBSession={childLogs.some(l => l.type === "sleep_session" && !l.end_ts)} />}
             {tab === "history"     && <TrendsView logs={childLogs} onPatch={patchEntry} onDelete={deleteEntry} />}
             {tab === "growth"      && <GrowthView logs={childLogs} activeFamily={activeFamily} />}
@@ -700,7 +701,7 @@ function EditLogModal({ log, onSave, onDelete, onClose }) {
   );
 }
 
-function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
+function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete, user, isConsultant }) {
   const T = useT();
   const [editingLog, setEditingLog] = useState(null);
   const age = calculateAge(activeFamily?.birth_date || activeFamily?.birthDate);
@@ -790,6 +791,19 @@ function DashboardView({ analytics, logs, activeFamily, onPatch, onDelete }) {
           onSave={onPatch}
           onDelete={onDelete}
           onClose={() => setEditingLog(null)}
+        />
+      )}
+
+      {/* ── QUICK MESSAGE — consultant only ── */}
+      {isConsultant && (
+        <QuickMessage
+          user={user}
+          activeFamily={activeFamily}
+          context={[
+            analytics.nightWakes > 2 && `${analytics.nightWakes} night wakes logged`,
+            analytics.actualSleep && parseFloat(analytics.actualSleep) < 9 && `Only ${analytics.actualSleep}h total sleep`,
+            analytics.avgFallAsleep > 20 && `Avg ${analytics.avgFallAsleep}min to fall asleep`,
+          ].filter(Boolean).join(" · ") || "Recent sleep data"}
         />
       )}
     </div>

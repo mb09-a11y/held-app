@@ -256,7 +256,7 @@ function useAIInsight(familyState, isPremium) {
 
     callAI({
       max_tokens: 600,
-      promptType: "sleep_insight",
+      system: getPrompt("sleep_insight"),
       messages: [{
         role: "user",
         content: `Child: ${childProfile.name || "baby"}, ${childProfile.age || "young"}.
@@ -517,12 +517,12 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
 
     const isInsightMode = answers.baby === "just_understand";
 
-    // Prompts now live in src/lib/prompts.js — imported via promptType in callAI
+    // Prompts now live in src/lib/prompts.js — resolved via getPrompt()
 
     try {
       const raw = await callAI({
         max_tokens: 700,
-        promptType: isInsightMode ? "sleep_checkin_insight" : "sleep_checkin",
+        system: getPrompt(isInsightMode ? "sleep_checkin_insight" : "sleep_checkin"),
         messages: [{
           role: "user",
           content: `My ${childAge}, ${childName}: ${situation}. I'm feeling ${parentState}. ${dataNote}${patternContext ? " " + patternContext : ""}
