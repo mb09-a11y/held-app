@@ -219,6 +219,7 @@ function useClientData(families) {
 
         const cd = {
           family: f, children: kids,
+          _rawLogs: logs,
           sleepData: {
             napCountToday: todayLogs.filter(l => l.type === "sleep_session" && l.end_ts).length,
             totalSleepTodayH: (todayLogs.filter(l => l.type === "sleep_session").reduce((s, l) => s + (l.total_sleep_ms || 0), 0) / 3600000).toFixed(1),
@@ -392,61 +393,265 @@ function PatternCard({ dot, count, text }) {
   );
 }
 
-// ─── CASELOAD ROW ─────────────────────────────────────────────────────────────
-function CaseloadRow({ cd, onClick, last }) {
-  const T = useT();
+// ─── FAMILIES DASHBOARD ───────────────────────────────────────────────────────
+// Full-screen overlay showing all families at a glance.
+// Per-family card: tier badge, plan progress, 7-night sleep bar chart + waking dots.
+// Data comes from clientData (already loaded) — no extra queries.
+
+function SleepSparkChart({ logs, T }) {
+  // Build 7 buckets — one per day, most recent on the right
+  const buckets = [];
+  for (let i = 6; i >= 0; i--) {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    dayStart.setDate(dayStart.getDate() - i);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const daySessions = (logs || []).filter(l =>
+      l.type === "sleep_session" && l.end_ts &&
+      new Date(l.ts) >= dayStart && new Date(l.ts) < dayEnd
+    );
+    const dayWakes = (logs || []).filter(l =>
+      l.type === "night_waking" &&
+      new Date(l.ts) >= dayStart && new Date(l.ts) < dayEnd
+    );
+
+    const totalMs  = daySessions.reduce((s, l) => s + (l.total_sleep_ms || 0), 0);
+    const totalH   = totalMs / 3600000;
+    buckets.push({ totalH: Math.round(totalH * 10) / 10, wakes: dayWakes.length, hasData: daySessions.length > 0 });
+  }
+
+  const maxH    = Math.max(...buckets.map(b => b.totalH), 8); // floor at 8h so scale is meaningful
+  const W       = 160;
+  const H       = 44;
+  const barW    = 14;
+  const gap     = (W - barW * 7) / 6;
+  const hasAny  = buckets.some(b => b.hasData);
+
+  return (
+    <svg width={W} height={H + 10} viewBox={`0 0 ${W} ${H + 10}`} style={{ display: "block", overflow: "visible" }}>
+      {buckets.map((b, i) => {
+        const x      = i * (barW + gap);
+        const barH   = b.hasData ? Math.max(3, (b.totalH / maxH) * H) : H * 0.25;
+        const y      = H - barH;
+        const fill   = !hasAny || !b.hasData
+          ? (T.faint || "rgba(150,150,150,0.15)")
+          : b.totalH >= 10 ? "#4A8C73"
+          : b.totalH >= 7  ? "#7BAA8A"
+          : b.totalH >= 5  ? "#D4820A"
+          : "#C0392B";
+
+        return (
+          <g key={i}>
+            {/* Bar */}
+            <rect
+              x={x} y={y} width={barW} height={barH}
+              rx={3}
+              fill={!hasAny || !b.hasData ? (T.faint || "rgba(150,150,150,0.12)") : fill}
+              opacity={!hasAny || !b.hasData ? 0.5 : 1}
+            />
+            {/* Waking dots — stacked above bar */}
+            {b.hasData && b.wakes > 0 && [...Array(Math.min(b.wakes, 4))].map((_, wi) => (
+              <circle
+                key={wi}
+                cx={x + barW / 2}
+                cy={y - 5 - wi * 6}
+                r={2.5}
+                fill="#C0392B"
+                opacity={0.75}
+              />
+            ))}
+          </g>
+        );
+      })}
+      {/* Legend baseline */}
+      <line x1={0} y1={H} x2={W} y2={H} stroke={T.border || "rgba(150,150,150,0.2)"} strokeWidth={0.5} />
+    </svg>
+  );
+}
+
+function FamilyDashboardCard({ cd, onOpen, T }) {
   const [hovered, setHovered] = useState(false);
   const child    = cd.children?.[0];
-  const initials = (cd.family.display_name || cd.family.invite_email || "?")[0].toUpperCase();
   const t        = TIERS[cd.tier] || TIERS.stable;
+  const initials = (cd.family.display_name || cd.family.invite_email || "?")[0].toUpperCase();
   const planDay  = cd.planStartDate
-    ? `Plan day ${Math.max(1, Math.floor((Date.now() - new Date(cd.planStartDate)) / 86400000))}` : null;
+    ? Math.max(1, Math.floor((Date.now() - new Date(cd.planStartDate)) / 86400000))
+    : null;
+  const planLabel = planDay ? `Night ${planDay}` : "No plan yet";
+  const hasData  = cd._rawLogs?.some(l => l.type === "sleep_session");
 
   return (
     <div
-      onClick={onClick}
+      onClick={onOpen}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: hovered ? T.faint : T.card, border: `0.5px solid ${T.border}`, marginBottom: last ? 0 : 6, cursor: "pointer", transition: "background 0.15s" }}
+      style={{
+        background: hovered ? T.faint : T.card,
+        border: `0.5px solid ${T.border}`,
+        borderRadius: 12, padding: "14px 16px",
+        cursor: "pointer", transition: "background 0.15s",
+        marginBottom: 10,
+      }}
     >
-      <div style={{ width: 30, height: 30, borderRadius: "50%", background: t.badgeBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 600, color: t.badge, flexShrink: 0 }}>
-        {initials}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: font, fontSize: 13, fontWeight: 500, color: T.headingText }}>
-          {cd.family.display_name || cd.family.invite_email?.split("@")[0] || "Family"}
+      {/* Top row: avatar + name + plan day + tier badge */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: "50%",
+          background: t.badgeBg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 11, fontWeight: 600, color: t.badge, flexShrink: 0,
+        }}>
+          {initials}
         </div>
-        <div style={{ fontFamily: font, fontSize: 11, color: T.subText }}>
-          {[child?.dob ? ageLabel(child.dob) : null, planDay].filter(Boolean).join(" · ") || "No plan yet"}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: font, fontSize: 13, fontWeight: 500, color: T.headingText, lineHeight: 1.3 }}>
+            {cd.family.display_name || cd.family.invite_email?.split("@")[0] || "Family"}
+            {child?.dob && <span style={{ fontWeight: 400, color: T.muted }}> · {ageLabel(child.dob)}</span>}
+          </div>
+          <div style={{ fontFamily: font, fontSize: 11, color: T.subText, marginTop: 2 }}>
+            {planLabel}
+            {cd.planStartDate && (
+              <span style={{ marginLeft: 8, color: T.subText }}>
+                · started {new Date(cd.planStartDate).toLocaleDateString([], { month: "short", day: "numeric" })}
+              </span>
+            )}
+          </div>
+        </div>
+        <TierBadge tier={cd.tier} />
+      </div>
+
+      {/* Chart row */}
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: font, fontSize: 9, color: T.subText, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>
+            Last 7 nights
+          </div>
+          <SleepSparkChart logs={cd._rawLogs || []} T={T} />
+          {!hasData && (
+            <div style={{ fontFamily: font, fontSize: 10, color: T.subText, marginTop: 4, fontStyle: "italic" }}>
+              No sleep data logged yet
+            </div>
+          )}
+        </div>
+
+        {/* Right stats */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0, textAlign: "right" }}>
+          <div>
+            <div style={{ fontFamily: font, fontSize: 16, fontWeight: 500, color: T.headingText }}>
+              {cd.sleepData.nightWakesAvg > 0 ? cd.sleepData.nightWakesAvg : "—"}
+            </div>
+            <div style={{ fontFamily: font, fontSize: 9, color: T.subText, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              avg wakings
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: font, fontSize: 16, fontWeight: 500, color: T.headingText }}>
+              {cd.sleepData.weekSessions > 0 ? cd.sleepData.weekSessions : "—"}
+            </div>
+            <div style={{ fontFamily: font, fontSize: 9, color: T.subText, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              sessions
+            </div>
+          </div>
         </div>
       </div>
-      <div style={{ textAlign: "right", flexShrink: 0 }}>
-        <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>{cd.liveSignal?.split("—")[0]?.trim() || ""}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5, justifyContent: "flex-end", marginTop: 2 }}>
-          <span style={{ fontFamily: font, fontSize: 10, fontWeight: 500, color: t.badge }}>{cd.tier.charAt(0).toUpperCase() + cd.tier.slice(1)}</span>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: t.dot }} />
+
+      {/* Live signal if present */}
+      {cd.liveSignal && cd.tier !== "stable" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTop: `0.5px solid ${T.border}` }}>
+          <PulseDot color={t.dot} size={5} />
+          <span style={{ fontFamily: font, fontSize: 11, color: T.muted, fontStyle: "italic" }}>{cd.liveSignal}</span>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-// ─── ACTIVITY ITEM ────────────────────────────────────────────────────────────
-function ActivityItem({ dot, text, time, onClick, last }) {
-  const T = useT();
-  const [hovered, setHovered] = useState(false);
+function FamiliesDashboard({ clientData, onClose, onOpen, T }) {
+  const totalFamilies = clientData.length;
+  const urgentCount   = clientData.filter(c => c.tier === "urgent").length;
+  const stableCount   = clientData.filter(c => c.tier === "stable").length;
+
   return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, background: hovered ? T.faint : T.card, border: `0.5px solid ${T.border}`, marginBottom: last ? 0 : 6, cursor: onClick ? "pointer" : "default", transition: "background 0.15s" }}
-    >
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, marginTop: 4, flexShrink: 0 }} />
-      <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: font, fontSize: 12, color: T.text, lineHeight: 1.4 }}>{text}</div>
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 200,
+      background: T.overlayBg || T.bg,
+      display: "flex", flexDirection: "column",
+      animation: "slideUp 0.25s ease-out",
+    }}>
+      <style>{`@keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "20px 20px 16px",
+        borderBottom: `0.5px solid ${T.border}`,
+        background: T.bg, flexShrink: 0,
+      }}>
+        <div>
+          <h2 style={{ fontFamily: serif, fontSize: 22, color: T.headingText, margin: 0, lineHeight: 1.2 }}>
+            Your families
+          </h2>
+          <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginTop: 3 }}>
+            {totalFamilies} active
+            {urgentCount > 0 && <span style={{ color: TIERS.urgent.badge, marginLeft: 8 }}>· {urgentCount} need attention</span>}
+            {stableCount > 0 && <span style={{ color: TIERS.stable.badge, marginLeft: 8 }}>· {stableCount} stable</span>}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{
+            background: "none", border: `0.5px solid ${T.border}`,
+            borderRadius: 20, padding: "6px 14px",
+            fontFamily: font, fontSize: 13, color: T.muted, cursor: "pointer",
+          }}
+        >
+          ← Back
+        </button>
       </div>
-      {time && <div style={{ fontFamily: font, fontSize: 11, color: T.subText, flexShrink: 0, whiteSpace: "nowrap" }}>{timeAgo(time)}</div>}
+
+      {/* Legend */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 14,
+        padding: "10px 20px", borderBottom: `0.5px solid ${T.border}`,
+        background: T.bg, flexShrink: 0,
+      }}>
+        <span style={{ fontFamily: font, fontSize: 10, color: T.subText, textTransform: "uppercase", letterSpacing: ".08em" }}>Sleep bars:</span>
+        {[
+          { color: "#4A8C73", label: "10h+" },
+          { color: "#7BAA8A", label: "7–10h" },
+          { color: "#D4820A", label: "5–7h" },
+          { color: "#C0392B", label: "<5h" },
+        ].map(l => (
+          <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: l.color }} />
+            <span style={{ fontFamily: font, fontSize: 10, color: T.subText }}>{l.label}</span>
+          </div>
+        ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 6 }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#C0392B" }} />
+          <span style={{ fontFamily: font, fontSize: 10, color: T.subText }}>waking</span>
+        </div>
+      </div>
+
+      {/* Scrollable family list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 40px" }}>
+        {clientData.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>
+            No families yet — invite your first family to get started.
+          </div>
+        ) : (
+          clientData.map(cd => (
+            <FamilyDashboardCard
+              key={cd.family.id}
+              cd={cd}
+              onOpen={() => onOpen(cd)}
+              T={T}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -457,7 +662,7 @@ export function ConsultantHome({ user }) {
   const { families, setActiveFamily, setTab, currentUser, setPendingSleepTab } = useApp();
   const { clientData, loading } = useClientData(families);
   const [selectedClient, setSelectedClient] = useState(null);
-  const [caseloadFilter, setCaseloadFilter] = useState(null);
+  const [showFamilies, setShowFamilies] = useState(false);
 
   function openClient(cd) { setActiveFamily(cd.family); setSelectedClient(cd); }
 
@@ -472,6 +677,20 @@ export function ConsultantHome({ user }) {
     else if (action === "open_intake") setSelectedClient({ ...cd, _openIntake: true });
     else setSelectedClient(cd);
   }
+
+  function handleOpenFromDashboard(cd) {
+    setShowFamilies(false);
+    handleAction(cd, cd.cta?.action);
+  }
+
+  if (showFamilies) return (
+    <FamiliesDashboard
+      clientData={clientData}
+      onClose={() => setShowFamilies(false)}
+      onOpen={handleOpenFromDashboard}
+      T={T}
+    />
+  );
 
   if (selectedClient) return <FamilyGuidance clientData={selectedClient} onBack={() => setSelectedClient(null)} onOpenTab={openTab} />;
 
@@ -541,15 +760,6 @@ export function ConsultantHome({ user }) {
   const lowLogging = clientData.filter(c => !c.lastLog || hoursSince(c.lastLog) > 48);
   if (lowLogging.length >= 2)    patterns.push({ dot: TIERS.intake.dot,  count: lowLogging.length,    text: "A couple of families are showing lower logging consistency this week." });
 
-  const filteredCaseload = caseloadFilter ? clientData.filter(c => c.tier === caseloadFilter) : clientData;
-
-  const activityFeed = clientData
-    .flatMap(c => [
-      c.lastMessage && { time: c.lastMessage, dot: TIERS.urgent.dot,  text: `${firstName(c.family)} sent a message`,    action: () => { setActiveFamily(c.family); setTab("messages"); } },
-      c.lastLog     && { time: c.lastLog,     dot: c.sleepTrend === "improving" ? TIERS.stable.dot : TIERS.intake.dot, text: `${firstName(c.family)} logged sleep data`, action: () => { setActiveFamily(c.family); setPendingSleepTab("dashboard"); setTab("sleep"); } },
-    ].filter(Boolean))
-    .sort((a, b) => new Date(b.time) - new Date(a.time))
-    .slice(0, 6);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
@@ -594,14 +804,6 @@ export function ConsultantHome({ user }) {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 16 }}>
-          {urgentClients.length > 0     && <Chip tier="urgent"     count={urgentClients.length}     active={caseloadFilter === "urgent"}     onClick={() => setCaseloadFilter(f => f === "urgent"     ? null : "urgent")} />}
-          {watchClients.length > 0      && <Chip tier="watch"      count={watchClients.length}      active={caseloadFilter === "watch"}      onClick={() => setCaseloadFilter(f => f === "watch"      ? null : "watch")} />}
-          {predictiveClients.length > 0 && <Chip tier="predictive" count={predictiveClients.length} active={caseloadFilter === "predictive"} onClick={() => setCaseloadFilter(f => f === "predictive" ? null : "predictive")} />}
-          {intakeClients.length > 0     && <Chip tier="intake"     count={intakeClients.length}     active={caseloadFilter === "intake"}     onClick={() => setCaseloadFilter(f => f === "intake"     ? null : "intake")} />}
-          {stableClients.length > 0     && <Chip tier="stable"     count={stableClients.length}     active={caseloadFilter === "stable"}     onClick={() => setCaseloadFilter(f => f === "stable"     ? null : "stable")} />}
-        </div>
-
         {top3.length > 0
           ? top3.map(cd => <PriorityCard key={cd.family.id} cd={cd} onAction={handleAction} />)
           : <div style={{ textAlign: "center", padding: "20px 0", color: T.muted, fontSize: 13 }}>{clientData.length === 0 ? "No families assigned yet. Invite your first family to get started." : "Your full caseload is stable — no immediate action needed."}</div>
@@ -626,27 +828,27 @@ export function ConsultantHome({ user }) {
         </div>
       </>)}
 
-      {/* ── 4. CASELOAD SNAPSHOT ── */}
-      {clientData.length > 0 && (<>
-        <SectionLabel action={{ label: "All families ›", onClick: () => setTab("families") }}>
-          Caseload Snapshot ({filteredCaseload.length}{caseloadFilter ? ` · ${caseloadFilter}` : ""})
-        </SectionLabel>
-        <div style={{ background: T.card, border: `0.5px solid ${T.border}`, borderRadius: 14, padding: "16px 18px", marginBottom: 20 }}>
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 12 }}>
-            {[urgentClients.length > 0 && { tier: "urgent", count: urgentClients.length }, watchClients.length > 0 && { tier: "watch", count: watchClients.length }, stableClients.length > 0 && { tier: "stable", count: stableClients.length }]
-              .filter(Boolean).map(chip => <Chip key={chip.tier} tier={chip.tier} count={chip.count} active={caseloadFilter === chip.tier} onClick={() => setCaseloadFilter(f => f === chip.tier ? null : chip.tier)} />)}
+      {/* ── 4. YOUR FAMILIES ── */}
+      <button
+        onClick={() => setShowFamilies(true)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          width: "100%", padding: "16px 20px",
+          background: T.card, border: `0.5px solid ${T.border}`,
+          borderRadius: 14, cursor: "pointer",
+          marginBottom: 20, boxSizing: "border-box",
+        }}
+      >
+        <div style={{ textAlign: "left" }}>
+          <div style={{ fontFamily: font, fontSize: 14, fontWeight: 500, color: T.headingText, marginBottom: 3 }}>
+            Your families
           </div>
-          {filteredCaseload.map((cd, i) => <CaseloadRow key={cd.family.id} cd={cd} last={i === filteredCaseload.length - 1} onClick={() => openClient(cd)} />)}
+          <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>
+            {clientData.length} {clientData.length === 1 ? "family" : "families"} active
+          </div>
         </div>
-      </>)}
-
-      {/* ── 5. RECENT ACTIVITY ── */}
-      {activityFeed.length > 0 && (<>
-        <SectionLabel action={{ label: "View all ›", onClick: () => setTab("families") }}>Recent Activity</SectionLabel>
-        <div style={{ background: T.card, border: `0.5px solid ${T.border}`, borderRadius: 14, padding: "16px 18px", marginBottom: 20 }}>
-          {activityFeed.map((item, i) => <ActivityItem key={i} dot={item.dot} text={item.text} time={item.time} last={i === activityFeed.length - 1} onClick={item.action} />)}
-        </div>
-      </>)}
+        <span style={{ fontSize: 18, color: T.muted }}>›</span>
+      </button>
     </div>
   );
 }

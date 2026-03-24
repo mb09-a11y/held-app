@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { callAI } from "../../lib/ai.js";
 import { getPrompt } from "../../lib/prompts.js";
+import { getPractice, getNoticedStatement } from "../../lib/practices.js";
 import { getCurrentWonderWeeksLeap, getMilestonesForAge } from "../../modules/milestones/data/milestones.js";
 import { HamburgerButton } from "../shared/AppDrawer.jsx";
-import { NSCheckin } from "../../modules/held/NSCheckin.jsx";
 
 // ─── AGE LABEL ────────────────────────────────────────────────────────────────
 function ageLabel(dob) {
@@ -380,14 +380,677 @@ function useCheckinHistory(userId, familyId) {
   return { history, patterns, saveCheckin };
 }
 
+// ─── CARD CHROME ──────────────────────────────────────────────────────────────
+// Shared palette for DailyMoment + HeldCheckin.
+// Fixed RCC sage — intentionally not theme-adaptive.
+// This card is the emotional anchor of the home screen.
+
+// Only accent colors are hardcoded — everything else comes from T (theme tokens)
+// so both cards adapt automatically to light/dark mode.
+const CARD_SAGE = "#4A8C73"; // RCC brand green — intentional, fixed
+const CARD_ROSE = "#A87B8A"; // mic listening state — intentional, fixed
+
+// ─── DAILY MOMENT ─────────────────────────────────────────────────────────────
+// Structure (always):
+//   Today's invitation (practice from practices.js)
+//   ── divider ──
+//   Streak bar + days label
+//   Held noticed (getNoticedStatement — from real data)
+//   ── divider (morning/evening only) ──
+//   Time-based prompt (morning moment | evening close)
+
+function DailyMoment({ setTab, activeChild, familyState, patterns, daysShowingUp }) {
+  const T = useT();
+  const hour = new Date().getHours();
+  const period = hour < 10 ? "morning" : hour < 20 ? "day" : "evening";
+  const seed   = new Date().getDate();
+  const wSeed  = new Date().getDay();
+
+  const [morningAnswer, setMorningAnswer]     = useState(null);
+  const [eveningDone,   setEveningDone]       = useState(false);
+  const [invitationTap, setInvitationTap]     = useState(null);
+
+  const practice  = getPractice(period === "morning" ? "morning" : period === "evening" ? "evening" : "invitation", familyState?.parentState?.lastCheckinState, seed);
+  const noticed   = getNoticedStatement(patterns, { ...familyState, daysShowingUp }, wSeed);
+  const days      = daysShowingUp ?? 0;
+  const TOTAL_BARS = 14;
+
+  const childName = activeChild?.name || "them";
+
+  // ── Shared styles ──────────────────────────────────────────────────────────
+  const cardStyle = {
+    borderRadius: 16, padding: "20px 22px",
+    background: T.card, marginBottom: 10,
+  };
+  const capsStyle = {
+    fontSize: 10, fontWeight: 500, letterSpacing: ".12em",
+    textTransform: "uppercase", color: CARD_SAGE, fontFamily: font, marginBottom: 8,
+  };
+  const titleStyle = {
+    fontFamily: serif, fontSize: 20, color: T.text,
+    lineHeight: 1.3, marginBottom: 6, fontWeight: 500,
+  };
+  const subStyle = {
+    fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6,
+  };
+  const divStyle = {
+    height: "0.5px", background: T.border, margin: "14px 0",
+  };
+  const chipStyle = (active) => ({
+    display: "inline-block", padding: "6px 14px", borderRadius: 20,
+    border: `0.5px solid ${active ? CARD_SAGE : T.border}`,
+    background: active ? T.card2 || T.card : T.faint,
+    fontSize: 12, fontFamily: font,
+    color: active ? CARD_SAGE : T.muted,
+    cursor: "pointer", marginRight: 6, marginTop: 8,
+  });
+  const mChipStyle = {
+    width: "100%", textAlign: "left", padding: "9px 13px", borderRadius: 10,
+    border: `0.5px solid ${T.border}`, background: T.faint,
+    fontSize: 13, fontFamily: font, color: T.text, cursor: "pointer",
+    marginBottom: 6,
+  };
+  const responseSurfaceStyle = {
+    background: T.faint, borderLeft: `2px solid ${T.border}`,
+    borderRadius: "0 8px 8px 0", padding: "11px 13px", marginTop: 10,
+  };
+
+  // ── Sub-components ─────────────────────────────────────────────────────────
+  const Bars = () => (
+    <div style={{ display: "flex", gap: 4, marginBottom: 5 }}>
+      {[...Array(TOTAL_BARS)].map((_, i) => (
+        <div key={i} style={{
+          flex: 1, height: 4, borderRadius: 3,
+          background: i < days ? CARD_SAGE + "55" : T.faint,
+        }} />
+      ))}
+    </div>
+  );
+
+  const StreakSection = () => (
+    <>
+      <Bars />
+      <div style={{ fontSize: 11, color: T.muted, fontFamily: font, marginBottom: 10 }}>
+        {days > 0 ? `${days} days showing up · keep going` : "Start your first day today"}
+      </div>
+      <div style={{ fontSize: 13, color: T.text, fontFamily: font, lineHeight: 1.65, fontStyle: "italic", opacity: 0.85 }}>
+        {noticed}
+      </div>
+    </>
+  );
+
+  const InvitationTop = () => (
+    <>
+      <div style={capsStyle}>Today's invitation</div>
+      <div style={titleStyle}>{practice.text}</div>
+      <div style={{ ...subStyle, marginBottom: period === "day" ? 6 : 0 }}>{practice.sub}</div>
+      {period === "day" && (
+        <div>
+          <span style={chipStyle(invitationTap === "noticed")} onClick={() => setInvitationTap("noticed")}>I noticed something</span>
+          <span style={chipStyle(invitationTap === "remind")}  onClick={() => setInvitationTap("remind")}>Remind me tonight</span>
+          {invitationTap === "noticed" && (
+            <div style={{ ...responseSurfaceStyle, marginTop: 10 }}>
+              <div style={{ ...capsStyle, marginBottom: 4 }}>Held that</div>
+              <div style={{ fontSize: 13.5, color: T.text, fontFamily: font, lineHeight: 1.65 }}>
+                Good. Come back tonight and tell me what it was. That's the whole practice.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  // ── MORNING ────────────────────────────────────────────────────────────────
+  if (period === "morning" && !morningAnswer) {
+    return (
+      <div style={cardStyle}>
+        <InvitationTop />
+        <div style={divStyle} />
+        <StreakSection />
+        <div style={divStyle} />
+        <div style={capsStyle}>Morning moment</div>
+        <div style={titleStyle}>How did last night actually go?</div>
+        <div style={{ ...subStyle, marginBottom: 12 }}>Not compared to the plan. Just — for you, in your body.</div>
+        {[
+          { val: "hard",  label: "Honestly hard — I'm running on nothing" },
+          { val: "mixed", label: "Mixed — some rough patches but we got through it" },
+          { val: "good",  label: "Better than expected, actually" },
+        ].map(o => (
+          <button key={o.val} onClick={() => setMorningAnswer(o.val)} style={mChipStyle}>{o.label}</button>
+        ))}
+      </div>
+    );
+  }
+
+  if (period === "morning" && morningAnswer) {
+    const responses = {
+      hard:  { label: "For you right now", text: "That kind of tired lives in your body, not just your eyes. Today doesn't need to be impressive — it just needs to be survivable." },
+      mixed: { label: "For you right now", text: "Mixed nights are where most of the growth happens — for both of you. Getting through it counts." },
+      good:  { label: "Hold onto that",    text: `Better than expected is worth naming. Your body relaxed a little, which means ${childName}'s did too.` },
+    };
+    const r = responses[morningAnswer];
+    return (
+      <div style={cardStyle}>
+        <InvitationTop />
+        <div style={divStyle} />
+        <StreakSection />
+        <div style={divStyle} />
+        <div style={capsStyle}>Morning moment</div>
+        <div style={responseSurfaceStyle}>
+          <div style={{ ...capsStyle, marginBottom: 4 }}>{r.label}</div>
+          <div style={{ fontSize: 13.5, color: T.text, fontFamily: font, lineHeight: 1.65 }}>{r.text}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── DAY ────────────────────────────────────────────────────────────────────
+  if (period === "day") {
+    return (
+      <div style={cardStyle}>
+        <InvitationTop />
+        <div style={divStyle} />
+        <StreakSection />
+      </div>
+    );
+  }
+
+  // ── EVENING ────────────────────────────────────────────────────────────────
+  const eveningPractice = getPractice("evening", familyState?.parentState?.lastCheckinState, seed);
+  const napCount = familyState?.sleepData?.napCountToday ?? 0;
+  const intention = napCount > 0
+    ? `${childName} had ${napCount} nap${napCount !== 1 ? "s" : ""} today. ${eveningPractice.text}`
+    : eveningPractice.text;
+
+  if (!eveningDone) {
+    return (
+      <div style={cardStyle}>
+        <InvitationTop />
+        <div style={divStyle} />
+        <StreakSection />
+        <div style={divStyle} />
+        <div style={capsStyle}>Evening close</div>
+        <div style={titleStyle}>Before tonight's sleep window — one thing.</div>
+        <div style={{ background: T.faint, border: `0.5px solid ${T.border}`, borderRadius: 10, padding: "11px 13px", margin: "10px 0 12px" }}>
+          <div style={{ ...capsStyle, marginBottom: 4 }}>Tonight's intention</div>
+          <div style={{ fontSize: 13.5, color: T.text, fontFamily: font, lineHeight: 1.6 }}>{intention}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => { setEveningDone(true); setTab("regulation"); }} style={{ ...mChipStyle, flex: 1, textAlign: "center", marginBottom: 0 }}>Got it →</button>
+          <button onClick={() => setEveningDone(true)} style={{ ...mChipStyle, flex: 1, textAlign: "center", marginBottom: 0 }}>Different idea</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={cardStyle}>
+      <InvitationTop />
+      <div style={divStyle} />
+      <StreakSection />
+      <div style={divStyle} />
+      <div style={capsStyle}>Evening close</div>
+      <div style={responseSurfaceStyle}>
+        <div style={{ ...capsStyle, marginBottom: 4 }}>You're ready</div>
+        <div style={{ fontSize: 13.5, color: T.text, fontFamily: font, lineHeight: 1.65 }}>
+          Trust your read of {childName} tonight. You know more than you think you do.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── HELD CHECKIN ─────────────────────────────────────────────────────────────
+// Replaces both the old hero check-in card AND the NSCheckin card.
+// Freeform text/voice is the primary path.
+// Structured chips are a secondary swap — same card, no stacking.
+// All AI calls go through the existing callAI + getPrompt infrastructure.
+// Pattern tracking (saveCheckin) is preserved for both paths.
+
+function HeldCheckin({ familyState, patterns, saveCheckin }) {
+  const T = useT();
+  const { currentUser, activeChild, activeFamily, isPremium } = useApp();
+
+  const [mode,       setMode]       = useState("idle");   // idle | text | listening | chips | loading | response
+  const [inputText,  setInputText]  = useState("");
+  const [response,   setResponse]   = useState(null);
+  const [situation,  setSituation]  = useState(null);
+  const [feeling,    setFeeling]    = useState(null);
+  const [isListening, setIsListening] = useState(false);
+
+  const textareaRef   = useRef(null);
+  const recognitionRef = useRef(null);
+
+  const speechSupported = typeof window !== "undefined" &&
+    ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  // ── Restore sticky response from sessionStorage ──
+  const sessionKey = activeFamily?.id
+    ? `held_checkin_${activeFamily.id}_${new Date().toDateString()}`
+    : null;
+
+  useEffect(() => {
+    if (!sessionKey) return;
+    const cached = sessionStorage.getItem(sessionKey);
+    if (cached) {
+      try { setResponse(JSON.parse(cached)); setMode("response"); } catch { sessionStorage.removeItem(sessionKey); }
+    }
+  }, [sessionKey]);
+
+  useEffect(() => {
+    if (mode === "text" && textareaRef.current) {
+      setTimeout(() => textareaRef.current?.focus(), 80);
+    }
+  }, [mode]);
+
+  // ── Voice ──
+  function startListening() {
+    if (!speechSupported) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.continuous = true; rec.interimResults = true; rec.lang = "en-US";
+    recognitionRef.current = rec;
+    rec.onresult = (e) => setInputText(Array.from(e.results).map(r => r[0].transcript).join(""));
+    rec.onend  = () => { setIsListening(false); recognitionRef.current = null; };
+    rec.onerror = () => { setIsListening(false); recognitionRef.current = null; };
+    rec.start();
+    setIsListening(true);
+    setMode("listening");
+  }
+
+  function stopListening() {
+    try { recognitionRef.current?.stop(); } catch {}
+    recognitionRef.current = null;
+    setIsListening(false);
+    setMode("text");
+  }
+
+  // ── Submit — freeform path ──
+  async function submitFreeform() {
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
+    setMode("loading");
+
+    const childAge  = getChildAge(activeChild);
+    const childName = activeChild?.name || "my baby";
+    const userMsg   = [childAge ? `I'm parenting a ${childAge}, ${childName}.` : `I'm parenting ${childName}.`, trimmed].join(" ");
+    const histCtx   = buildHistoryContext(patterns);
+
+    try {
+      const raw    = await callAI({ system: getPrompt("ns_checkin"), max_tokens: 700, messages: [{ role: "user", content: `${userMsg}${histCtx ? "\n\n" + histCtx : ""}` }] });
+      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      persistResponse(parsed);
+      saveCheckin?.(trimmed, "freeform", parsed.validation?.slice(0, 200)).catch(() => {});
+    } catch {
+      persistResponse(fallbackResponse());
+    }
+  }
+
+  // ── Submit — chips path ──
+  async function submitChips() {
+    if (!situation) return;
+    setMode("loading");
+
+    const childAge  = getChildAge(activeChild);
+    const childName = activeChild?.name || "your baby";
+    const sitLabel  = SITUATION_LABELS[situation] || situation;
+    const feelLabel = FEELING_LABELS[feeling]     || "checking in";
+    const sleepCtx  = buildSleepContext(familyState);
+    const histCtx   = buildHistoryContext(patterns);
+    const dataNote  = sleepCtx
+      ? `Sleep data context: ${sleepCtx}`
+      : `No sleep data logged yet — respond entirely from what they described.`;
+
+    try {
+      const raw    = await callAI({
+        system: getPrompt(situation === "just_understand" ? "sleep_checkin_insight" : "sleep_checkin"),
+        max_tokens: 700,
+        messages: [{ role: "user", content: `My ${childAge || "baby"}, ${childName}: ${sitLabel}. I'm feeling ${feelLabel}. ${dataNote}${histCtx ? " " + histCtx : ""}` }],
+      });
+      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+      persistResponse(parsed);
+      saveCheckin?.(situation, feeling, parsed.what_this_might_be?.slice(0, 200)).catch(() => {});
+    } catch {
+      persistResponse(fallbackResponse());
+    }
+  }
+
+  function persistResponse(parsed) {
+    setResponse(parsed);
+    setMode("response");
+    if (sessionKey) sessionStorage.setItem(sessionKey, JSON.stringify(parsed));
+  }
+
+  function reset() {
+    if (sessionKey) sessionStorage.removeItem(sessionKey);
+    setMode("idle"); setInputText(""); setResponse(null);
+    setSituation(null); setFeeling(null);
+  }
+
+  // ── Shared card shell styles ───────────────────────────────────────────────
+  const cardShell = {
+    borderRadius: 16, padding: "20px 22px",
+    background: T.card, marginBottom: 10,
+  };
+  const capsS = {
+    fontSize: 10, fontWeight: 500, letterSpacing: ".12em",
+    textTransform: "uppercase", color: CARD_SAGE, fontFamily: font,
+  };
+  const titleS = {
+    fontFamily: serif, fontSize: 20, color: T.text, lineHeight: 1.3,
+    fontWeight: 500, marginBottom: 4,
+  };
+  const subS = { fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.55 };
+  const pillBtn = {
+    padding: "9px 20px", borderRadius: 20, border: "none",
+    background: CARD_SAGE, color: "#fff",
+    fontFamily: font, fontSize: 13, fontWeight: 500, cursor: "pointer",
+  };
+  const ghostBtn = {
+    background: "none", border: "none", fontFamily: font,
+    fontSize: 12, color: T.muted, cursor: "pointer", padding: 0,
+  };
+  const chipBtnS = (sel) => ({
+    width: "100%", textAlign: "left", padding: "9px 13px", borderRadius: 10,
+    border: `0.5px solid ${sel ? CARD_SAGE : T.border}`,
+    background: sel ? T.card2 || T.card : T.faint,
+    fontSize: 13, fontFamily: font,
+    color: sel ? CARD_SAGE : T.text,
+    cursor: "pointer", marginBottom: 6,
+  });
+  const taStyle = {
+    width: "100%", boxSizing: "border-box", borderRadius: 10,
+    border: `1px solid ${T.border}`,
+    background: T.inputBg || T.faint,
+    color: T.text, fontFamily: font, fontSize: 13.5, lineHeight: 1.6,
+    padding: "11px 13px", resize: "none", outline: "none",
+    flex: 1,
+  };
+  const talkBtnS = (listening) => ({
+    width: 56, height: 56, borderRadius: "50%", border: "none",
+    background: listening ? CARD_ROSE : CARD_SAGE,
+    color: "#fff", fontSize: 22, cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    flexShrink: 0,
+    animation: listening ? "heldPulse 1.5s ease-in-out infinite" : "none",
+  });
+
+  // ── IDLE ──────────────────────────────────────────────────────────────────
+  if (mode === "idle") {
+    return (
+      <div style={{ ...cardShell, cursor: "pointer" }} onClick={() => setMode("text")}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
+          <span style={{ fontSize: 26 }}>🌿</span>
+          <div style={pillBtn}>Check in →</div>
+        </div>
+        <div style={titleS}>How is everybody doing today?</div>
+        <div style={subS}>I'm here to listen — no structure needed</div>
+      </div>
+    );
+  }
+
+  // ── TEXT INPUT ────────────────────────────────────────────────────────────
+  if (mode === "text") {
+    const canSubmit = inputText.trim().length > 3;
+    return (
+      <div style={cardShell}>
+        <style>{`@keyframes heldPulse { 0%,100%{box-shadow:0 0 0 0 rgba(168,123,138,0.3)} 50%{box-shadow:0 0 0 10px rgba(168,123,138,0)} }`}</style>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <span style={{ fontSize: 16 }}>🌿</span>
+          <span style={capsS}>Held</span>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+          <textarea
+            ref={textareaRef}
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) submitFreeform(); }}
+            placeholder="What's going on right now…"
+            rows={3}
+            style={taStyle}
+          />
+          {speechSupported && (
+            <button onClick={startListening} style={talkBtnS(false)}>🎤</button>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <button onClick={() => setMode("idle")} style={ghostBtn}>Cancel</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={() => setMode("chips")} style={{ ...ghostBtn, fontSize: 11.5, textDecoration: "underline", textUnderlineOffset: 3, textDecorationColor: T.border }}>
+              Use chips instead
+            </button>
+            <button onClick={submitFreeform} disabled={!canSubmit} style={{ ...pillBtn, opacity: canSubmit ? 1 : 0.45, cursor: canSubmit ? "pointer" : "default" }}>
+              Send →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── LISTENING ─────────────────────────────────────────────────────────────
+  if (mode === "listening") {
+    return (
+      <div style={cardShell}>
+        <style>{`@keyframes heldPulse { 0%,100%{box-shadow:0 0 0 0 rgba(168,123,138,0.3)} 50%{box-shadow:0 0 0 10px rgba(168,123,138,0)} }`}</style>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+          <span style={{ fontSize: 16 }}>🌿</span>
+          <span style={capsS}>Held</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "8px 0 20px" }}>
+          <button onClick={stopListening} style={talkBtnS(true)}>⏹</button>
+          <div style={{ fontFamily: serif, fontSize: 18, color: T.text, textAlign: "center" }}>I'm listening…</div>
+          <div style={{ fontFamily: font, fontSize: 12, color: T.muted, textAlign: "center" }}>Tap to stop when you're done</div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <button onClick={() => setMode("idle")} style={ghostBtn}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── CHIPS ─────────────────────────────────────────────────────────────────
+  if (mode === "chips") {
+    return (
+      <div style={cardShell}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>🌿</span>
+            <span style={capsS}>Held</span>
+          </div>
+          <button onClick={() => setMode("text")} style={{ ...ghostBtn, fontSize: 11.5, textDecoration: "underline", textUnderlineOffset: 3 }}>← Type instead</button>
+        </div>
+        <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 8 }}>
+          What's going on?
+        </div>
+        {SITUATIONS.map(o => (
+          <button key={o.val} onClick={() => setSituation(o.val)} style={chipBtnS(situation === o.val)}>{o.label}</button>
+        ))}
+        {situation && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 8 }}>
+              And how are you?
+            </div>
+            {FEELINGS.map(o => (
+              <button key={o.val} onClick={() => setFeeling(o.val)} style={chipBtnS(feeling === o.val)}>{o.label}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+          <button onClick={() => setMode("idle")} style={ghostBtn}>Cancel</button>
+          <button onClick={submitChips} disabled={!situation} style={{ ...pillBtn, opacity: situation ? 1 : 0.45, cursor: situation ? "pointer" : "default" }}>
+            Send →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── LOADING ───────────────────────────────────────────────────────────────
+  if (mode === "loading") {
+    return (
+      <div style={{ ...cardShell, display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontSize: 20 }}>🌿</span>
+        <span style={{ fontFamily: font, fontSize: 13.5, color: T.muted, fontStyle: "italic" }}>
+          Held is with you…
+        </span>
+      </div>
+    );
+  }
+
+  // ── RESPONSE ──────────────────────────────────────────────────────────────
+  if (mode === "response" && response) {
+    // Response may be NS-checkin format or sleep-checkin format — handle both
+    const validation    = response.validation    || response.what_this_might_be;
+    const whatHappening = response.what_might_be_happening || response.what_baby_might_be_communicating;
+    const forYou        = response.for_you       || response.what_you_might_be_feeling;
+    const tryThis       = response.try_this      || [];
+
+    return (
+      <div style={{ ...cardShell }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+          <span style={{ fontSize: 16 }}>🌿</span>
+          <span style={capsS}>Held</span>
+        </div>
+
+        {validation && (
+          <div style={{ fontFamily: serif, fontSize: 15.5, color: T.text, lineHeight: 1.55, marginBottom: 14 }}>
+            {validation}
+          </div>
+        )}
+
+        {whatHappening && (
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: T.faint, border: `0.5px solid ${T.border}`, marginBottom: 10 }}>
+            <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7 }}>
+              {whatHappening}
+            </div>
+          </div>
+        )}
+
+        {forYou && (
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(168,123,138,0.07)", border: "0.5px solid rgba(168,123,138,0.2)", marginBottom: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: ".1em", textTransform: "uppercase", color: CARD_ROSE, fontFamily: font, marginBottom: 6 }}>
+              ❤️ For you
+            </div>
+            <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7 }}>{forYou}</div>
+          </div>
+        )}
+
+        {tryThis.length > 0 && (
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: "rgba(74,140,115,0.07)", border: `0.5px solid ${T.border}`, marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: ".1em", textTransform: "uppercase", color: CARD_SAGE, fontFamily: font, marginBottom: 8 }}>
+              🌿 If it feels right…
+            </div>
+            {tryThis.map((item, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: i < tryThis.length - 1 ? 8 : 0 }}>
+                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "rgba(74,140,115,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: CARD_SAGE, flexShrink: 0, marginTop: 3 }}>{i + 1}</div>
+                <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.65 }}>{item}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontFamily: font, fontSize: 12.5, color: T.muted, fontStyle: "italic" }}>Want to chat more?</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={reset} style={{ padding: "7px 12px", borderRadius: 10, border: `0.5px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 11.5, cursor: "pointer" }}>
+              Clear
+            </button>
+            <button onClick={() => { setInputText(""); setMode("text"); }} style={{ padding: "7px 14px", borderRadius: 10, border: `0.5px solid ${CARD_SAGE}50`, background: `${CARD_SAGE}10`, color: CARD_SAGE, fontFamily: font, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+              Keep going →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── Chips data ──────────────────────────────────────────────────────────────
+const SITUATIONS = [
+  { val: "bedtime_mess",  label: "🌙 Bedtime is a mess" },
+  { val: "short_naps",    label: "😩 Naps were short today" },
+  { val: "wont_settle",   label: "🙅 Baby won't settle" },
+  { val: "doing_wrong",   label: "💭 I don't know what I'm doing wrong" },
+  { val: "something_off", label: "🌀 Something feels off" },
+  { val: "just_woke",     label: "☀️ Baby just woke up" },
+  { val: "just_understand", label: "✨ Just help me understand" },
+];
+const FEELINGS = [
+  { val: "overwhelmed", label: "😵 Overwhelmed" },
+  { val: "exhausted",   label: "🥱 Running on empty" },
+  { val: "anxious",     label: "😰 Anxious about sleep" },
+  { val: "frustrated",  label: "😤 Frustrated" },
+  { val: "okay",        label: "😐 Hanging in there" },
+  { val: "good",        label: "🙂 Actually doing okay" },
+];
+const SITUATION_LABELS = {
+  bedtime_mess:   "bedtime has been a real struggle — it feels chaotic and hard",
+  short_naps:     "naps have been short today and I'm not sure why",
+  wont_settle:    "baby won't settle and nothing seems to be working",
+  doing_wrong:    "I don't know what I'm doing wrong and I'm starting to doubt myself",
+  something_off:  "something feels off but I can't quite put my finger on it",
+  just_woke:      "baby just woke up",
+  just_understand:"I don't have a specific problem — I just want to understand what might be going on developmentally",
+};
+const FEELING_LABELS = {
+  overwhelmed: "overwhelmed", exhausted: "running on empty",
+  anxious: "anxious about sleep", frustrated: "frustrated",
+  okay: "hanging in there", good: "actually doing okay",
+};
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function getChildAge(activeChild) {
+  if (!activeChild?.dob) return null;
+  const birth = new Date(activeChild.dob), now = new Date();
+  let years = now.getFullYear() - birth.getFullYear();
+  let mos   = now.getMonth() - birth.getMonth();
+  if (now.getDate() < birth.getDate()) mos--;
+  if (mos < 0) { years--; mos += 12; }
+  const total = years * 12 + mos;
+  return total < 24 ? `${total} month old` : `${years} year old`;
+}
+
+function buildSleepContext(familyState) {
+  if (!familyState) return "";
+  const { sleepData, parentState } = familyState;
+  if (!sleepData?.napCountToday && !sleepData?.weekSessions?.length) return "";
+  return [
+    `Today: ${sleepData.napCountToday} nap(s), ${sleepData.totalSleepTodayHours}h total sleep.`,
+    sleepData.nightWakesAvg != null ? `Avg night wakings: ${sleepData.nightWakesAvg}.` : "",
+    parentState?.nervousSystemTrend ? `Parent NS trend: ${parentState.nervousSystemTrend}.` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function buildHistoryContext(patterns) {
+  if (!patterns || patterns.total < 3) return "";
+  return [
+    patterns.hardestTime && patterns.hardestTimeCount >= 2
+      ? `Pattern: ${patterns.hardestTimeCount} recent check-ins at ${patterns.hardestTime}.` : "",
+    patterns.dominantFeeling && patterns.dominantFeelingCount >= 2
+      ? `Pattern: felt "${patterns.dominantFeeling}" in ${patterns.dominantFeelingCount} of last ${patterns.total} check-ins.` : "",
+    patterns.progressDelta !== null && patterns.progressDelta < 0
+      ? `Progress: ${Math.abs(patterns.progressDelta)} fewer hard check-ins this week than last.` : "",
+  ].filter(Boolean).join(" ");
+}
+
+function fallbackResponse() {
+  return {
+    validation: "Something interrupted that response — but the fact that you're checking in matters.",
+    what_might_be_happening: "Whatever is going on right now is real and valid.",
+    for_you: "Take one slow breath. You're doing the work just by paying attention.",
+    try_this: ["Give yourself permission to not have it figured out right now", "One small thing: a glass of water, a moment outside, a text to someone who gets it"],
+  };
+}
+
 // ─── PARENT HOME ──────────────────────────────────────────────────────────────
 export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawer, onFindConsultant }) {
   const T = useT();
   const { setTab, consultants, currentUser, activeChild, activeFamily, isPremium, hasConsultantAssigned, setPendingSleepAction } = useApp();
   const [showUpgrade, setShowUpgrade] = useState(false);
-  const [whatStep, setWhatStep] = useState("idle"); // idle | baby | parent | loading | response
-  const [whatAnswers, setWhatAnswers] = useState({});
-  const [whatResponse, setWhatResponse] = useState(null);
   const consultant = consultants?.[0];
   const isCo = currentUser?.role === "co_caregiver";
 
@@ -401,155 +1064,6 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const { greeting, message } = getEmotionalHeader(currentUser);
 
   // ── "What's happening right now?" guided check-in ──
-  function resetCheckin() {
-    setWhatStep("idle");
-    setWhatAnswers({});
-    setWhatResponse(null);
-  }
-
-  function answerBaby(val) {
-    if (val === "just_understand") {
-      // Skip "how are you?" — go straight to insight mode
-      const answers = { baby: val, parent: "curious" };
-      setWhatAnswers(answers);
-      submitCheckin(answers);
-    } else {
-      setWhatAnswers(a => ({ ...a, baby: val }));
-      setWhatStep("parent");
-    }
-  }
-
-  function answerParent(val) {
-    const answers = { ...whatAnswers, parent: val };
-    setWhatAnswers(answers);
-    submitCheckin(answers);
-  }
-
-  async function submitCheckin(answers) {
-    setWhatStep("loading");
-
-    const childAge = activeChild?.dob
-      ? (() => {
-          const birth = new Date(activeChild.dob);
-          const now = new Date();
-          let years = now.getFullYear() - birth.getFullYear();
-          let mos = now.getMonth() - birth.getMonth();
-          if (now.getDate() < birth.getDate()) mos--;
-          if (mos < 0) { years--; mos += 12; }
-          const totalMonths = years * 12 + mos;
-          // Always use months up to 24 for sleep coaching — a 19mo and 12mo are very different
-          return totalMonths < 24 ? `${totalMonths} month old` : `${years} year old`;
-        })()
-      : "young baby";
-    const childName = activeChild?.name || "your baby";
-
-    const situationLabels = {
-      just_understand: "I don't have a specific problem — I just want to understand what might be going on for my baby developmentally and what's normal for this age",
-      bedtime_mess:  "bedtime has been a real struggle — it feels chaotic and hard",
-      short_naps:    "naps have been short today and I'm not sure why",
-      wont_settle:   "baby won't settle and nothing seems to be working",
-      doing_wrong:   "I don't know what I'm doing wrong and I'm starting to doubt myself",
-      something_off: "something feels off but I can't quite put my finger on it",
-      just_woke:     "baby just woke up",
-      unsure:        "I'm not sure exactly what's going on — just checking in",
-    };
-    const parentLabels = {
-      overwhelmed: "overwhelmed",
-      anxious:     "anxious about sleep",
-      exhausted:   "running on empty",
-      frustrated:  "frustrated",
-      okay:        "hanging in there",
-      good:        "actually doing okay",
-    };
-
-    const situation = situationLabels[answers.baby] || answers.baby;
-    const parentState = parentLabels[answers.parent] || answers.parent;
-
-    // ── Build check-in history context for pattern awareness ──
-    const historyContext = checkinHistory.length > 0
-      ? `This parent's recent check-in history (most recent first):\n` +
-        checkinHistory.slice(0, 10).map(c => {
-          const d = new Date(c.checked_in_at);
-          const timeStr = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) +
-            " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-          return `- ${timeStr}: "${c.situation}" / feeling ${c.feeling}`;
-        }).join("\n")
-      : "This is their first check-in — no history yet.";
-
-    const patternContext = patterns && patterns.total >= 3 ? [
-      patterns.hardestTime && patterns.hardestTimeCount >= 2
-        ? `Pattern: ${patterns.hardestTimeCount} of their recent check-ins happened at ${patterns.hardestTime}.`
-        : "",
-      patterns.dominantFeeling && patterns.dominantFeelingCount >= 2
-        ? `Pattern: they've felt "${patterns.dominantFeeling}" in ${patterns.dominantFeelingCount} of their last ${patterns.total} check-ins.`
-        : "",
-      patterns.topComboCount >= 2
-        ? `Pattern: "${patterns.topComboSituation}" paired with feeling "${patterns.topComboFeeling}" has come up ${patterns.topComboCount} times.`
-        : "",
-      patterns.progressDelta !== null
-        ? patterns.progressDelta < 0
-          ? `Progress: they had fewer hard check-ins this week than last week — ${Math.abs(patterns.progressDelta)} fewer.`
-          : patterns.progressDelta > 0
-          ? `Note: hard check-ins have increased by ${patterns.progressDelta} compared to last week.`
-          : ""
-        : "",
-    ].filter(Boolean).join(" ") : "";
-
-    // Build rich context from logged data — used when available, but response
-    // is designed to be just as meaningful without it.
-    const hasLoggedData = familyState && (
-      familyState.sleepData.napCountToday > 0 ||
-      familyState.sleepData.weekSessions?.length > 0 ||
-      familyState.sleepData.nightWakesAvg != null
-    );
-
-    const sleepContext = hasLoggedData ? [
-      `Today: ${familyState.sleepData.napCountToday} nap(s), ${familyState.sleepData.totalSleepTodayHours}h total sleep logged.`,
-      familyState.sleepData.nightWakesAvg != null ? `Average night wakings this week: ${familyState.sleepData.nightWakesAvg}.` : "",
-      familyState.sleepData.recentMoods.length > 0 ? `Recent wake-up moods: ${familyState.sleepData.recentMoods.slice(0,3).join(", ")}.` : "",
-      familyState.parentState.nervousSystemTrend ? `Parent nervous system trend: ${familyState.parentState.nervousSystemTrend}.` : "",
-    ].filter(Boolean).join(" ") : "";
-
-    // Tell the AI explicitly whether data exists so it responds appropriately
-    const dataNote = hasLoggedData
-      ? `Sleep data context: ${sleepContext}`
-      : `No sleep data has been logged yet — this parent is brand new or just getting started. Do not reference any data. Instead, respond entirely from the situation and feeling they described, and from what you know developmentally about a ${childAge}. Make them feel completely seen without needing any numbers.`;
-
-    const isInsightMode = answers.baby === "just_understand";
-
-    // Prompts now live in src/lib/prompts.js — resolved via getPrompt()
-
-    try {
-      const raw = await callAI({
-        max_tokens: 700,
-        system: getPrompt(isInsightMode ? "sleep_checkin_insight" : "sleep_checkin"),
-        messages: [{
-          role: "user",
-          content: `My ${childAge}, ${childName}: ${situation}. I'm feeling ${parentState}. ${dataNote}${patternContext ? " " + patternContext : ""}
-
-${historyContext}`,
-        }],
-      });
-
-      const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
-      setWhatResponse(parsed);
-      setWhatStep("response");
-      // Save this check-in for pattern tracking — fire and forget
-      const aiSummary = parsed.what_this_might_be?.slice(0, 200) || null;
-      saveCheckin(answers.baby, answers.parent, aiSummary).catch(() => {});
-    } catch {
-      setWhatResponse({
-        what_this_might_be: "Something interrupted that response — but the fact that you're checking in matters.",
-        what_you_might_be_feeling: "Whatever you're feeling right now is valid. This is hard work.",
-        what_baby_might_be_communicating: "Your baby is communicating with you — you're learning their language together.",
-        try_this: ["Take one slow breath before your next response to baby", "Remind yourself: you don't have to fix everything right now"],
-      });
-      setWhatStep("response");
-    }
-  }
-
-
-
   // ── Smart status card data — filtered to active child ──
   const sleepLogs = (familyState?.sleepData?.weekSessions || [])
     .filter(l => !activeChild?.id || !l.child_id || l.child_id === activeChild.id);
@@ -670,393 +1184,151 @@ ${historyContext}`,
       {/* Child switcher pills */}
       <ChildSwitcher onAddChild={onAddChild} />
 
-      {/* ── 1. HERO CHECK-IN CARD ── */}
-      {whatStep === "idle" && (
-        <div style={{ marginBottom: 14 }}>
-          {/* Big tappable check-in — the hero */}
-          <button onClick={() => setWhatStep("baby")} style={{
-            width: "100%", background: "none", border: "none", cursor: "pointer",
-            textAlign: "left", padding: 0, marginBottom: 10,
-          }}>
-            <div style={{
-              borderRadius: 16, padding: "20px 20px",
-              background: `linear-gradient(135deg, ${T.teal}18 0%, #A87B8A14 100%)`,
-              border: `1.5px solid ${T.teal}30`,
+      {/* ── DAILY MOMENT + HELD CHECKIN ── */}
+      <DailyMoment
+        setTab={setTab}
+        activeChild={activeChild}
+        familyState={familyState}
+        patterns={patterns}
+        daysShowingUp={familyState?.daysShowingUp ?? checkinHistory.length}
+      />
+      <HeldCheckin
+        familyState={familyState}
+        patterns={patterns}
+        saveCheckin={saveCheckin}
+      />
+
+      <div style={{
+        borderRadius: 12, border: `1px solid ${T.border}`,
+        background: T.card, padding: "12px 16px", marginBottom: 10,
+      }}>
+        <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 9 }}>
+          Quick log
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[
+            { label: "🛏️ Put down",     action: "put_down" },
+            { label: "☀️ Woke up",      action: "woke_up" },
+            { label: "🌙 Night waking", action: "night_waking" },
+          ].map(q => (
+            <button key={q.label} onClick={() => { setPendingSleepAction(q.action); setTab("sleep"); }} style={{
+              padding: "7px 13px", borderRadius: 20,
+              border: `1px solid ${T.border}`,
+              background: T.faint, color: T.text,
+              fontFamily: font, fontSize: 12.5, fontWeight: 500,
+              cursor: "pointer",
             }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: 26 }}>💭</span>
-                <div style={{
-                  padding: "6px 14px", borderRadius: 20,
-                  background: T.teal, color: "#fff",
-                  fontFamily: font, fontSize: 12, fontWeight: 700,
-                }}>
-                  Check in →
-                </div>
-              </div>
-              <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText, lineHeight: 1.3, marginBottom: 4 }}>
-                {openSession
-                  ? "How are you doing right now?"
-                  : "How's the rhythm today?"}
-              </div>
-              <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.5 }}>
-                {openSession
-                  ? `${activeChild?.name || "Baby"} is sleeping — a moment just for you`
-                  : "Tell me what's happening — I'll help you make sense of it"}
-              </div>
-            </div>
-          </button>
+              {q.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {/* NS Check-In card — Held ambient presence */}
-          <NSCheckin />
-
-          {/* Quick log — secondary, compact */}
-          <div style={{
-            borderRadius: 12, border: `1px solid ${T.border}`,
-            background: T.card, padding: "12px 16px", marginBottom: 10,
-          }}>
-            <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 9 }}>
-              Quick log
+      {/* Smart sleep status card */}
+      <div style={{
+        borderRadius: 12, border: `1px solid ${T.border}`,
+        background: T.card, padding: "14px 16px", marginBottom: 10,
+      }}>
+        {openSession ? (
+          // ── SLEEPING: show suggested wake time ──
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: isNightSession ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
+                {isNightSession ? "🌙 Night sleep" : "☀️ Nap"} in progress
+              </div>
+              <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
+                Wake by {suggestedWakeStr || "—"}
+              </div>
+              <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+                {minsUntilWake === null ? "" :
+                  minsUntilWake < 0 ? `${Math.abs(minsUntilWake)}m past target` :
+                  minsUntilWake < 60 ? `in ${minsUntilWake}m` :
+                  `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
+                {" · "}
+                {isNightSession ? "12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                { label: "🛏️ Put down",     action: "put_down" },
-                { label: "☀️ Woke up",      action: "woke_up" },
-                { label: "🌙 Night waking", action: "night_waking" },
-              ].map(q => (
-                <button key={q.label} onClick={() => { setPendingSleepAction(q.action); setTab("sleep"); }} style={{
-                  padding: "7px 13px", borderRadius: 20,
-                  border: `1px solid ${T.border}`,
-                  background: T.faint, color: T.text,
-                  fontFamily: font, fontSize: 12.5, fontWeight: 500,
-                  cursor: "pointer",
-                }}>
-                  {q.label}
-                </button>
-              ))}
-            </div>
+            <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
+              padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
+              background: `${T.teal}12`, color: T.teal,
+              fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}>
+              Log wake →
+            </button>
           </div>
-
-          {/* Smart sleep status card */}
-          <div style={{
-            borderRadius: 12, border: `1px solid ${T.border}`,
-            background: T.card, padding: "14px 16px", marginBottom: 10,
-          }}>
-            {openSession ? (
-              // ── SLEEPING: show suggested wake time ──
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: isNightSession ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
-                    {isNightSession ? "🌙 Night sleep" : "☀️ Nap"} in progress
-                  </div>
+        ) : minsAwake !== null ? (
+          // ── AWAKE: show next put-down time ──
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
+                {lastCompleted?.session_type === "night" ? "🌅 Good morning" : "☀️ Awake"}
+                {" · "}{minsAwake < 60 ? `${minsAwake}m` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m`}
+              </div>
+              {nextPutDownStr ? (
+                <>
                   <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
-                    Wake by {suggestedWakeStr || "—"}
+                    Next {napCountToday === 0 && lastCompleted?.session_type !== "night" ? "nap" : napCountToday >= 1 ? "nap" : "sleep"} ~ {nextPutDownStr}
                   </div>
                   <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-                    {minsUntilWake === null ? "" :
-                      minsUntilWake < 0 ? `${Math.abs(minsUntilWake)}m past target` :
-                      minsUntilWake < 60 ? `in ${minsUntilWake}m` :
-                      `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
-                    {" · "}
-                    {isNightSession ? "12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
+                    {minsUntilPutDown !== null && minsUntilPutDown < 0
+                      ? `${Math.abs(minsUntilPutDown)}m past window — watch for tired cues`
+                      : minsUntilPutDown !== null && minsUntilPutDown < 30
+                      ? `${minsUntilPutDown}m — start winding down soon`
+                      : minsUntilPutDown !== null
+                      ? `in ${minsUntilPutDown < 60 ? minsUntilPutDown + "m" : Math.floor(minsUntilPutDown/60) + "h " + minsUntilPutDown%60 + "m"} · ${nextWindowHrs}h wake window`
+                      : `${nextWindowHrs}h wake window`}
                   </div>
+                </>
+              ) : (
+                <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
+                  woke at {new Date(lastCompleted.end_ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
-                <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
-                  padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
-                  background: `${T.teal}12`, color: T.teal,
-                  fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                }}>
-                  Log wake →
-                </button>
-              </div>
-            ) : minsAwake !== null ? (
-              // ── AWAKE: show next put-down time ──
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
-                    {lastCompleted?.session_type === "night" ? "🌅 Good morning" : "☀️ Awake"}
-                    {" · "}{minsAwake < 60 ? `${minsAwake}m` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m`}
-                  </div>
-                  {nextPutDownStr ? (
-                    <>
-                      <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
-                        Next {napCountToday === 0 && lastCompleted?.session_type !== "night" ? "nap" : napCountToday >= 1 ? "nap" : "sleep"} ~ {nextPutDownStr}
-                      </div>
-                      <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-                        {minsUntilPutDown !== null && minsUntilPutDown < 0
-                          ? `${Math.abs(minsUntilPutDown)}m past window — watch for tired cues`
-                          : minsUntilPutDown !== null && minsUntilPutDown < 30
-                          ? `${minsUntilPutDown}m — start winding down soon`
-                          : minsUntilPutDown !== null
-                          ? `in ${minsUntilPutDown < 60 ? minsUntilPutDown + "m" : Math.floor(minsUntilPutDown/60) + "h " + minsUntilPutDown%60 + "m"} · ${nextWindowHrs}h wake window`
-                          : `${nextWindowHrs}h wake window`}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
-                      woke at {new Date(lastCompleted.end_ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </div>
-                  )}
-                </div>
-                <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
-                  padding: "8px 14px", borderRadius: 10,
-                  border: `1px solid ${minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.border}`,
-                  background: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? `${T.teal}12` : T.faint,
-                  color: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.muted,
-                  fontFamily: font, fontSize: 12, fontWeight: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? 600 : 400, cursor: "pointer",
-                }}>
-                  Log put down →
-                </button>
-              </div>
-            ) : (
-              // ── NO DATA: first use ──
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
-                    Sleep status
-                  </div>
-                  <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
-                    No sessions logged yet today
-                  </div>
-                </div>
-                <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
-                  padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
-                  background: `${T.teal}12`, color: T.teal,
-                  fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                }}>
-                  Start logging →
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Dashboard link — quiet, at the bottom */}
-          <button onClick={() => setTab("dashboard")} style={{
-            width: "100%", padding: "11px", borderRadius: 12,
-            border: `1px solid ${T.border}`, background: "none",
-            color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-          }}>
-            <span>📊</span> View Insights
-          </button>
-        </div>
-      )}
-
-      {/* ── CHECK-IN FLOW (steps + response) ── */}
-      {whatStep !== "idle" && (() => {
-        const C_teal = T.teal;
-        const chipStyle = (active) => ({
-          padding: "9px 14px", borderRadius: 20, border: `1.5px solid ${active ? C_teal : T.border}`,
-          background: active ? `${C_teal}18` : T.card,
-          color: active ? C_teal : T.text,
-          fontFamily: font, fontSize: 13, fontWeight: active ? 700 : 500,
-          cursor: "pointer", transition: "all .15s", textAlign: "left",
-        });
-        return (
-        <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
-
-            {/* STEP 1 — What's going on? */}
-            {whatStep === "baby" && (
-              <div>
-                <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 10 }}>
-                  Step 1 of 2 · What's going on right now?
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {/* ✨ Insight option — visually elevated */}
-                  <button onClick={() => answerBaby("just_understand")} style={{
-                    padding: "12px 16px", borderRadius: 20,
-                    border: `1.5px solid ${T.teal}`,
-                    background: `linear-gradient(135deg, ${T.teal}15 0%, #A87B8A12 100%)`,
-                    color: T.teal,
-                    fontFamily: font, fontSize: 13, fontWeight: 700,
-                    cursor: "pointer", transition: "all .15s", textAlign: "left",
-                    display: "flex", alignItems: "center", gap: 8,
-                  }}>
-                    <span>✨</span>
-                    <span>Just help me understand what might be going on</span>
-                  </button>
-
-                  {/* Divider */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0" }}>
-                    <div style={{ flex: 1, height: 1, background: T.border }} />
-                    <span style={{ fontFamily: font, fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: ".08em" }}>or something specific</span>
-                    <div style={{ flex: 1, height: 1, background: T.border }} />
-                  </div>
-
-                  {[
-                    { val: "bedtime_mess",    label: "🌙 Bedtime is a mess" },
-                    { val: "short_naps",      label: "😩 Naps were short today" },
-                    { val: "wont_settle",     label: "🙅 Baby won't settle" },
-                    { val: "doing_wrong",     label: "💭 I don't know what I'm doing wrong" },
-                    { val: "something_off",   label: "🌀 Something feels off" },
-                    { val: "just_woke",       label: "☀️ Baby just woke up" },
-                    { val: "unsure",          label: "🤷 Not sure — just checking in" },
-                  ].map(o => (
-                    <button key={o.val} onClick={() => answerBaby(o.val)} style={chipStyle(false)}>
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 16, marginTop: 14, alignItems: "center" }}>
-                  <button onClick={resetCheckin}
-                    style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", padding: 0 }}>
-                    ← Cancel
-                  </button>
-                  <button onClick={() => { resetCheckin(); setTab("sleep"); }}
-                    style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.teal, cursor: "pointer", padding: 0 }}>
-                    Log something first →
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2 — How are you? */}
-            {whatStep === "parent" && (
-              <div>
-                <div style={{ fontFamily: font, fontSize: 11, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 10 }}>
-                  Step 2 of 2 · And how are <em>you</em>?
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[
-                    { val: "overwhelmed", label: "😵 Overwhelmed" },
-                    { val: "anxious",     label: "😰 Anxious about sleep" },
-                    { val: "exhausted",   label: "🥱 Running on empty" },
-                    { val: "frustrated",  label: "😤 Frustrated" },
-                    { val: "okay",        label: "😐 Hanging in there" },
-                    { val: "good",        label: "🙂 Actually doing okay" },
-                  ].map(o => (
-                    <button key={o.val} onClick={() => answerParent(o.val)} style={chipStyle(false)}>
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 16, marginTop: 14, alignItems: "center" }}>
-                  <button onClick={() => setWhatStep("baby")}
-                    style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", padding: 0 }}>
-                    ← Back
-                  </button>
-                  <button onClick={() => { resetCheckin(); setTab("sleep"); }}
-                    style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.teal, cursor: "pointer", padding: 0 }}>
-                    Log something first →
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* LOADING */}
-            {whatStep === "loading" && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
-                <div style={{ fontSize: 18 }}>🌿</div>
-                <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, fontStyle: "italic" }}>
-                  Thinking about what you shared…
-                </div>
-              </div>
-            )}
-
-            {/* RESPONSE */}
-            {whatStep === "response" && whatResponse && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-                {/* 🧠 What this might be */}
-                <div style={{ padding: "13px 15px", borderRadius: 12, background: `${T.teal}0f`, border: `1px solid ${T.teal}25` }}>
-                  <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.teal, marginBottom: 7 }}>
-                    🧠 What this might be
-                  </div>
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, margin: 0 }}>
-                    {whatResponse.what_this_might_be}
-                  </p>
-                </div>
-
-                {/* ❤️ What you might be feeling */}
-                <div style={{ padding: "13px 15px", borderRadius: 12, background: "#A87B8A0f", border: "1px solid #A87B8A25" }}>
-                  <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#A87B8A", marginBottom: 7 }}>
-                    ❤️ What you might be feeling
-                  </div>
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, margin: 0 }}>
-                    {whatResponse.what_you_might_be_feeling}
-                  </p>
-                </div>
-
-                {/* 👶 What baby might be communicating */}
-                <div style={{ padding: "13px 15px", borderRadius: 12, background: "#8A7BAA0f", border: "1px solid #8A7BAA25" }}>
-                  <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#8A7BAA", marginBottom: 7 }}>
-                    👶 What {activeChild?.name || "baby"} might be communicating
-                  </div>
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, margin: 0 }}>
-                    {whatResponse.what_baby_might_be_communicating}
-                  </p>
-                </div>
-
-                {/* 🌿 Try this */}
-                {whatResponse.try_this?.length > 0 && (
-                  <div style={{ padding: "13px 15px", borderRadius: 12, background: "#7BAA8A0f", border: "1px solid #7BAA8A25" }}>
-                    <div style={{ fontFamily: font, fontSize: 10.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "#7BAA8A", marginBottom: 10 }}>
-                      🌿 If it feels right, you could try…
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {whatResponse.try_this.map((item, i) => (
-                        <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                          <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#7BAA8A22", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#7BAA8A", flexShrink: 0, marginTop: 2 }}>
-                            {i + 1}
-                          </div>
-                          <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.65, margin: 0 }}>{item}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={resetCheckin}
-                    style={{ flex: 1, background: "none", border: `1px solid ${T.border}`, borderRadius: 10, fontFamily: font, fontSize: 12, color: T.muted, cursor: "pointer", padding: "9px 14px" }}>
-                    Close
-                  </button>
-                  <button onClick={() => { setWhatStep("baby"); setWhatAnswers({}); setWhatResponse(null); }}
-                    style={{ flex: 1, background: "none", border: `1px solid ${T.teal}50`, borderRadius: 10, fontFamily: font, fontSize: 12, color: T.teal, cursor: "pointer", padding: "9px 14px" }}>
-                    Check in again
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* ── 2. PATTERN INSIGHT CARD — shows after 3+ check-ins ── */}
-      {patterns && patterns.total >= 3 && (() => {
-        const lines = [
-          patterns.progressDelta !== null && patterns.progressDelta < 0
-            ? `🌱 You've had fewer hard moments this week than last — that's real progress, even if it doesn't feel that way yet.`
-            : null,
-          patterns.hardestTime && patterns.hardestTimeCount >= 2
-            ? `🕐 ${patterns.hardestTimeCount} of your recent check-ins happened at ${patterns.hardestTime}. That time of day seems to carry extra weight for you right now.`
-            : null,
-          patterns.dominantFeeling && patterns.dominantFeelingCount >= 2
-            ? `💭 You've been feeling "${patterns.dominantFeeling}" a lot lately. That's worth honoring — it's not a sign you're failing, it's a sign you're carrying a lot.`
-            : null,
-          patterns.topComboCount >= 2 && patterns.topComboSituation !== patterns.dominantFeeling
-            ? `🔗 When ${patterns.topComboSituation?.replace(/_/g," ")} comes up, you tend to feel ${patterns.topComboFeeling}. That connection makes a lot of sense.`
-            : null,
-        ].filter(Boolean);
-        if (lines.length === 0) return null;
-        return (
-          <div style={{ borderRadius: 14, border: `1px solid ${T.border}`, background: T.card, padding: "16px 18px", marginBottom: 14 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
-              ✦ What I'm noticing
+              )}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {lines.map((line, i) => (
-                <p key={i} style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.7, margin: 0 }}>{line}</p>
-              ))}
-            </div>
+            <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
+              padding: "8px 14px", borderRadius: 10,
+              border: `1px solid ${minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.border}`,
+              background: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? `${T.teal}12` : T.faint,
+              color: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.muted,
+              fontFamily: font, fontSize: 12, fontWeight: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? 600 : 400, cursor: "pointer",
+            }}>
+              Log put down →
+            </button>
           </div>
-        );
-      })()}
+        ) : (
+          // ── NO DATA: first use ──
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
+                Sleep status
+              </div>
+              <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
+                No sessions logged yet today
+              </div>
+            </div>
+            <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
+              padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
+              background: `${T.teal}12`, color: T.teal,
+              fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}>
+              Start logging →
+            </button>
+          </div>
+        )}
+      </div>
 
-
+      {/* Dashboard link — quiet, at the bottom */}
+      <button onClick={() => setTab("dashboard")} style={{
+        width: "100%", padding: "11px", borderRadius: 12,
+        border: `1px solid ${T.border}`, background: "none",
+        color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+      }}>
+        <span>📊</span> View Insights
+      </button>
     </div>
-  );
-}
+  )}
+
 
 // ─── CHILD SWITCHER ───────────────────────────────────────────────────────────
 function ChildSwitcher({ onAddChild }) {
