@@ -46,13 +46,12 @@ export function usePushNotifications(userId) {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        // Verify it's stored in Supabase
-        const endpoint = sub.endpoint;
+        // Verify it's stored in Supabase — endpoint is a generated column so query it directly
         const { data } = await supabase
           .from("push_subscriptions")
           .select("id")
           .eq("user_id", userId)
-          .filter("subscription->endpoint", "eq", endpoint)
+          .eq("endpoint", sub.endpoint)  // ← fixed: direct column query
           .maybeSingle();
         setIsSubscribed(!!data);
       }
@@ -87,7 +86,7 @@ export function usePushNotifications(userId) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
-      // Store in Supabase
+      // Store in Supabase — endpoint is a generated column, no need to pass it manually
       const subJson = sub.toJSON();
       const { error: dbError } = await supabase.from("push_subscriptions").upsert({
         user_id: userId,
@@ -119,12 +118,12 @@ export function usePushNotifications(userId) {
         const endpoint = sub.endpoint;
         await sub.unsubscribe();
 
-        // Remove from Supabase
+        // Remove from Supabase — endpoint is a generated column so query it directly
         await supabase
           .from("push_subscriptions")
           .delete()
           .eq("user_id", userId)
-          .filter("subscription->endpoint", "eq", endpoint);
+          .eq("endpoint", endpoint);  // ← fixed: direct column query
       }
 
       setIsSubscribed(false);

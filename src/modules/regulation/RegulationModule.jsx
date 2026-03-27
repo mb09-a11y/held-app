@@ -974,6 +974,43 @@ Important:
   );
 }
 
+// ─── NOTIFICATION HELPERS ─────────────────────────────────────────────────────
+
+// Returns ms until the next occurrence of a given HH:MM time (today or tomorrow)
+function msUntilTime(timeStr) {
+  const [h, m] = timeStr.split(":").map(Number);
+  const now = new Date();
+  const target = new Date();
+  target.setHours(h, m, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return target - now;
+}
+
+// Schedules a repeating daily local notification for a given time + label.
+// Stores the timeout ID on window so it can be cleared if the user disables.
+function scheduleLocalReminder(timeStr, label, windowKey) {
+  if (window[windowKey]) clearTimeout(window[windowKey]);
+  const ms = msUntilTime(timeStr);
+  window[windowKey] = setTimeout(() => {
+    if (Notification.permission === "granted") {
+      new Notification("Held – " + label, {
+        body: "Take a moment to check in with yourself.",
+        icon: "/icon-192.png",
+        tag: "regulation-" + label,
+      });
+    }
+    // Reschedule for the same time tomorrow
+    scheduleLocalReminder(timeStr, label, windowKey);
+  }, ms);
+}
+
+function clearLocalReminder(windowKey) {
+  if (window[windowKey]) {
+    clearTimeout(window[windowKey]);
+    window[windowKey] = null;
+  }
+}
+
 // ─── NOTIFICATIONS SCREEN ─────────────────────────────────────────────────────
 function NotificationsScreen({ prefs, onSave, onBack }) {
   const T = useT();
@@ -982,8 +1019,26 @@ function NotificationsScreen({ prefs, onSave, onBack }) {
   function save() {
     if (p.amEnabled || p.pmEnabled) {
       Notification.requestPermission().then(perm => {
-        if (perm !== "granted") alert("Enable browser notifications to receive reminders.");
+        if (perm !== "granted") {
+          alert("Enable browser notifications to receive reminders.");
+          return;
+        }
+        // Schedule whichever reminders are enabled, clear the ones that aren't
+        if (p.amEnabled && p.amTime) {
+          scheduleLocalReminder(p.amTime, "Morning Check-In", "__held_am_timer");
+        } else {
+          clearLocalReminder("__held_am_timer");
+        }
+        if (p.pmEnabled && p.pmTime) {
+          scheduleLocalReminder(p.pmTime, "Evening Reflection", "__held_pm_timer");
+        } else {
+          clearLocalReminder("__held_pm_timer");
+        }
       });
+    } else {
+      // Both disabled — clear any running timers
+      clearLocalReminder("__held_am_timer");
+      clearLocalReminder("__held_pm_timer");
     }
     onSave(p);
   }
