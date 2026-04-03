@@ -679,6 +679,33 @@ Use the child's name naturally. Know what method they're on and what day — don
       return;
     }
     setDbMessages(prev => prev.map(m => m.id === optimisticId ? normalizeMsg(data) : m));
+
+    // ── Push notification to the other party ─────────────────────────────────
+    try {
+      const recipientId = currentSender === "consultant"
+        ? activeFamily?.parent_id        // consultant → notify parent
+        : activeFamily?.consultant_id;   // parent → notify consultant
+
+      if (recipientId) {
+        supabase.functions.invoke("send-push", {
+          body: {
+            user_id: recipientId,
+            title: currentSender === "consultant"
+              ? "New message from your consultant"
+              : "New message from your family",
+            body: fields.type === "text"
+              ? fields.content?.slice(0, 100)
+              : fields.type === "voice"
+              ? "🎙️ Voice message"
+              : "📎 Attachment",
+            tag: "new-message",
+          },
+        }).catch(e => console.error("Push notification failed:", e));
+      }
+    } catch (e) {
+      console.error("Push notification failed:", e);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
   }
 
   // ── AI messages stay in component state (ephemeral by design) ────────────
