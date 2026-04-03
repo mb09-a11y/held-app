@@ -687,20 +687,26 @@ Use the child's name naturally. Know what method they're on and what day — don
         : activeFamily?.consultant_id;   // parent → notify consultant
 
       if (recipientId) {
-        supabase.functions.invoke("send-push", {
-          body: {
-            user_id: recipientId,
-            title: currentSender === "consultant"
-              ? "New message from your consultant"
-              : "New message from your family",
-            body: fields.type === "text"
-              ? fields.content?.slice(0, 100)
-              : fields.type === "voice"
-              ? "🎙️ Voice message"
-              : "📎 Attachment",
-            tag: "new-message",
-          },
-        }).catch(e => console.error("Push notification failed:", e));
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          if (!session) return;
+          supabase.functions.invoke("send-push", {
+            body: {
+              user_id: recipientId,
+              title: currentSender === "consultant"
+                ? "New message from your consultant"
+                : "New message from your family",
+              body: fields.type === "text"
+                ? fields.content?.slice(0, 100)
+                : fields.type === "voice"
+                ? "🎙️ Voice message"
+                : "📎 Attachment",
+              tag: "new-message",
+            },
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          }).catch(e => console.error("Push notification failed:", e));
+        });
       }
     } catch (e) {
       console.error("Push notification failed:", e);
