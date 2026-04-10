@@ -18,7 +18,7 @@ export async function warmAI() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
     await supabase.functions.invoke("ai-proxy", {
-      body: { model: "claude-sonnet-4-20250514", max_tokens: 1, messages: [{ role: "user", content: "ping" }] },
+      body: { model: "claude-haiku-4-5-20251001", max_tokens: 1, messages: [{ role: "user", content: "ping" }] },
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
   } catch {

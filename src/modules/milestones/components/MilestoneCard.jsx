@@ -3,194 +3,155 @@ import { useState } from "react";
 import { useT, useApp, font, serif } from "../../../core/shared.jsx";
 import { DOMAINS } from "../data/milestones.js";
 
-const STATUS_CONFIG = {
-  reached:       { label: "Reached",      emoji: "✅", color: "#7BAA8A" },
-  not_yet:       { label: "Not yet",      emoji: "🕐", color: "#AA9B7B" },
-  not_concerned: { label: "Not concerned", emoji: "💛", color: "#A89B5A" },
-};
+// RCC color constants now derived from theme tokens - no hardcoding
+function getRCC(T) {
+  return {
+    forest:     T.bark,
+    sage:       T.teal,
+    sageMid:    T.sage,
+    sageLight:  T.faint,
+    sageBorder: T.border,
+    amber:      T.warm,
+    amberLight: T.faint,
+    amberBorder:T.border,
+    sand:       T.border,
+    sandLight:  T.card2,
+    muted:      T.muted,
+    text:       T.text,
+    heading:    T.headingText,
+  };
+}
+
+function ageLabel(months) {
+  if (months == null) return "";
+  if (months < 24) return `${months}mo`;
+  const y = Math.floor(months / 12);
+  const m = months % 12;
+  return m === 0 ? `${y}y` : `${y}y ${m}mo`;
+}
 
 export function MilestoneCard({ milestone, log, onLog, isPremium, showUpgrade }) {
   const T = useT();
+  const RCC = getRCC(T);
   const [expanded, setExpanded] = useState(false);
   const [logging, setLogging] = useState(false);
-
   const domain = DOMAINS[milestone.domain];
   const currentStatus = log?.status || null;
+  const isReached = currentStatus === "reached";
 
   async function handleStatus(status) {
     if (logging) return;
     setLogging(true);
-    try {
-      await onLog(milestone.id, status);
-    } finally {
-      setLogging(false);
-    }
+    try { await onLog(milestone.id, status); }
+    finally { setLogging(false); }
   }
-
-  const hasNsContext = !!milestone.ns_context;
-  const hasPedNote = !!milestone.ped_note;
 
   return (
     <div style={{
-      borderRadius: 14,
-      border: `1px solid ${currentStatus === "reached" ? `${T.sage}40` : T.border}`,
-      background: currentStatus === "reached" ? `${T.sage}08` : T.card,
-      padding: "14px 16px",
-      marginBottom: 10,
-      transition: "all .2s",
+      borderRadius: 16,
+      border: `1px solid ${isReached ? RCC.sageBorder : T.border}`,
+      background: isReached ? `${RCC.sageLight}22` : T.card,
+      padding: "16px 18px", marginBottom: 10, transition: "all .2s",
     }}>
-
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{domain?.emoji}</span>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
+        <span style={{ fontSize: 22, flexShrink: 0, marginTop: 1 }}>{domain?.emoji}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontFamily: serif,
-            fontSize: 15,
-            color: T.headingText,
-            lineHeight: 1.3,
-            marginBottom: 3,
-          }}>
+          <div style={{ fontFamily: serif, fontSize: 16, color: T.headingText, lineHeight: 1.3, fontWeight: 600, marginBottom: 4 }}>
             {milestone.title}
           </div>
-          <div style={{
-            fontFamily: font,
-            fontSize: 12,
-            color: T.muted,
-            lineHeight: 1.5,
-          }}>
+          <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.55 }}>
             {milestone.description}
           </div>
         </div>
-
-        {/* Expand toggle */}
         <button onClick={() => setExpanded(e => !e)} style={{
-          background: "none", border: "none",
-          fontFamily: font, fontSize: 11, color: T.muted,
-          cursor: "pointer", flexShrink: 0, padding: "2px 0",
-          display: "flex", alignItems: "center", gap: 4,
+          background: "none", border: "none", fontFamily: font, fontSize: 11,
+          color: RCC.muted, cursor: "pointer", flexShrink: 0, padding: "2px 0",
         }}>
-          {expanded ? "Less" : "More"}
-          <span style={{ fontSize: 10 }}>{expanded ? "↑" : "↓"}</span>
+          {expanded ? "Less ↑" : "More ↓"}
         </button>
       </div>
 
-      {/* Typical range badge */}
+      {/* Typical range — warm dusty gold pill like wireframe */}
       <div style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: "3px 10px", borderRadius: 20,
-        background: T.faint, marginBottom: 10,
+        display: "inline-flex", alignItems: "center",
+        padding: "4px 12px", borderRadius: 20,
+        background: T.border, marginBottom: 12,
       }}>
-        <span style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+        <span style={{ fontFamily: font, fontSize: 11, color: T.muted, marginRight: 5 }}>
           Typical range:
         </span>
-        <span style={{ fontFamily: font, fontSize: 11.5, fontWeight: 600, color: T.text }}>
-          {milestone.typical_range[0]}–{milestone.typical_range[1]} months
+        <span style={{ fontFamily: font, fontSize: 11.5, fontWeight: 700, color: T.text }}>
+          {ageLabel(milestone.typical_range[0])}–{ageLabel(milestone.typical_range[1])}
         </span>
       </div>
 
-      {/* Expanded content */}
+      {/* NS context — always inline, italic sage */}
+      {milestone.ns_context && isPremium && (
+        <div style={{
+          display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 12,
+          fontFamily: font, fontSize: 12.5, color: RCC.sage,
+          fontStyle: "italic", lineHeight: 1.6,
+        }}>
+          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>🌿</span>
+          <span>{milestone.ns_context}</span>
+        </div>
+      )}
+      {milestone.ns_context && !isPremium && (
+        <button onClick={showUpgrade} style={{
+          width: "100%", padding: "9px 14px", borderRadius: 10, marginBottom: 12,
+          border: `1px dashed ${RCC.sageBorder}`, background: T.faint,
+          display: "flex", alignItems: "center", gap: 8, cursor: "pointer", textAlign: "left",
+        }}>
+          <span>🌿</span>
+          <div>
+            <div style={{ fontFamily: font, fontSize: 12.5, color: RCC.sage, fontWeight: 600 }}>Nervous system context</div>
+            <div style={{ fontFamily: font, fontSize: 11.5, color: RCC.muted }}>Unlock with Held Plus →</div>
+          </div>
+        </button>
+      )}
+
+      {/* Expanded */}
       {expanded && (
         <div style={{ marginBottom: 12 }}>
-
-          {/* NS Context — Plus only */}
-          {hasNsContext && (
-            isPremium ? (
-              <div style={{
-                padding: "11px 13px", borderRadius: 10,
-                background: `${T.sage}0d`, border: `1px solid ${T.sage}25`,
-                marginBottom: 8,
-              }}>
-                <div style={{
-                  fontFamily: font, fontSize: 10, fontWeight: 700,
-                  letterSpacing: ".1em", textTransform: "uppercase",
-                  color: T.sage, marginBottom: 6,
-                }}>
-                  🌿 Nervous system context
-                </div>
-                <p style={{
-                  fontFamily: font, fontSize: 13, color: T.text,
-                  lineHeight: 1.7, margin: 0,
-                }}>
-                  {milestone.ns_context}
-                </p>
-              </div>
-            ) : (
-              <button onClick={showUpgrade} style={{
-                width: "100%", padding: "10px 14px", borderRadius: 10,
-                border: `1px dashed ${T.sage}50`,
-                background: `${T.sage}06`,
-                display: "flex", alignItems: "center", gap: 8,
-                cursor: "pointer", marginBottom: 8, textAlign: "left",
-              }}>
-                <span style={{ fontSize: 16 }}>🌿</span>
-                <div>
-                  <div style={{ fontFamily: font, fontSize: 12.5, color: T.sage, fontWeight: 600 }}>
-                    Nervous system context
-                  </div>
-                  <div style={{ fontFamily: font, fontSize: 11.5, color: T.muted }}>
-                    Unlock with Held Plus →
-                  </div>
-                </div>
-              </button>
-            )
-          )}
-
-          {/* Pediatrician note */}
-          {hasPedNote && (
-            <div style={{
-              padding: "10px 13px", borderRadius: 10,
-              background: `${T.amber}0d`, border: `1px solid ${T.amber}25`,
-              marginBottom: 8,
-            }}>
-              <div style={{
-                fontFamily: font, fontSize: 10, fontWeight: 700,
-                letterSpacing: ".1em", textTransform: "uppercase",
-                color: T.amber, marginBottom: 5,
-              }}>
+          {milestone.ped_note && (
+            <div style={{ padding: "11px 13px", borderRadius: 10, marginBottom: 8, background: RCC.amberLight, border: `1px solid ${RCC.amberBorder}` }}>
+              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: RCC.amber, marginBottom: 5 }}>
                 👩‍⚕️ Talk to your pediatrician
               </div>
-              <p style={{
-                fontFamily: font, fontSize: 12.5, color: T.text,
-                lineHeight: 1.65, margin: 0,
-              }}>
+              <p style={{ fontFamily: font, fontSize: 12.5, color: RCC.text, lineHeight: 1.65, margin: 0 }}>
                 {milestone.ped_note}
               </p>
             </div>
           )}
-
-          {/* Sources */}
-          <div style={{
-            fontFamily: font, fontSize: 11, color: T.subText,
-            lineHeight: 1.6,
-          }}>
-            Sources: {milestone.source.join(" · ")}
+          <div style={{ fontFamily: font, fontSize: 11, color: RCC.muted, lineHeight: 1.6 }}>
+            Sources: {milestone.source?.join(" · ")}
           </div>
         </div>
       )}
 
       {/* Status buttons */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
-          const isActive = currentStatus === status;
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {[
+          { id: "reached",       label: "Reached",       emoji: "✅", activeBg: `${RCC.sageMid}25`,   activeBorder: RCC.sageMid,   activeColor: RCC.sageMid,  inactiveBorder: T.border },
+          { id: "not_yet",       label: "Not yet",       emoji: "🕐", activeBg: T.faint,              activeBorder: T.muted,       activeColor: T.text,       inactiveBorder: T.border },
+          { id: "not_concerned", label: "Not concerned", emoji: "💛", activeBg: `${RCC.amber}15`,     activeBorder: RCC.amber,     activeColor: RCC.amber,    inactiveBorder: T.border },
+        ].map(btn => {
+          const active = currentStatus === btn.id;
           return (
-            <button
-              key={status}
-              onClick={() => handleStatus(isActive ? null : status)}
+            <button key={btn.id}
+              onClick={() => handleStatus(active ? null : btn.id)}
               disabled={logging}
               style={{
-                padding: "6px 12px", borderRadius: 20,
-                border: `1.5px solid ${isActive ? cfg.color : T.border}`,
-                background: isActive ? `${cfg.color}18` : "none",
-                color: isActive ? cfg.color : T.muted,
-                fontFamily: font, fontSize: 12, fontWeight: isActive ? 700 : 400,
+                padding: "7px 14px", borderRadius: 20,
+                border: `1.5px solid ${active ? btn.activeBorder : btn.inactiveBorder}`,
+                background: active ? btn.activeBg : "transparent",
+                color: active ? btn.activeColor : RCC.muted,
+                fontFamily: font, fontSize: 12.5, fontWeight: active ? 700 : 400,
                 cursor: logging ? "default" : "pointer",
-                display: "flex", alignItems: "center", gap: 5,
-                transition: "all .15s",
-              }}
-            >
-              <span>{cfg.emoji}</span>
-              {cfg.label}
+                display: "flex", alignItems: "center", gap: 5, transition: "all .15s",
+              }}>
+              {btn.emoji} {btn.label}
             </button>
           );
         })}

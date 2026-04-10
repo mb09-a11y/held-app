@@ -55,7 +55,7 @@ export const TIER_PRICES = {
 };
 
 // ─── MAIN HOOK ────────────────────────────────────────────────────────────────
-export function useTier({ currentUser, families }) {
+export function useTier({ currentUser, families, consultants }) {
   return useMemo(() => {
     const role = currentUser?.role || "parent";
     const isConsultantRole =
@@ -63,17 +63,23 @@ export function useTier({ currentUser, families }) {
       role === "consultant_internal" ||
       role === "admin";
     const isAdminRole = role === "admin";
-    const hasConsultantAssigned = !!(families?.[0]?.consultant_id);
+    // Check both the family record AND the loaded consultants array
+    // so VIP works even if consultant_id isn't set on the family row yet
+    const hasConsultantAssigned = !!(
+      families?.[0]?.consultant_id ||
+      (consultants && consultants.length > 0)
+    );
 
     // ── Resolve tier ──────────────────────────────────────────────────────────
-    // VIP = consultant-granted (family has a consultant assigned AND tier is vip)
-    // Consultants and admins get full access
+    // VIP = consultant-assigned families get full access automatically.
+    // This is the business model: parents invited by a consultant don't pay extra —
+    // the consultant's subscription covers their access.
     let tier = currentUser?.subscription_tier || TIERS.FREE;
 
-    // Safety: if consultant assigned but tier is still 'free', treat as 'free'
-    // (VIP must be explicitly granted by consultant invite flow)
     if (isConsultantRole || isAdminRole) {
       tier = TIERS.VIP; // consultants/admins see everything
+    } else if (hasConsultantAssigned) {
+      tier = TIERS.VIP; // parent invited by a consultant → full VIP access
     }
 
     const isVIP = tier === TIERS.VIP;

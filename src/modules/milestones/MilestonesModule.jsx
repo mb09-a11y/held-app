@@ -9,6 +9,7 @@ import {
   MILESTONES,
   DOMAINS,
   AGE_GROUPS,
+  AGE_DROPDOWN_OPTIONS,
   getMilestonesForAge,
   getBrainContext,
 } from "./data/milestones.js";
@@ -141,29 +142,51 @@ function BrainContextCard({ ageMonths, isPremium, showUpgrade, T }) {
           fontFamily: font, fontSize: 10, fontWeight: 700,
           letterSpacing: ".12em", textTransform: "uppercase", color: T.purple,
         }}>
-          Brain development
+          Brain development context
         </span>
       </div>
-      <div style={{ fontFamily: serif, fontSize: 15, color: T.headingText, marginBottom: 6 }}>
+      <div style={{ fontFamily: serif, fontSize: 15, color: T.headingText, marginBottom: 4 }}>
         {ctx.title}
       </div>
-      <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.7, margin: "0 0 8px" }}>
+      {ctx.brain_stage && (
+        <div style={{ fontFamily: font, fontSize: 10, fontWeight: 600, color: T.purple, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8, opacity: 0.7 }}>
+          {ctx.brain_stage}
+        </div>
+      )}
+      <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.7, margin: "0 0 10px" }}>
         {ctx.body}
       </p>
-      <div style={{ fontFamily: font, fontSize: 11, color: T.subText }}>
-        {ctx.source}
+      {ctx.equilibrium_note && (
+        <div style={{
+          padding: "10px 12px", borderRadius: 10,
+          background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`,
+          marginBottom: 10,
+        }}>
+          <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 4 }}>
+            Equilibrium · Disequilibrium
+          </div>
+          <p style={{ fontFamily: font, fontSize: 12, color: "rgba(255,255,255,0.82)", lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>
+            {ctx.equilibrium_note}
+          </p>
+        </div>
+      )}
+      <div style={{ fontFamily: font, fontSize: 10, color: T.muted }}>
+        Sources: {ctx.source}
       </div>
     </div>
   );
 }
 
 // ─── MAIN MODULE ─────────────────────────────────────────────────────────────
-export function MilestonesModule() {
+export function MilestonesModule({ onOpenDrawer }) {
   const T = useT();
   const { activeChild, activeFamily, currentUser, isPremium } = useApp();
 
   const [view, setView] = useState("dashboard"); // "dashboard" | "explore"
   const [activeDomain, setActiveDomain] = useState("all");
+  // browseAge: months value from dropdown. null = use child's actual age.
+  const [browseAge, setBrowseAge] = useState(null);
+  const [ageDropdownOpen, setAgeDropdownOpen] = useState(false);
   const [logs, setLogs] = useState({});
   const [logsLoading, setLogsLoading] = useState(true);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
@@ -225,10 +248,14 @@ export function MilestonesModule() {
   }
 
   // ── Milestones for current age ──
+  // Use browseAge if parent has selected a different age range, else child's actual age
+  const effectiveAge = browseAge !== null ? browseAge : ageMonths;
+  const selectedOption = AGE_DROPDOWN_OPTIONS.find(o => o.value === browseAge);
+
   const ageMilestones = useMemo(() => {
-    if (ageMonths === null) return MILESTONES;
-    return getMilestonesForAge(ageMonths);
-  }, [ageMonths]);
+    if (effectiveAge === null) return MILESTONES;
+    return getMilestonesForAge(effectiveAge);
+  }, [effectiveAge]);
 
   const filteredMilestones = useMemo(() => {
     if (activeDomain === "all") return ageMilestones;
@@ -249,7 +276,7 @@ export function MilestonesModule() {
   }
 
   return (
-    <div style={{ paddingBottom: 80 }}>
+    <div style={{ padding: "0 18px 80px" }}>
       {showUpgradeModal && (
         <UpgradeModal onClose={() => setShowUpgradeModal(false)} T={T} currentUser={currentUser} />
       )}
@@ -265,12 +292,21 @@ export function MilestonesModule() {
         <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, marginBottom: 4 }}>
           Milestones
         </h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={onOpenDrawer} style={{
+          display: "flex", alignItems: "center", gap: 8,
+          background: T.faint, border: `1px solid ${T.border}`,
+          borderRadius: 20, padding: "5px 12px 5px 8px",
+          cursor: onOpenDrawer ? "pointer" : "default",
+        }}>
           <span style={{ fontSize: 16 }}>{child.gender === "girl" ? "👧" : child.gender === "boy" ? "👦" : "🧒"}</span>
-          <span style={{ fontFamily: font, fontSize: 14, color: T.muted }}>
-            {child.name} · {ageLabel(ageMonths) || "age unknown"}
+          <span style={{ fontFamily: font, fontSize: 13, color: T.text, fontWeight: 500 }}>
+            {child.name}
           </span>
-        </div>
+          <span style={{ fontFamily: font, fontSize: 12, color: T.muted }}>
+            · {ageLabel(ageMonths) || "age unknown"}
+          </span>
+          {onOpenDrawer && <span style={{ fontSize: 10, color: T.muted, marginLeft: 2 }}>▾</span>}
+        </button>
       </div>
 
       {/* ── View toggle ── */}
@@ -368,41 +404,50 @@ export function MilestonesModule() {
 
           {/* Coming up — next 3 unlogged milestones */}
           <div style={{
-            borderRadius: 14, border: `1px solid ${T.border}`,
-            background: T.card, padding: "16px 18px", marginBottom: 14,
+            borderRadius: 14,
+            background: T.faint,
+            border: "1px solid #C4D8CA",
+            padding: "16px 18px", marginBottom: 14,
           }}>
             <div style={{
               fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",
-              color: T.subText, fontFamily: font, marginBottom: 12,
+              color: "#5C7A5E", fontFamily: font, fontWeight: 700, marginBottom: 14,
             }}>
               🌱 Coming up for {child.name}
             </div>
             {ageMilestones
-              .filter(m => !logs[m.id])
+              .filter(m => !logs[m.id] || logs[m.id]?.status === "not_yet")
               .slice(0, 3)
-              .map(m => (
+              .map((m, i, arr) => (
                 <div key={m.id} style={{
-                  display: "flex", alignItems: "flex-start", gap: 10,
-                  marginBottom: 10, paddingBottom: 10,
-                  borderBottom: `1px solid ${T.border}`,
+                  display: "flex", alignItems: "flex-start", gap: 12,
+                  paddingBottom: i < arr.length - 1 ? 14 : 0,
+                  marginBottom: i < arr.length - 1 ? 14 : 0,
+                  borderBottom: i < arr.length - 1 ? "1px solid #C4D8CA" : "none",
                 }}>
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>
+                  <span style={{ fontSize: 20, flexShrink: 0, marginTop: 1 }}>
                     {DOMAINS[m.domain]?.emoji}
                   </span>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, fontWeight: 500 }}>
+                    <div style={{ fontFamily: font, fontSize: 14, color: T.headingText, fontWeight: 600, marginBottom: 2 }}>
                       {m.title}
                     </div>
-                    <div style={{ fontFamily: font, fontSize: 11.5, color: T.muted }}>
-                      {m.typical_range[0]}–{m.typical_range[1]} months · {DOMAINS[m.domain]?.label}
+                    <div style={{ fontFamily: font, fontSize: 11.5, color: T.muted, marginBottom: m.ns_context ? 5 : 0 }}>
+                      {ageLabel(m.typical_range[0])}–{ageLabel(m.typical_range[1])} · {DOMAINS[m.domain]?.label}
                     </div>
+                    {m.ns_context && (
+                      <div style={{ fontFamily: font, fontSize: 12, color: "#B8924A", fontStyle: "italic", lineHeight: 1.5 }}>
+                        {m.ns_context.split('.')[0]}.
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
             <button onClick={() => setView("explore")} style={{
               background: "none", border: "none",
-              fontFamily: font, fontSize: 13, color: T.teal,
-              cursor: "pointer", padding: 0, fontWeight: 600,
+              fontFamily: font, fontSize: 13, color: "#5C7A5E",
+              cursor: "pointer", padding: "10px 0 0", fontWeight: 600,
+              display: "block",
             }}>
               View all milestones →
             </button>
@@ -410,21 +455,21 @@ export function MilestonesModule() {
 
           {/* Source note */}
           <div style={{
-            padding: "12px 14px", borderRadius: 10,
+            padding: "14px 16px", borderRadius: 12,
             background: T.faint, border: `1px solid ${T.border}`,
           }}>
             <div style={{
               fontFamily: font, fontSize: 10, fontWeight: 700,
               letterSpacing: ".1em", textTransform: "uppercase",
-              color: T.muted, marginBottom: 6,
+              color: T.text, marginBottom: 8,
             }}>
               📚 Sources
             </div>
-            <p style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.65, margin: 0 }}>
+            <p style={{ fontFamily: font, fontSize: 12, color: T.text, lineHeight: 1.7, margin: 0 }}>
               Milestone data draws from CDC "Learn the Signs. Act Early." (2022 update), WHO Motor Development Study,
               AAP developmental guidelines, ASHA communication milestones, Zero to Three, and The Wonder Weeks
-              (Plooij & van de Rijt). Ranges reflect typical variation — not pass/fail thresholds.
-              Always consult your pediatrician with developmental concerns.
+              (Plooij & van de Rijt). Typical ranges reflect the 10th–90th percentile window where available.
+              These milestones are not diagnostic tools. Always consult your pediatrician with developmental concerns.
             </p>
           </div>
         </div>
@@ -433,6 +478,104 @@ export function MilestonesModule() {
       {/* ── EXPLORE VIEW ── */}
       {view === "explore" && (
         <div>
+          {/* Age range dropdown */}
+          <div style={{ marginBottom: 12, position: "relative" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontFamily: font, fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".1em", textTransform: "uppercase" }}>
+                Age range
+              </span>
+              <button
+                onClick={() => setAgeDropdownOpen(o => !o)}
+                style={{
+                  flex: 1, display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "9px 14px", borderRadius: 12,
+                  border: `1.5px solid ${ageDropdownOpen ? T.teal : T.border}`,
+                  background: T.card2, color: T.text,
+                  fontFamily: font, fontSize: 13, fontWeight: 500,
+                  cursor: "pointer", transition: "border-color .15s",
+                }}
+              >
+                <span style={{ color: browseAge !== null ? T.teal : T.muted, fontWeight: browseAge !== null ? 600 : 400 }}>
+                  {browseAge !== null
+                    ? selectedOption?.label ?? "Custom age"
+                    : ageMonths !== null
+                      ? `${child?.name ?? "Your child"}'s age (auto)`
+                      : "Select an age range"}
+                </span>
+                <span style={{ fontSize: 11, color: T.muted }}>{ageDropdownOpen ? "▴" : "▾"}</span>
+              </button>
+            </div>
+
+            {/* Dropdown list */}
+            {ageDropdownOpen && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                background: T.bg2, border: `1.5px solid ${T.border}`,
+                borderRadius: 14, overflow: "hidden",
+                boxShadow: T.shadow,
+              }}>
+                {/* Auto option — child's actual age */}
+                {ageMonths !== null && (
+                  <button
+                    onClick={() => { setBrowseAge(null); setAgeDropdownOpen(false); }}
+                    style={{
+                      display: "block", width: "100%", padding: "11px 16px",
+                      background: browseAge === null ? `${T.teal}12` : "none",
+                      border: "none", borderBottom: `1px solid ${T.border}`,
+                      fontFamily: font, fontSize: 13,
+                      color: browseAge === null ? T.teal : T.text,
+                      fontWeight: browseAge === null ? 600 : 400,
+                      cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={e => { if (browseAge !== null) e.currentTarget.style.background = T.faint; }}
+                    onMouseLeave={e => { if (browseAge !== null) e.currentTarget.style.background = "none"; }}
+                  >
+                    {child?.name ?? "Your child"}'s current age (auto)
+                    {browseAge === null && <span style={{ marginLeft: 8, fontSize: 11 }}>✓</span>}
+                  </button>
+                )}
+                {AGE_DROPDOWN_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setBrowseAge(opt.value); setAgeDropdownOpen(false); }}
+                    style={{
+                      display: "block", width: "100%", padding: "11px 16px",
+                      background: browseAge === opt.value ? `${T.teal}12` : "none",
+                      border: "none", borderBottom: `1px solid ${T.border}`,
+                      fontFamily: font, fontSize: 13,
+                      color: browseAge === opt.value ? T.teal : T.text,
+                      fontWeight: browseAge === opt.value ? 600 : 400,
+                      cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={e => { if (browseAge !== opt.value) e.currentTarget.style.background = T.faint; }}
+                    onMouseLeave={e => { if (browseAge !== opt.value) e.currentTarget.style.background = "none"; }}
+                  >
+                    {opt.label}
+                    {browseAge === opt.value && <span style={{ marginLeft: 8, fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Current filter context note */}
+          <div style={{
+            padding: "8px 12px", borderRadius: 9,
+            background: `${T.teal}08`, border: `1px solid ${T.teal}18`,
+            marginBottom: 14,
+            fontFamily: font, fontSize: 12.5, color: T.muted,
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ color: T.teal }}>🌱</span>
+            <span>
+              {browseAge !== null
+                ? `Showing milestones for ${selectedOption?.label ?? "selected age"}`
+                : ageMonths !== null
+                  ? `Showing milestones for ${child?.name ?? "your child"}'s age (${ageMonths}mo ± 3 months)`
+                  : "Showing all milestones"}
+            </span>
+          </div>
+
           {/* Domain filter chips */}
           <div style={{
             display: "flex", gap: 6, overflowX: "auto",
@@ -456,26 +599,6 @@ export function MilestonesModule() {
               </button>
             ))}
           </div>
-
-          {/* Age context note */}
-          {ageMonths !== null && (
-            <div style={{
-              padding: "8px 12px", borderRadius: 9,
-              background: `${T.teal}0a`, border: `1px solid ${T.teal}20`,
-              marginBottom: 12,
-              fontFamily: font, fontSize: 12.5, color: T.muted,
-            }}>
-              Showing milestones typical for ages {Math.max(0, ageMonths - 3)}–{ageMonths + 3} months.
-              {" "}
-              <button onClick={() => setView("explore")} style={{
-                background: "none", border: "none",
-                fontFamily: font, fontSize: 12.5, color: T.teal,
-                cursor: "pointer", padding: 0,
-              }}>
-                Browse all ages
-              </button>
-            </div>
-          )}
 
           {/* Milestone list */}
           {logsLoading ? (

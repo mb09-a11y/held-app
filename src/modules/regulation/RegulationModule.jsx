@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useT, font, serif, mono, useStorage, useApp, genId } from "../../core/shared.jsx";
+import { useT, font, serif, mono, useApp, genId } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { callAI } from "../../lib/ai.js";
 
@@ -891,7 +891,7 @@ function InsightsScreen({ logs, exerciseLogs, onBack, onExercise }) {
     };
 
     try {
-      const text = await callAI({
+      const text = await callAI({ model: "claude-haiku-4-5-20251001",
         max_tokens: 1000,
         system: `You are the RCC Coach — a warm, grounded, nervous-system-informed support coach for parents at Rooted Connections Collective. You are generating weekly regulation insights for a parent.
 
@@ -1106,7 +1106,21 @@ export function RegulationModule() {
   const isConsultant = currentUser?.role === "consultant" || currentUser?.role === "consultant_internal" || currentUser?.role === "admin";
   const [logs, setLogs] = useState([]);
   const [exerciseLogs, setExerciseLogs] = useState([]);
-  const [notifPrefs, setNotifPrefs] = useStorage("rcc_notif_prefs", {});
+  const [notifPrefs, setNotifPrefsState] = useState({});
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    supabase.from("notification_preferences")
+      .select("*").eq("user_id", currentUser.id).maybeSingle()
+      .then(({ data }) => { if (data) setNotifPrefsState(data); });
+  }, [currentUser?.id]);
+  async function setNotifPrefs(updater) {
+    const next = typeof updater === "function" ? updater(notifPrefs) : updater;
+    setNotifPrefsState(next);
+    if (currentUser?.id) {
+      await supabase.from("notification_preferences")
+        .upsert({ ...next, user_id: currentUser.id }, { onConflict: "user_id" });
+    }
+  }
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState("home");
   const [checkInType, setCheckInType] = useState("am");

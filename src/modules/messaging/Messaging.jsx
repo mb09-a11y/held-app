@@ -476,7 +476,7 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-export function Messaging({ user, activeFamily, families, onFamilyChange, children }) {
+export function Messaging({ user, activeFamily, families, onFamilyChange, children, onFindConsultant }) {
   const [mode, setMode] = useState("ai"); // default to AI tab — free users only see this
   const [searchQuery, setSearchQuery] = useState("");
   const T = useT();
@@ -494,11 +494,8 @@ export function Messaging({ user, activeFamily, families, onFamilyChange, childr
     supabase: sbCtx,
   } = useApp();
 
-  // Ensure mode stays valid for tier
-  useEffect(() => {
-    if (mode === "messages" && !canAccessHumanMessaging) setMode("ai");
-    if (mode === "files" && !canAccessFilesTab) setMode("ai");
-  }, [canAccessHumanMessaging, canAccessFilesTab, mode]);
+  // Remove mode guards — all tabs always visible, content handles access
+  // useEffect guard removed intentionally
 
   // ── Supabase-backed messages for Messages tab; ephemeral state for AI tab ──
   const [dbMessages, setDbMessages] = useState([]);
@@ -812,11 +809,11 @@ Use the child's name naturally. Know what method they're on and what day — don
     ? displayMessages.filter(m => (m.content || m.fileName || "").toLowerCase().includes(searchQuery.toLowerCase()))
     : displayMessages;
 
-  // Only show tabs the user has access to
+  // Always show all three tabs — wireframe style
   const tabs = [
-    { id: "ai", label: "RCC Coach ✦", emoji: "" },
-    ...(canAccessHumanMessaging ? [{ id: "messages", label: "Messages", emoji: "💬" }] : []),
-    ...(canAccessFilesTab ? [{ id: "files", label: "Files", emoji: "📁" }] : []),
+    { id: "ai",       label: "✦ RCC Coach"       },
+    { id: "messages", label: "🧑‍💼 Your Consultant" },
+    { id: "files",    label: "📁 Files"            },
   ];
 
   return (
@@ -840,7 +837,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             <div>
               <div style={{ fontSize: 9.5, letterSpacing: ".18em", textTransform: "uppercase", color: "rgba(255,255,255,0.18)", fontWeight: 600, marginBottom: 6 }}>Rooted Connections Collective</div>
               <h1 style={{ fontFamily: serif, fontSize: 22, color: T.headingText, lineHeight: 1 }}>
-                {mode === "ai" ? "RCC Coach" : mode === "files" ? "Files" : "Messages"}
+                {mode === "ai" ? "RCC Coach" : mode === "files" ? "Files" : "Your Consultant"}
               </h1>
               {mode === "ai" && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
@@ -995,11 +992,40 @@ Use the child's name naturally. Know what method they're on and what day — don
               overflowY: "auto"
             }}
           >
-            {loading && (
+            {loading && activeFamily?.id && (
               <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>Loading…</div>
             )}
 
-            {!loading && filteredMessages.length === 0 && !aiTyping && (
+            {!loading && mode === "messages" && (!activeFamily?.consultant_id) && (
+              /* ── No consultant yet ── */
+              <div style={{ padding: "24px 4px" }}>
+                <div style={{ borderRadius: 16, padding: "20px", background: T.card, border: `1px solid ${T.border}`, marginBottom: 14 }}>
+                  <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText, marginBottom: 6 }}>
+                    Not working with a consultant yet?
+                  </div>
+                  <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, marginBottom: 16 }}>
+                    Get matched with an RCC-certified sleep consultant who knows your app data and your story.
+                  </div>
+                  <button onClick={onFindConsultant} style={{
+                    width: "100%", padding: "14px", borderRadius: 12, border: "none",
+                    background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`,
+                    color: "white", fontFamily: font, fontSize: 14, fontWeight: 700, cursor: "pointer",
+                  }}>
+                    Find a consultant →
+                  </button>
+                </div>
+                <div style={{ borderRadius: 16, padding: "16px 18px", background: `#5C7A5E18`, border: `1px solid #5C7A5E30` }}>
+                  <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, color: "#5C7A5E", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>
+                    💬 What a consultant does
+                  </div>
+                  <div style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.7 }}>
+                    Your consultant reviews your sleep logs, responds to messages, and builds a plan specific to your child's nervous system — not a generic method. They know your data, your story, and your goals.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!loading && filteredMessages.length === 0 && !aiTyping && (mode !== "messages" || canAccessHumanMessaging || activeFamily?.consultant_id) && (
               <div style={{ textAlign: "center", padding: "60px 20px" }}>
                 <div style={{ fontSize: 36, marginBottom: 12 }}>{mode === "ai" ? "✦" : "💬"}</div>
                 <div style={{ fontFamily: serif, fontSize: 16, color: T.text }}>
@@ -1025,7 +1051,7 @@ Use the child's name naturally. Know what method they're on and what day — don
         )}
 
         {/* INPUT BAR */}
-        {mode !== "files" && (
+        {mode !== "files" && !(mode === "messages" && !canAccessHumanMessaging && !activeFamily?.consultant_id) && (
           <div
             style={{
               width: "100%",

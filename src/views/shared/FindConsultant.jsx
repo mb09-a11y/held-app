@@ -107,117 +107,172 @@ function RequestModal({ consultant, onClose, T }) {
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 300, display: "flex", alignItems: "flex-end" }}>
-      <div style={{ background: T.bg2, borderRadius: "20px 20px 0 0", width: "100%", padding: "24px 20px 40px", maxHeight: "85vh", overflowY: "auto" }}>
-        {sent ? (
-          <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <div style={{ fontSize: 40, marginBottom: 16 }}>🌿</div>
-            <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 10 }}>Request sent!</div>
-            <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.65, marginBottom: 24 }}>
-              Your email to hello@beyondbirthbasics.com has been opened. We'll be in touch soon to confirm your match with {consultant.name}.
-            </p>
-            <button onClick={onClose}
-              style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-              Done
-            </button>
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.55)", zIndex: 9999,
+        display: "flex", alignItems: "flex-end", justifyContent: "center",
+      }}>
+      <div style={{
+        background: T.bg, borderRadius: "20px 20px 0 0",
+        width: "100%", maxWidth: 480,
+        maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
+      }}>
+        {/* Handle + close */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 20px 12px", borderBottom: `1px solid ${T.border}`,
+          position: "sticky", top: 0, background: T.bg, borderRadius: "20px 20px 0 0",
+        }}>
+          <div style={{ fontSize: 14, fontFamily: font, fontWeight: 600, color: T.headingText }}>
+            Request {consultant.name.split(" ")[0]}
           </div>
-        ) : (
-          <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText }}>Request {consultant.name.split(" ")[0]}</div>
-              <button onClick={onClose} style={{ background: "none", border: "none", color: T.muted, fontSize: 22, cursor: "pointer" }}>×</button>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: T.muted,
+            fontSize: 20, cursor: "pointer", padding: "4px", lineHeight: 1,
+          }}>✕</button>
+        </div>
+
+        <div style={{ padding: "20px 24px 40px" }}>
+          {sent ? (
+            <div style={{ textAlign: "center", padding: "20px 0" }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>🌿</div>
+              <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 10 }}>Request sent!</div>
+              <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.65, marginBottom: 24 }}>
+                Your email to hello@beyondbirthbasics.com has been opened. We'll be in touch soon to confirm your match with {consultant.name}.
+              </p>
+              <button onClick={onClose}
+                style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                Done
+              </button>
             </div>
-            <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginBottom: 20 }}>
-              <img src={consultant.photo} alt={consultant.name} onError={e => e.target.style.display = "none"}
-                style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-              <div>
-                <div style={{ fontFamily: font, fontSize: 14, fontWeight: 600, color: T.text }}>{consultant.name}</div>
-                <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>{consultant.title}</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginBottom: 20 }}>
+                <img src={consultant.photo} alt={consultant.name} onError={e => e.target.style.display = "none"}
+                  style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontFamily: font, fontSize: 14, fontWeight: 600, color: T.text }}>{consultant.name}</div>
+                  <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>{consultant.title}</div>
+                </div>
               </div>
-            </div>
-            <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65, marginBottom: 16 }}>
-              This will open an email to our team at Beyond Birth Basics. We'll review your request and reach out to confirm your match — usually within 24 hours.
-            </p>
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6, fontFamily: font }}>
-                Anything you'd like us to know? (optional)
+              <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65, marginBottom: 16 }}>
+                This will open an email to our team at Beyond Birth Basics. We'll review your request and reach out to confirm your match — usually within 24 hours.
+              </p>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6, fontFamily: font }}>
+                  Anything you'd like us to know? (optional)
+                </div>
+                <textarea value={note} onChange={e => setNote(e.target.value)}
+                  placeholder="e.g. my baby is 6 months and we're struggling with night wakings…"
+                  rows={3}
+                  style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontFamily: font, fontSize: 13.5, lineHeight: 1.5, resize: "none", outline: "none", boxSizing: "border-box" }}
+                  onFocus={e => e.target.style.borderColor = T.teal}
+                  onBlur={e => e.target.style.borderColor = T.border} />
               </div>
-              <textarea value={note} onChange={e => setNote(e.target.value)}
-                placeholder="e.g. my baby is 6 months and we're struggling with night wakings…"
-                rows={3}
-                style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontFamily: font, fontSize: 13.5, lineHeight: 1.5, resize: "none", outline: "none", boxSizing: "border-box" }}
-                onFocus={e => e.target.style.borderColor = T.teal}
-                onBlur={e => e.target.style.borderColor = T.border} />
-            </div>
-            <button onClick={handleSend}
-              style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
-              Send Request →
-            </button>
-            <button onClick={onClose}
-              style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 13.5, cursor: "pointer" }}>
-              Cancel
-            </button>
-          </>
-        )}
+              <button onClick={handleSend}
+                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
+                Send Request →
+              </button>
+              <button onClick={onClose}
+                style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 13.5, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-export function FindConsultant({ onBack }) {
+export function FindConsultant({ onClose }) {
   const T = useT();
   const [requesting, setRequesting] = useState(null);
   const [filter, setFilter] = useState("All");
 
   const specialtyFilters = ["All", "Newborn", "Infant & Toddler", "Sleep", "Parenting", "Postpartum"];
-
-  // Filter uses explicit filterTags — no keyword guessing
   const filtered = CONSULTANTS.filter(c => filter === "All" || c.filterTags.includes(filter));
 
   return (
-    <div style={{ fontFamily: font, color: T.text }}>
-      {requesting && <RequestModal consultant={requesting} onClose={() => setRequesting(null)} T={T} />}
+    /* ── Full-screen backdrop ── */
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}
+      style={{
+        position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(0,0,0,0.55)", zIndex: 9000,
+        display: "flex", alignItems: "flex-end", justifyContent: "center",
+      }}>
 
-      {onBack && (
-        <button onClick={onBack}
-          style={{ background: "none", border: "none", color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, padding: "0 0 16px 0" }}>
-          ← Back
-        </button>
-      )}
-
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 6 }}>
-          Rooted Connections Collective
+      {/* ── Sheet ── */}
+      <div style={{
+        background: T.bg,
+        borderRadius: "20px 20px 0 0",
+        width: "100%", maxWidth: 480,
+        maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
+      }}>
+        {/* Sticky header */}
+        <div style={{
+          position: "sticky", top: 0, zIndex: 1,
+          background: T.bg, borderRadius: "20px 20px 0 0",
+          padding: "12px 20px 12px",
+          borderBottom: `1px solid ${T.border}`,
+          display: "flex", alignItems: "center",
+        }}>
+          <div style={{
+            position: "absolute", left: "50%", top: 8,
+            transform: "translateX(-50%)",
+            width: 36, height: 4, borderRadius: 2, background: T.border,
+          }} />
+          <div style={{ flex: 1 }} />
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: T.muted,
+            fontSize: 20, cursor: "pointer", padding: "4px 8px", lineHeight: 1,
+          }}>✕</button>
         </div>
-        <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.2, marginBottom: 8 }}>Find Your Consultant</h1>
-        <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65 }}>
-          Browse our team and request the consultant that feels right for your family. We'll confirm your match within 24 hours.
-        </p>
-      </div>
 
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 20, scrollbarWidth: "none" }}>
-        {specialtyFilters.map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            style={{ padding: "7px 14px", borderRadius: 20, flexShrink: 0, border: `1.5px solid ${filter === f ? T.teal : T.border}`, background: filter === f ? `${T.teal}18` : T.faint, color: filter === f ? T.teal : T.muted, fontFamily: font, fontSize: 12.5, fontWeight: filter === f ? 700 : 400, cursor: "pointer", transition: "all .15s" }}>
-            {f}
-          </button>
-        ))}
-      </div>
+        {/* Content */}
+        <div style={{ padding: "20px 24px 48px", fontFamily: font, color: T.text }}>
+          {requesting && <RequestModal consultant={requesting} onClose={() => setRequesting(null)} T={T} />}
 
-      {filtered.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>
-          No consultants match that filter.
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 6 }}>
+              Rooted Connections Collective
+            </div>
+            <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.2, marginBottom: 8 }}>Find Your Consultant</h1>
+            <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65 }}>
+              Browse our team and request the consultant that feels right for your family. We'll confirm your match within 24 hours.
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 20, scrollbarWidth: "none" }}>
+            {specialtyFilters.map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                style={{ padding: "7px 14px", borderRadius: 20, flexShrink: 0, border: `1.5px solid ${filter === f ? T.teal : T.border}`, background: filter === f ? `${T.teal}18` : T.faint, color: filter === f ? T.teal : T.muted, fontFamily: font, fontSize: 12.5, fontWeight: filter === f ? 700 : 400, cursor: "pointer", transition: "all .15s" }}>
+                {f}
+              </button>
+            ))}
+          </div>
+
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: T.muted, fontFamily: font, fontSize: 13 }}>
+              No consultants match that filter.
+            </div>
+          ) : (
+            filtered.map(c => <ConsultantCard key={c.id} consultant={c} onRequest={setRequesting} T={T} />)
+          )}
+
+          <div style={{ padding: "16px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginTop: 4 }}>
+            <p style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.65, textAlign: "center" }}>
+              Not sure who to choose? Email us at{" "}
+              <a href="mailto:hello@beyondbirthbasics.com" style={{ color: T.teal, textDecoration: "none" }}>hello@beyondbirthbasics.com</a>
+              {" "}and we'll match you with the right fit. 🌿
+            </p>
+          </div>
         </div>
-      ) : (
-        filtered.map(c => <ConsultantCard key={c.id} consultant={c} onRequest={setRequesting} T={T} />)
-      )}
-
-      <div style={{ padding: "16px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginTop: 4 }}>
-        <p style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.65, textAlign: "center" }}>
-          Not sure who to choose? Email us at{" "}
-          <a href="mailto:hello@beyondbirthbasics.com" style={{ color: T.teal, textDecoration: "none" }}>hello@beyondbirthbasics.com</a>
-          {" "}and we'll match you with the right fit. 🌿
-        </p>
       </div>
     </div>
   );

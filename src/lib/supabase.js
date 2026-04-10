@@ -18,5 +18,7 @@ export const supabase = createClient(url || "", anonKey || "", {
     storageKey: "rcc-auth",
     storage: window.localStorage,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: "pkce",
   },
 });

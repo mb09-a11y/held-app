@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useT, useApp, font, serif, Card, Btn } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { usePushNotifications } from "../../hooks/usePushNotifications.js";
@@ -48,7 +48,7 @@ function ToggleRow({ label, sub, value, onChange, T }) {
 }
 
 // ─── NOTIFICATION SETTINGS ────────────────────────────────────────────────────
-export function NotificationSettings() {
+export function NotificationSettings({ onClose, scrollToReminders }) {
   const T = useT();
   const { currentUser } = useApp();
   const { isSupported, isSubscribed, permission, loading: pushLoading, error: pushError, subscribe, unsubscribe } = usePushNotifications(currentUser?.id);
@@ -72,6 +72,7 @@ export function NotificationSettings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const reminderRef = useRef(null);
 
   // Load existing prefs
   useEffect(() => {
@@ -82,7 +83,14 @@ export function NotificationSettings() {
       .eq("user_id", currentUser.id)
       .maybeSingle()
       .then(({ data }) => {
-        if (data) setPrefs(p => ({ ...p, ...data }));
+        if (data) {
+          setPrefs(p => ({ ...p, ...data }));
+        }
+        // If arriving from "Set a reminder for 5pm", pre-enable evening at 17:00
+        if (scrollToReminders) {
+          setPrefs(p => ({ ...p, pm_enabled: true, pm_time: p.pm_time === "20:00" && !data?.pm_time ? "17:00" : (data?.pm_time || p.pm_time) }));
+          setTimeout(() => reminderRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+        }
       });
   }, [currentUser?.id]);
 
@@ -92,15 +100,36 @@ export function NotificationSettings() {
 
   async function savePrefs() {
     setSaving(true); setSaved(false); setLoadError(null);
+    // Safety timeout — never spin forever
+    const timeout = setTimeout(() => {
+      setSaving(false);
+      setLoadError("Taking too long — preferences may not have saved. Try again.");
+    }, 8000);
     try {
+      const safePrefs = {
+        user_id: currentUser.id,
+        messages: prefs.messages,
+        intake_completed: prefs.intake_completed,
+        regulation_checkin: prefs.regulation_checkin,
+        am_enabled: prefs.am_enabled,
+        pm_enabled: prefs.pm_enabled,
+        am_time: prefs.am_time,
+        pm_time: prefs.pm_time,
+        quiet_hours_start: prefs.quiet_hours_start,
+        quiet_hours_end: prefs.quiet_hours_end,
+        nap_lead_mins: prefs.nap_lead_mins,
+        bedtime_lead_mins: prefs.bedtime_lead_mins,
+      };
       const { error } = await supabase
         .from("notification_preferences")
-        .upsert({ ...prefs, user_id: currentUser.id }, { onConflict: "user_id" });
+        .upsert(safePrefs, { onConflict: "user_id" });
+      clearTimeout(timeout);
       if (error) throw error;
       setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      setTimeout(() => { setSaved(false); onClose?.(); }, 1200);
     } catch (e) {
-      setLoadError(e.message || "Failed to save preferences.");
+      clearTimeout(timeout);
+      setLoadError(e.message || "Failed to save. You can close and try again.");
     } finally {
       setSaving(false);
     }
@@ -112,8 +141,31 @@ export function NotificationSettings() {
   const showIOSPrompt = isIOS && !isInStandaloneMode;
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h2 style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 20 }}>Notifications</h2>
+    <>
+      {/* Backdrop */}
+      <div onClick={() => { setSaving(false); onClose?.(); }} style={{
+        position: "fixed", inset: 0,
+        background: "rgba(0,0,0,0.5)", zIndex: 300,
+      }} />
+
+      {/* Modal sheet */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 301,
+        maxHeight: "90vh", overflowY: "auto",
+        background: T.bg, borderRadius: "20px 20px 0 0",
+        padding: "24px 24px 48px",
+        boxShadow: "0 -4px 32px rgba(0,0,0,0.15)",
+      }}>
+        {/* Header row */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <h2 style={{ fontFamily: serif, fontSize: 22, color: T.headingText, margin: 0 }}>Notifications</h2>
+          <button onClick={() => { setSaving(false); onClose?.(); }} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 22, color: T.muted, lineHeight: 1, padding: "4px 8px",
+          }}>✕</button>
+        </div>
+
+        <div style={{ maxWidth: 560 }}>
 
       {/* Push toggle card */}
       <Card style={{ marginBottom: 12 }}>
@@ -230,6 +282,7 @@ export function NotificationSettings() {
 
       {/* Check-in reminder times — parents only */}
       {isParent && (
+        <div ref={reminderRef}>
         <Card style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 12, fontFamily: font }}>
             Check-in Reminder Times
@@ -263,6 +316,7 @@ export function NotificationSettings() {
             </div>
           </div>
         </Card>
+        </div>
       )}
 
       {loadError && <div style={{ fontSize: 12.5, color: T.rose, fontFamily: font, marginBottom: 10 }}>{loadError}</div>}
@@ -270,6 +324,9 @@ export function NotificationSettings() {
       <Btn onClick={savePrefs} disabled={saving}>
         {saving ? "Saving…" : saved ? "✓ Saved" : "Save preferences"}
       </Btn>
-    </div>
+
+        </div>
+      </div>
+    </>
   );
 }

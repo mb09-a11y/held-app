@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useT, Card, Btn, Input, ThemeToggle, font, serif } from "../core/shared.jsx";
+import { useT, Card, Btn, Input, font, serif } from "../core/shared.jsx";
 import { supabase } from "../lib/supabase.js";
 
 function LoadingScreen({ label = "Loading…" }) {
@@ -66,37 +66,54 @@ function LoginScreen({ onLogin, onGoRegister }) {
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        padding: "0 24px"
+        padding: "0 24px",
+        background: "#FDFAF6",
       }}
     >
       <div style={{ maxWidth: 400, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 36, marginBottom: 6 }}>🌿</div>
+          <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 34, color: "#2D4A35", lineHeight: 1.1, marginBottom: 4 }}>
+            Held
+          </h1>
           <div
             style={{
               fontSize: 10,
-              letterSpacing: ".2em",
+              letterSpacing: ".18em",
               textTransform: "uppercase",
-              color: T.subText,
-              marginBottom: 8
+              color: "#A09080",
+              marginBottom: 0,
+              fontFamily: "'DM Sans', sans-serif",
             }}
           >
-            Rooted Connections Collective
+            by Rooted Connections Collective
           </div>
-          <h1 style={{ fontFamily: serif, fontSize: 32, color: T.headingText, lineHeight: 1.1 }}>
-            Welcome back.
-          </h1>
         </div>
 
-        <Card>
-          <Input label="Email" value={email} onChange={setEmail} type="email" required />
-          <Input label="Password" value={password} onChange={setPassword} type="password" required />
+        <div style={{ background: "#FFFFFF", borderRadius: 20, padding: "20px 18px", boxShadow: "0 4px 28px rgba(45,74,53,0.10)", border: "1px solid #E8DDD0" }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Email *</div>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = "#5C7A5E"}
+              onBlur={e => e.target.style.borderColor = "#E8DDD0"}
+            />
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Password *</div>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = "#5C7A5E"}
+              onBlur={e => e.target.style.borderColor = "#E8DDD0"}
+            />
+          </div>
           {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 12 }}>{error}</div>}
-          <Btn onClick={handleLogin} disabled={loading}>
+          <button onClick={handleLogin} disabled={loading} style={{ background: loading ? "#C4D2C2" : "#5C7A5E", color: "#fff", border: "none", borderRadius: 12, padding: "11px 16px", width: "100%", fontSize: 13.5, fontWeight: 600, cursor: loading ? "default" : "pointer" }}>
             {loading ? "Signing in…" : "Sign in"}
-          </Btn>
+          </button>
 
           {resetSent && (
-            <div style={{ fontSize: 13, color: "#7BAA8A", textAlign: "center", marginTop: 10, lineHeight: 1.6, fontFamily: font }}>
+            <div style={{ fontSize: 13, color: "#5C7A5E", textAlign: "center", marginTop: 10, lineHeight: 1.6 }}>
               ✓ Password reset email sent! Check your inbox.
             </div>
           )}
@@ -107,8 +124,8 @@ function LoginScreen({ onLogin, onGoRegister }) {
               disabled={resetLoading}
               style={{
                 background: "none", border: "none",
-                fontFamily: font, fontSize: 12.5,
-                color: T.muted, cursor: "pointer",
+                fontSize: 12.5,
+                color: "#9A8878", cursor: "pointer",
                 textDecoration: "underline",
               }}
             >
@@ -122,19 +139,21 @@ function LoginScreen({ onLogin, onGoRegister }) {
               style={{
                 background: "none",
                 border: "none",
-                fontFamily: font,
+                fontFamily: "inherit",
                 fontSize: 13,
-                color: T.teal,
+                color: "#5C7A5E",
                 cursor: "pointer"
               }}
             >
               New parent? Create an account →
             </button>
           </div>
-        </Card>
+        </div>
 
         <div style={{ textAlign: "center", marginTop: 20 }}>
-          <ThemeToggle />
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 13, color: "#B8924A", letterSpacing: "0.05em", fontStyle: "italic" }}>
+            Rooted Connections Collective
+          </div>
         </div>
       </div>
     </div>
@@ -236,7 +255,8 @@ function RegisterScreen({
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        padding: "40px 24px"
+        padding: "40px 24px",
+        background: "#FDFAF6",
       }}
     >
       <div style={{ maxWidth: 420, width: "100%" }}>
@@ -339,7 +359,8 @@ function ChildInfoStep({ onSave, loading }) {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        padding: "40px 24px"
+        padding: "40px 24px",
+        background: "#FDFAF6",
       }}
     >
       <div style={{ maxWidth: 420, width: "100%" }}>

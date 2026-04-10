@@ -5,7 +5,9 @@ import { callAI } from "../../lib/ai.js";
 import { getPrompt } from "../../lib/prompts.js";
 import { getPractice, getNoticedStatement } from "../../lib/practices.js";
 import { getCurrentWonderWeeksLeap, getMilestonesForAge } from "../../modules/milestones/data/milestones.js";
-import { HamburgerButton } from "../shared/AppDrawer.jsx";
+import { HamburgerButton, ChildPill } from "../shared/AppDrawer.jsx";
+import { SOSFlow } from "../../modules/sos/SOSFlow.jsx";
+import { NSCheckinFlow } from "../../modules/nscheckin/NSCheckinFlow.jsx";
 
 // ─── AGE LABEL ────────────────────────────────────────────────────────────────
 function ageLabel(dob) {
@@ -144,7 +146,7 @@ function getEmotionalHeader(currentUser) {
 }
 
 // ─── FAMILY STATE HOOK ────────────────────────────────────────────────────────
-function useFamilyState(familyId, childId, userId) {
+export function useFamilyState(familyId, childId, userId) {
   const [familyState, setFamilyState] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -246,12 +248,24 @@ function useAIInsight(familyState, isPremium) {
   useEffect(() => {
     if (!isPremium || !familyState) return;
     if (familyState.sleepData.weekSessions.length < 2) return;
+    (async () => {
 
-    const cacheKey = `rcc_insight_${new Date().toDateString()}`;
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) { setInsight(JSON.parse(cached)); return; }
+    const today = new Date().toDateString();
+    const familyId = familyState?.childProfile?.familyId;
+    if (!familyId) return;
 
+    // Check Supabase cache first (persists across devices)
     setLoading(true);
+    const { data: cached } = await supabase
+      .from("ai_insights")
+      .select("insight, generated_date")
+      .eq("family_id", familyId)
+      .eq("insight_type", "sleep_daily")
+      .eq("generated_date", new Date().toISOString().split("T")[0])
+      .maybeSingle();
+
+    if (cached?.insight) { setInsight(cached.insight); setLoading(false); return; }
+
     const { sleepData, parentState, childProfile } = familyState;
 
     callAI({
@@ -267,20 +281,28 @@ Consistency: ${sleepData.consistency}.
 Recent wake-up moods: ${sleepData.recentMoods.join(", ") || "none logged"}.`
       }],
     })
-      .then(text => {
+      .then(async text => {
         const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
         setInsight(parsed);
-        localStorage.setItem(cacheKey, JSON.stringify(parsed));
+        // Save to Supabase so it persists across devices and sessions
+        await supabase.from("ai_insights").upsert({
+          family_id: familyId,
+          insight_type: "sleep_daily",
+          generated_date: new Date().toISOString().split("T")[0],
+          insight: parsed,
+          generated_at: new Date().toISOString(),
+        }, { onConflict: "family_id,insight_type,generated_date" });
       })
       .catch(() => setInsight(null))
       .finally(() => setLoading(false));
+    })();
   }, [isPremium, familyState?.sleepData?.napCountToday]);
 
   return { insight, loading };
 }
 
 // ─── CHECKIN HISTORY HOOK ────────────────────────────────────────────────────
-function useCheckinHistory(userId, familyId) {
+export function useCheckinHistory(userId, familyId) {
   const [history, setHistory] = useState([]);
   const [patterns, setPatterns] = useState(null);
 
@@ -608,7 +630,7 @@ function DailyMoment({ setTab, activeChild, familyState, patterns, daysShowingUp
 // All AI calls go through the existing callAI + getPrompt infrastructure.
 // Pattern tracking (saveCheckin) is preserved for both paths.
 
-function HeldCheckin({ familyState, patterns, saveCheckin }) {
+export function HeldCheckin({ familyState, patterns, saveCheckin }) {
   const T = useT();
   const { currentUser, activeChild, activeFamily, isPremium } = useApp();
 
@@ -678,7 +700,7 @@ function HeldCheckin({ familyState, patterns, saveCheckin }) {
     const histCtx   = buildHistoryContext(patterns);
 
     try {
-      const raw    = await callAI({ system: getPrompt("ns_checkin"), max_tokens: 700, messages: [{ role: "user", content: `${userMsg}${histCtx ? "\n\n" + histCtx : ""}` }] });
+      const raw    = await callAI({ system: getPrompt("ns_checkin"), model: "claude-haiku-4-5-20251001", max_tokens: 700, messages: [{ role: "user", content: `${userMsg}${histCtx ? "\n\n" + histCtx : ""}` }] });
       const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
       persistResponse(parsed);
       saveCheckin?.(trimmed, "freeform", parsed.validation?.slice(0, 200)).catch(() => {});
@@ -1051,6 +1073,8 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const T = useT();
   const { setTab, consultants, currentUser, activeChild, activeFamily, isPremium, hasConsultantAssigned, setPendingSleepAction } = useApp();
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showSOS, setShowSOS] = useState(false);
+  const [showNS, setShowNS] = useState(false);
   const consultant = consultants?.[0];
   const isCo = currentUser?.role === "co_caregiver";
 
@@ -1156,179 +1180,424 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const suggestedWakeStr = suggestedWakeTs ? suggestedWakeTs.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
   const minsUntilWake = suggestedWakeTs ? Math.round((suggestedWakeTs - Date.now()) / 60000) : null;
 
+  // NS state gradient position
+  const nsGradientPos = {
+    Regulated: 12, Steady: 35, Stretched: 60,
+    Fight: 72, Flight: 55, Freeze: 75, Overloaded: 83, Shutdown: 92,
+  }[familyState?.parentState?.lastCheckinState] ?? null;
+
+  const nsState = familyState?.parentState?.lastCheckinState;
+  const daysCount = familyState?.daysShowingUp ?? checkinHistory.length;
+
   return (
-    <div style={{ paddingBottom: 20 }}>
+    <div style={{ paddingBottom: 100 }}>
       {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} T={T} currentUser={currentUser} />}
+      {showSOS && <SOSFlow onClose={() => setShowSOS(false)} setTab={setTab} />}
+      {showNS  && <NSCheckinFlow onClose={() => setShowNS(false)} />}
+
+      {/* ── SOS FLOATING BUTTON ── */}
+      <button onClick={() => setShowSOS(true)} style={{
+        position: "fixed", bottom: 90, right: 20, zIndex: 99,
+        width: 54, height: 54, borderRadius: "50%", border: "none",
+        background: "linear-gradient(135deg, #B8924A, #C9A84C)",
+        color: "white", fontSize: 20, cursor: "pointer",
+        boxShadow: "0 4px 20px rgba(184,146,74,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>⚡</button>
 
       {/* ── HEADER ── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-          <div style={{ paddingTop: 6 }}>
-            <HamburgerButton onOpen={onOpenDrawer} T={T} />
-          </div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <button onClick={onOpenDrawer} style={{
+            background: "none", border: "none", cursor: "pointer",
+            padding: "4px 6px", color: T.muted, fontSize: 20, lineHeight: 1,
+          }}>☰</button>
+          <ChildPill onOpen={onOpenDrawer} />
+        </div>
+        <div style={{ fontSize: 9.5, letterSpacing: ".15em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 4 }}>
+          Rooted Connections Collective
+        </div>
+        <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 400, color: T.muted, marginBottom: 2 }}>
+          {new Date().getHours() < 12 ? "Good morning," : new Date().getHours() < 17 ? "Good afternoon," : "Good evening,"}
+        </div>
+        <h1 style={{ fontFamily: serif, fontSize: 32, color: T.headingText, lineHeight: 1.1, marginBottom: 0 }}>
+          {currentUser?.name?.split(" ")[0] ?? "there"} 🌿
+        </h1>
+      </div>
+
+      {/* ── TODAY'S INVITATION ── */}
+      <div style={{
+        borderRadius: 18, padding: "18px 20px 16px 24px",
+        background: T.card, marginBottom: 12,
+        borderLeft: `4px solid ${T.warm}`,
+        position: "relative", overflow: "hidden",
+      }}>
+        <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>
+          Today's Invitation
+        </div>
+        <p style={{ fontFamily: serif, fontSize: 17, color: T.text, lineHeight: 1.55, marginBottom: 10, fontStyle: "italic" }}>
+          {message ? `"${message}"` : "“You don’t have to be perfect. You just have to show up.”"}
+        </p>
+        {/* Grounding CTA */}
+        <button onClick={() => setTab("regulation")} style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          padding: "6px 14px", borderRadius: 20,
+          border: `1px solid ${T.teal}40`,
+          background: `${T.teal}10`, color: T.teal,
+          fontFamily: font, fontSize: 12.5, fontWeight: 600, cursor: "pointer",
+          marginBottom: 12,
+        }}>
+          🌬 Try a grounding exercise →
+        </button>
+        {/* Divider */}
+        <div style={{ height: 1, background: T.border, margin: "4px 0 12px" }} />
+        {/* Need a few minutes */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase", color: T.subText, marginBottom: 4, fontFamily: font }}>
-              Rooted Connections Collective
+            <div style={{ fontFamily: font, fontSize: 13.5, fontWeight: 600, color: T.text, marginBottom: 2 }}>
+              Need a few minutes?
             </div>
-            <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.15, marginBottom: 6 }}>
-              {greeting}
-            </h1>
-            <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, fontStyle: "italic", maxWidth: 300 }}>
-              "{message}"
+            <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>
+              Naptime. Quick break. Just for you.
+            </div>
+          </div>
+          <button onClick={() => setTab("regulation")} style={{
+            padding: "9px 16px", borderRadius: 24, border: "none",
+            background: T.teal, color: "#fff",
+            fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}>
+            Come in →
+          </button>
+        </div>
+      </div>
+
+      {/* ── STATE OF YOUR DAY + NS PULSE (side by side) ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+        {/* Left: State of Your Day */}
+        <div style={{
+          borderRadius: 16, padding: "14px 14px",
+          background: T.card, border: `1px solid ${T.border}`,
+        }}>
+          <div style={{ fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 8 }}>
+            State of Your Day
+          </div>
+          <p style={{ fontFamily: serif, fontSize: 13, fontStyle: "italic", color: T.text, lineHeight: 1.5, marginBottom: 8 }}>
+            {nsState === "Regulated" ? "“You stayed in it today. That counts.”"
+             : nsState === "Stretched" ? "“Carrying a lot. That’s allowed.”"
+             : nsState ? `“${nsState} is honest.”`
+             : "“Check in to see your state.”"}
+          </p>
+          {/* Gradient bar — no labels */}
+          <div style={{
+            height: 7, borderRadius: 5,
+            background: "linear-gradient(90deg,#5C7A5E 0%,#8A9E8B 30%,#B8924A 65%,#A87B7B 100%)",
+            position: "relative",
+          }}>
+            {nsGradientPos !== null && (
+              <div style={{
+                position: "absolute", top: "50%",
+                transform: "translate(-50%,-50%)",
+                left: `${nsGradientPos}%`,
+                width: 11, height: 11, borderRadius: "50%",
+                background: "white", border: `2px solid ${T.bg}`,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+              }} />
+            )}
+          </div>
+        </div>
+
+        {/* Right: NS Pulse */}
+        <div style={{
+          borderRadius: 16, padding: "14px 14px",
+          background: T.card, border: `1px solid ${T.border}`,
+        }}>
+          <div style={{ fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 8 }}>
+            Nervous System
+          </div>
+          {nsState ? (
+            <>
+              <div style={{
+                display: "inline-block", padding: "3px 10px", borderRadius: 20,
+                background: `${T.teal}18`,
+                fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal,
+                marginBottom: 6,
+              }}>
+                {nsState}
+              </div>
+              <p style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.5, margin: "0 0 8px" }}>
+                {nsState === "Regulated" ? "Your calm is contagious." : "You’re carrying a lot. That’s allowed."}
+              </p>
+            </>
+          ) : (
+            <p style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.5, marginBottom: 8 }}>
+              How are you right now?
             </p>
-            {isCo && <div style={{ fontSize: 11.5, color: T.muted, fontFamily: font, marginTop: 4 }}>Co-caregiver view</div>}
-          </div>
+          )}
+          <button onClick={() => setTab("regulation")} style={{
+            background: "none", border: "none", padding: 0,
+            fontFamily: font, fontSize: 12, color: T.teal,
+            fontWeight: 600, cursor: "pointer",
+          }}>
+            Check in now →
+          </button>
         </div>
       </div>
 
-      {/* Child switcher pills */}
-      <ChildSwitcher onAddChild={onAddChild} />
-
-      {/* ── DAILY MOMENT + HELD CHECKIN ── */}
-      <DailyMoment
-        setTab={setTab}
-        activeChild={activeChild}
-        familyState={familyState}
-        patterns={patterns}
-        daysShowingUp={familyState?.daysShowingUp ?? checkinHistory.length}
-      />
-      <HeldCheckin
-        familyState={familyState}
-        patterns={patterns}
-        saveCheckin={saveCheckin}
-      />
-
-      <div style={{
-        borderRadius: 12, border: `1px solid ${T.border}`,
-        background: T.card, padding: "12px 16px", marginBottom: 10,
+      {/* ── I NEED HELP RIGHT NOW (SOS card — prominent) ── */}
+      <button onClick={() => setShowSOS(true)} style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        width: "100%", padding: "16px 20px", marginBottom: 12,
+        borderRadius: 16, border: "none",
+        background: "linear-gradient(135deg, #B8924A, #9A7030)",
+        cursor: "pointer", textAlign: "left",
       }}>
-        <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 9 }}>
-          Quick log
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span style={{ fontSize: 22 }}>⚡</span>
+          <div>
+            <div style={{ fontFamily: font, fontSize: 15, fontWeight: 700, color: "white", marginBottom: 2 }}>
+              I Need Help Right Now
+            </div>
+            <div style={{ fontFamily: font, fontSize: 12, color: "rgba(255,255,255,0.7)" }}>
+              Tap for immediate support
+            </div>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[
-            { label: "🛏️ Put down",     action: "put_down" },
-            { label: "☀️ Woke up",      action: "woke_up" },
-            { label: "🌙 Night waking", action: "night_waking" },
-          ].map(q => (
-            <button key={q.label} onClick={() => { setPendingSleepAction(q.action); setTab("sleep"); }} style={{
-              padding: "7px 13px", borderRadius: 20,
-              border: `1px solid ${T.border}`,
-              background: T.faint, color: T.text,
-              fontFamily: font, fontSize: 12.5, fontWeight: 500,
-              cursor: "pointer",
-            }}>
-              {q.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Smart sleep status card */}
-      <div style={{
-        borderRadius: 12, border: `1px solid ${T.border}`,
-        background: T.card, padding: "14px 16px", marginBottom: 10,
-      }}>
-        {openSession ? (
-          // ── SLEEPING: show suggested wake time ──
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: isNightSession ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
-                {isNightSession ? "🌙 Night sleep" : "☀️ Nap"} in progress
-              </div>
-              <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
-                Wake by {suggestedWakeStr || "—"}
-              </div>
-              <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-                {minsUntilWake === null ? "" :
-                  minsUntilWake < 0 ? `${Math.abs(minsUntilWake)}m past target` :
-                  minsUntilWake < 60 ? `in ${minsUntilWake}m` :
-                  `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
-                {" · "}
-                {isNightSession ? "12h night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
-              </div>
-            </div>
-            <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
-              padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
-              background: `${T.teal}12`, color: T.teal,
-              fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
-            }}>
-              Log wake →
-            </button>
-          </div>
-        ) : minsAwake !== null ? (
-          // ── AWAKE: show next put-down time ──
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
-                {lastCompleted?.session_type === "night" ? "🌅 Good morning" : "☀️ Awake"}
-                {" · "}{minsAwake < 60 ? `${minsAwake}m` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m`}
-              </div>
-              {nextPutDownStr ? (
-                <>
-                  <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
-                    Next {napCountToday === 0 && lastCompleted?.session_type !== "night" ? "nap" : napCountToday >= 1 ? "nap" : "sleep"} ~ {nextPutDownStr}
-                  </div>
-                  <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
-                    {minsUntilPutDown !== null && minsUntilPutDown < 0
-                      ? `${Math.abs(minsUntilPutDown)}m past window — watch for tired cues`
-                      : minsUntilPutDown !== null && minsUntilPutDown < 30
-                      ? `${minsUntilPutDown}m — start winding down soon`
-                      : minsUntilPutDown !== null
-                      ? `in ${minsUntilPutDown < 60 ? minsUntilPutDown + "m" : Math.floor(minsUntilPutDown/60) + "h " + minsUntilPutDown%60 + "m"} · ${nextWindowHrs}h wake window`
-                      : `${nextWindowHrs}h wake window`}
-                  </div>
-                </>
-              ) : (
-                <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
-                  woke at {new Date(lastCompleted.end_ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </div>
-              )}
-            </div>
-            <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
-              padding: "8px 14px", borderRadius: 10,
-              border: `1px solid ${minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.border}`,
-              background: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? `${T.teal}12` : T.faint,
-              color: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? T.teal : T.muted,
-              fontFamily: font, fontSize: 12, fontWeight: minsUntilPutDown !== null && minsUntilPutDown <= 15 ? 600 : 400, cursor: "pointer",
-            }}>
-              Log put down →
-            </button>
-          </div>
-        ) : (
-          // ── NO DATA: first use ──
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontFamily: font, fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
-                Sleep status
-              </div>
-              <div style={{ fontFamily: font, fontSize: 13, color: T.muted }}>
-                No sessions logged yet today
-              </div>
-            </div>
-            <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
-              padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
-              background: `${T.teal}12`, color: T.teal,
-              fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
-            }}>
-              Start logging →
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Dashboard link — quiet, at the bottom */}
-      <button onClick={() => setTab("dashboard")} style={{
-        width: "100%", padding: "11px", borderRadius: 12,
-        border: `1px solid ${T.border}`, background: "none",
-        color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer",
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-      }}>
-        <span>📊</span> View Insights
+        <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 18 }}>›</span>
       </button>
-    </div>
-  )}
 
+      {/* ── YESTERDAY'S SHIFT ── */}
+      {daysCount >= 2 && (
+        <div style={{
+          borderRadius: 16, padding: "16px 18px", marginBottom: 12,
+          background: `${T.teal}08`,
+          border: `1px solid ${T.teal}22`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 16 }}>✨</span>
+            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700 }}>
+              Yesterday's Shift
+            </div>
+          </div>
+          <p style={{ fontFamily: serif, fontSize: 15, color: T.headingText, lineHeight: 1.5, marginBottom: 6 }}>
+            {patterns?.progressDelta < 0
+              ? `"${Math.abs(patterns.progressDelta)} fewer hard check-ins this week. You went from ${patterns.dominantFeeling ?? "overwhelmed"} → steadier. That’s not small."`
+              : `"You’ve shown up ${daysCount} day${daysCount !== 1 ? "s" : ""} in a row."`}
+          </p>
+          <p style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.55, marginBottom: 12 }}>
+            {patterns?.progressDelta < 0
+              ? "You caught it before it escalated. That was earlier than the day before."
+              : "Most parents don’t make it past three. Whatever’s keeping you here — keep doing it."}
+          </p>
+          <div style={{
+            display: "inline-block", padding: "6px 14px", borderRadius: 20,
+            background: `${T.teal}15`,
+            fontFamily: font, fontSize: 12.5, fontStyle: "italic",
+            color: T.teal, fontWeight: 500,
+          }}>
+            I’m becoming the parent I want to be.
+          </div>
+        </div>
+      )}
+
+      {/* ── SOMETHING I NOTICED (curiosity tension card) ── */}
+      {isPremium && familyState?.sleepData?.weekSessions?.length >= 3 && (
+        <button onClick={() => setTab("insights")} style={{
+          display: "block", width: "100%", textAlign: "left",
+          padding: "16px 18px", marginBottom: 12, borderRadius: 16,
+          border: "none",
+          background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`,
+          cursor: "pointer",
+        }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: "rgba(255,255,255,0.45)", fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
+            Something I noticed
+          </div>
+          <p style={{ fontFamily: serif, fontSize: 15, fontStyle: "italic", color: "rgba(255,255,255,0.88)", lineHeight: 1.55, marginBottom: 10 }}>
+            {insight?.pattern
+              ? `"${insight.pattern}"`
+              : "“There’s a pattern forming this week — and it might explain why mornings have felt the way they have.”"}
+          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontFamily: font, fontSize: 12, color: "rgba(255,255,255,0.45)" }}>
+              Tap to see what I’m seeing
+            </span>
+            <span style={{
+              padding: "6px 14px", borderRadius: 20,
+              background: "rgba(255,255,255,0.12)",
+              fontFamily: font, fontSize: 12, fontWeight: 600,
+              color: "white",
+            }}>
+              See pattern →
+            </span>
+          </div>
+        </button>
+      )}
+
+      {/* ── HELD IS THINKING ABOUT YOU (return loop cards) ── */}
+      <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 8 }}>
+        Held is thinking about you
+      </div>
+
+      {/* Return loop 1: Check yourself first (regulation) */}
+      <div style={{
+        borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+        background: T.card, border: `1px solid ${T.border}`,
+        borderLeft: `3px solid ${T.teal}`,
+      }}>
+        <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6 }}>
+          Check yourself first
+        </div>
+        <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, marginBottom: 8 }}>
+          {nsState === "Stretched" || nsState === "Overloaded" || nsState === "Shutdown"
+            ? "Your system has been working hard. A 2-minute reset before the next hard moment could change everything."
+            : "Evenings have felt harder lately. Want a 2-minute reset before dinner tonight?"}
+        </p>
+        <button onClick={() => setTab("regulation")} style={{
+          background: "none", border: "none", padding: 0,
+          fontFamily: font, fontSize: 12.5, color: T.teal,
+          fontWeight: 600, cursor: "pointer",
+        }}>
+          Set a reminder for 5pm →
+        </button>
+      </div>
+
+      {/* Return loop 2: Pattern I'm noticing (insights) */}
+      {isPremium && familyState?.sleepData?.weekSessions?.length >= 3 && (
+        <div style={{
+          borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+          background: T.card, border: `1px solid ${T.border}`,
+          borderLeft: `3px solid ${T.warm}`,
+        }}>
+          <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 6 }}>
+            Pattern I’m noticing
+          </div>
+          <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: T.text, lineHeight: 1.55, marginBottom: 8 }}>
+            {insight?.likely_cause
+              ? `"${insight.likely_cause}"`
+              : `"You tend to feel steadier on days when ${activeChild?.name ?? "their"} first nap lands early. Want to see why?"`}
+          </p>
+          <button onClick={() => setTab("insights")} style={{
+            background: "none", border: "none", padding: 0,
+            fontFamily: font, fontSize: 12.5, color: T.warm,
+            fontWeight: 600, cursor: "pointer",
+          }}>
+            See the full pattern →
+          </button>
+        </div>
+      )}
+
+      {/* Return loop 3: Whenever you need it (grounding space) */}
+      <div style={{
+        borderRadius: 16, padding: "16px 18px", marginBottom: 14,
+        background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`,
+      }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <span style={{ fontSize: 20, flexShrink: 0, marginTop: 2 }}>🌿</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", fontFamily: font, fontWeight: 700, marginBottom: 6 }}>
+              Whenever you need it
+            </div>
+            <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: "rgba(255,255,255,0.85)", lineHeight: 1.55, marginBottom: 10 }}>
+              “This is your space. No agenda. Just come back when you need to feel like yourself again.”
+            </p>
+            <button onClick={() => setTab("regulation")} style={{
+              background: "none", border: "none", padding: 0,
+              fontFamily: font, fontSize: 13, color: "rgba(255,255,255,0.7)",
+              fontWeight: 600, cursor: "pointer",
+            }}>
+              Open grounding space →
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── QUICK ACCESS ── */}
+      <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 10 }}>
+        Quick Access
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+        {[
+          { icon: "🌙", label: "Log Sleep",   action: () => { setPendingSleepAction("put_down"); setTab("sleep"); } },
+          { icon: "🧠", label: "NS Check-in", action: () => setShowNS(true) },
+          { icon: "💬", label: "What do I say?", action: () => setTab("library") },
+          { icon: "📊", label: "Insights",    action: () => setTab("insights") },
+        ].map(q => (
+          <button key={q.label} onClick={q.action} style={{
+            padding: "12px 6px 10px",
+            borderRadius: 14, border: `1px solid ${T.border}`,
+            background: T.card, cursor: "pointer",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", gap: 6,
+          }}>
+            <span style={{ fontSize: 22 }}>{q.icon}</span>
+            <span style={{ fontFamily: font, fontSize: 10.5, color: T.muted, textAlign: "center", lineHeight: 1.3 }}>
+              {q.label}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* ── SLEEP STATUS CARD (contextual) ── */}
+      {(openSession || lastCompleted) && (
+        <div style={{
+          borderRadius: 14, border: `1px solid ${T.border}`,
+          background: T.card, padding: "14px 16px", marginBottom: 10,
+        }}>
+          {openSession ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontFamily: font, fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: isNightSession ? "#8A7BAA" : "#A89B5A", marginBottom: 4 }}>
+                  {isNightSession ? "🌙 Night sleep" : "☀️ Nap"} in progress
+                </div>
+                <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 2 }}>
+                  Wake by {suggestedWakeStr || "—"}
+                </div>
+                <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+                  {minsUntilWake === null ? "" : minsUntilWake < 0 ? `${Math.abs(minsUntilWake)}m past target` : minsUntilWake < 60 ? `in ${minsUntilWake}m` : `in ${Math.floor(minsUntilWake/60)}h ${minsUntilWake%60}m`}
+                  {" · "}{isNightSession ? "night sleep" : `~${ageMonthsHome !== null && ageMonthsHome < 6 ? 45 : ageMonthsHome !== null && ageMonthsHome < 12 ? 60 : 75}min nap`}
+                </div>
+              </div>
+              <button onClick={() => { setPendingSleepAction("woke_up"); setTab("sleep"); }} style={{
+                padding: "8px 14px", borderRadius: 10, border: `1px solid ${T.teal}`,
+                background: `${T.teal}12`, color: T.teal,
+                fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer",
+              }}>Log wake →</button>
+            </div>
+          ) : minsAwake !== null ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontFamily: font, fontSize: 9.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>
+                  {lastCompleted?.session_type === "night" ? "🌅 Good morning" : "☀️ Awake"} · {minsAwake < 60 ? `${minsAwake}m` : `${Math.floor(minsAwake/60)}h ${minsAwake%60}m`}
+                </div>
+                {nextPutDownStr && (
+                  <>
+                    <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText, marginBottom: 2 }}>
+                      Next nap ~ {nextPutDownStr}
+                    </div>
+                    <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>
+                      {minsUntilPutDown < 0 ? `${Math.abs(minsUntilPutDown)}m past window` : minsUntilPutDown < 30 ? "start winding down soon" : `in ${minsUntilPutDown < 60 ? minsUntilPutDown + "m" : Math.floor(minsUntilPutDown/60) + "h " + minsUntilPutDown%60 + "m"} · ${nextWindowHrs}h wake window`}
+                    </div>
+                  </>
+                )}
+              </div>
+              <button onClick={() => { setPendingSleepAction("put_down"); setTab("sleep"); }} style={{
+                padding: "8px 14px", borderRadius: 10,
+                border: `1px solid ${minsUntilPutDown <= 15 ? T.teal : T.border}`,
+                background: minsUntilPutDown <= 15 ? `${T.teal}12` : T.faint,
+                color: minsUntilPutDown <= 15 ? T.teal : T.muted,
+                fontFamily: font, fontSize: 12,
+                fontWeight: minsUntilPutDown <= 15 ? 600 : 400, cursor: "pointer",
+              }}>Log put down →</button>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+
+
+    </div>
+  );
+}
 
 // ─── CHILD SWITCHER ───────────────────────────────────────────────────────────
 function ChildSwitcher({ onAddChild }) {
