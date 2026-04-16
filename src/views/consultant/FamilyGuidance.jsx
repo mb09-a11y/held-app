@@ -675,11 +675,47 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
     }
   }
 
+  // ── Active child state (for multi-child families) ──
+  const [activeChildId, setActiveChildIdLocal] = useState(children?.[0]?.id || null);
+  const activeChild = children?.find(c => c.id === activeChildId) || children?.[0];
+  const [activeTab, setActiveTab] = useState("insights");
+  const [notes, setNotes] = useState("");
+  const [notesSaved, setNotesSaved] = useState(false);
+
+  // Load saved notes
+  useEffect(() => {
+    if (!family?.id) return;
+    supabase.from("families").select("consultant_notes").eq("id", family.id).maybeSingle()
+      .then(({ data }) => { if (data?.consultant_notes) setNotes(data.consultant_notes); });
+  }, [family?.id]);
+
+  async function saveNotes() {
+    await supabase.from("families").update({ consultant_notes: notes }).eq("id", family.id);
+    setNotesSaved(true);
+    setTimeout(() => setNotesSaved(false), 2000);
+  }
+
+  // Intake viewer — rendered after all hooks
   if (viewingIntake) {
     return <IntakeViewer family={family} onBack={() => setViewingIntake(false)} />;
   }
 
   const day = planDay(family.plan_start_date);
+
+  // Child status tier — first child gets family tier, rest default stable
+  function childTier(idx) {
+    return idx === 0 ? tier : "stable";
+  }
+  const childStatusColor = t2 =>
+    t2 === "urgent" ? "#E57373" : t2 === "watch" ? "#FFB74D" : "#7FD98A";
+
+  const TABS = [
+    { id: "insights",  label: "Insights"   },
+    { id: "sleep",     label: "Sleep Data" },
+    { id: "plan",      label: "Plan"       },
+    { id: "intake",    label: "Intake"     },
+    { id: "notes",     label: "Notes"      },
+  ];
 
   return (
     <div style={{ fontFamily: font }}>
@@ -688,69 +724,192 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
         @keyframes fg-shimmer { 0%,100%{opacity:.35} 50%{opacity:.7} }
       `}</style>
 
-      {/* ── BACK ── */}
-      <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer", marginBottom: 20, padding: 0 }}>
-        ← Dashboard
-      </button>
+      {/* ── TOP NAV BAR ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 0, paddingBottom: 12 }}>
+        <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: T.muted, fontFamily: font, fontSize: 13, cursor: "pointer", padding: 0 }}>
+          ‹ Families
+        </button>
+        <button
+          onClick={() => generateGuidance(true)}
+          disabled={loading}
+          style={{ background: "none", border: "none", fontFamily: font, fontSize: 13, fontWeight: 600, color: loading ? T.subText : T.teal, cursor: loading ? "default" : "pointer", padding: 0 }}
+        >
+          {loading ? "Updating…" : "↻ Refresh"}
+        </button>
+      </div>
 
-      {/* ── 1. FAMILY HEADER ── */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 10 }}>
-          <div style={{ width: 48, height: 48, borderRadius: "50%", background: t.badgeBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, color: t.badge, flexShrink: 0 }}>
-            {(family.display_name || family.invite_email || "?")[0].toUpperCase()}
+      {/* ── FAMILY HERO — gradient, matches wireframe ── */}
+      <div style={{
+        background: "linear-gradient(160deg, #FAF0EA, #EAF0E8)",
+        padding: "14px 18px 10px", marginBottom: 0,
+        borderRadius: "16px 16px 0 0",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{
+            width: 46, height: 46, borderRadius: "50%",
+            background: "rgba(184,146,74,0.15)", border: "2px solid rgba(184,146,74,0.35)",
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0,
+          }}>
+            👨‍👩‍👧
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-              <div>
-                <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, lineHeight: 1.2, marginBottom: 2 }}>
-                  {child?.name || family.display_name || family.invite_email?.split("@")[0] || "Family"}
-                  {child?.dob && <span style={{ fontFamily: font, fontSize: 14, fontWeight: 400, color: T.muted }}> · {ageLabel(child.dob)}</span>}
-                </div>
-                {family.display_name && family.display_name !== child?.name && (
-                  <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 4 }}>
-                    {family.display_name}
-                  </div>
-                )}
-              </div>
-              {/* Refresh button */}
-              <button
-                onClick={() => generateGuidance(true)}
-                disabled={loading}
-                style={{ flexShrink: 0, background: "none", border: `0.5px solid ${T.border}`, borderRadius: 20, padding: "4px 10px", fontFamily: font, fontSize: 11, color: loading ? T.subText : T.sage, cursor: loading ? "default" : "pointer" }}
-              >
-                {loading ? "Updating…" : "↻ Refresh"}
-              </button>
+          <div>
+            <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 500, color: "#2D4A35", lineHeight: 1.2 }}>
+              {family.display_name || family.invite_email?.split("@")[0] || "Family"}
             </div>
-
-            {/* Meta row */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-              <TierBadge tier={tier} />
-              {day && <span style={{ fontFamily: font, fontSize: 11, color: T.subText }}>Plan day {day}</span>}
-              {!family.intake_complete && (
-                <button
-                  onClick={async () => {
-                    if (!window.confirm(`Resend the intake form to ${family.display_name || family.invite_email}? They'll see it on their next login.`)) return;
-                    await supabase.from("families").update({ intake_complete: false }).eq("id", family.id);
-                    window.alert("Intake re-sent — they'll see it on their next login.");
-                  }}
-                  style={{ fontFamily: font, fontSize: 11, color: TIERS.intake.badge, background: TIERS.intake.badgeBg, border: `0.5px solid ${TIERS.intake.border}`, padding: "3px 10px", borderRadius: 20, cursor: "pointer" }}
-                >
-                  Resend intake ↗
-                </button>
-              )}
-              <button
-                onClick={() => onOpenTab("sleep", "dashboard")}
-                style={{ fontFamily: font, fontSize: 11, color: T.sage, background: T.faint, border: `0.5px solid ${T.border}`, padding: "3px 10px", borderRadius: 20, cursor: "pointer" }}
-              >
-                View logs →
-              </button>
+            <div style={{ fontFamily: font, fontSize: 11, color: "rgba(58,46,40,0.5)" }}>
+              {children?.length > 0
+                ? `${children.length} ${children.length === 1 ? "child" : "children"}${day ? ` · ${children.length === 1 ? `Day ${day} of plan` : `${children.length} active plans`}` : ""}`
+                : day ? `Day ${day} of plan` : "No active plan"
+              }
             </div>
           </div>
         </div>
       </div>
 
+      {/* ── NS BANNER ── */}
+      {clientData.parentState?.overwhelmLevel >= 5 && (
+        <div style={{
+          margin: "0 0 0", background: "rgba(184,146,74,0.08)",
+          border: "1px solid rgba(184,146,74,0.25)",
+          padding: "10px 18px", display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: font, fontSize: 9, fontWeight: 600, letterSpacing: ".14em", textTransform: "uppercase", color: "#B8924A", marginBottom: 2 }}>
+              Parent nervous system · Family
+            </div>
+            <div style={{ fontFamily: font, fontSize: 12, color: "#3A2E28" }}>
+              {clientData.parentState.overwhelmLevel >= 8
+                ? "Overwhelm elevated — likely needs validation before data."
+                : "NS trend elevated. A grounded message will land better right now."}
+            </div>
+          </div>
+          {/* Mini trend bars */}
+          <div style={{ display: "flex", gap: 3, alignItems: "flex-end", flexShrink: 0 }}>
+            {[14, 20, 26, 30, 34].map((h, i) => (
+              <div key={i} style={{ width: 5, height: h, borderRadius: 2, background: i < 2 ? "#D4AE72" : i < 4 ? "#B8924A" : "#C0543A" }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── CHILD SELECTOR CHIPS ── */}
+      {children?.length > 1 && (
+        <div style={{ display: "flex", gap: 8, padding: "10px 18px 4px", background: T.bg }}>
+          {children.map((c, idx) => {
+            const isActive = c.id === activeChildId;
+            const dot = childStatusColor(childTier(idx));
+            return (
+              <button
+                key={c.id}
+                onClick={() => setActiveChildIdLocal(c.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 7,
+                  padding: "7px 13px", borderRadius: 20, cursor: "pointer",
+                  border: `1.5px solid ${isActive ? "#2D4A35" : T.border}`,
+                  background: isActive ? "#2D4A35" : T.card,
+                  transition: "all 0.18s",
+                }}
+              >
+                <span style={{ fontSize: 14 }}>{idx === 0 ? "👶" : "🧒"}</span>
+                <span style={{ fontFamily: font, fontSize: 12, fontWeight: 500, color: isActive ? "white" : T.text }}>
+                  {c.name}
+                </span>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, display: "inline-block" }} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── TAB STRIP ── */}
+      <div style={{
+        display: "flex", background: T.faint, borderRadius: 12, padding: 3,
+        margin: "10px 0 16px",
+        overflowX: "auto", scrollbarWidth: "none",
+      }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              if (tab.id === "intake") { setViewingIntake(true); return; }
+              if (tab.id === "sleep") { onOpenTab("sleep", "dashboard"); return; }
+              setActiveTab(tab.id);
+            }}
+            style={{
+              flex: "0 0 auto", padding: "8px 12px", borderRadius: 9, border: "none", cursor: "pointer",
+              fontFamily: font, fontSize: 12, fontWeight: activeTab === tab.id ? 600 : 400,
+              background: activeTab === tab.id ? T.card : "transparent",
+              color: activeTab === tab.id ? T.headingText : T.muted,
+              boxShadow: activeTab === tab.id ? "0 1px 6px rgba(90,70,60,0.12)" : "none",
+              transition: "all .18s", whiteSpace: "nowrap",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── NOTES TAB ── */}
+      {activeTab === "notes" && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontFamily: font, fontSize: 11, fontWeight: 600, color: T.subText, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 10 }}>
+            Consultant Notes
+          </div>
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Add private notes about this family — context, observations, things to remember…"
+            style={{
+              width: "100%", minHeight: 200, padding: "14px 16px",
+              borderRadius: 14, border: `1px solid ${T.border}`,
+              background: T.card, color: T.text,
+              fontFamily: font, fontSize: 13, lineHeight: 1.65,
+              resize: "vertical", outline: "none", boxSizing: "border-box",
+            }}
+            onFocus={e => e.target.style.borderColor = T.teal}
+            onBlur={e => e.target.style.borderColor = T.border}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <button
+              onClick={saveNotes}
+              style={{
+                padding: "8px 18px", borderRadius: 10, border: "none",
+                background: T.teal, color: "white",
+                fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              {notesSaved ? "✓ Saved" : "Save notes"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHILD CONTEXT STRIP (Insights tab only) ── */}
+      {activeTab === "insights" && activeChild && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          background: T.faint, borderRadius: 12, padding: "10px 13px",
+          marginBottom: 14,
+        }}>
+          <span style={{ fontSize: 18 }}>{children?.indexOf(activeChild) === 0 ? "👶" : "🧒"}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: font, fontSize: 13, fontWeight: 600, color: T.headingText }}>
+              {activeChild.name}
+              {activeChild.dob && <span style={{ fontWeight: 400, color: T.muted }}> · {ageLabel(activeChild.dob)}</span>}
+              {day && <span style={{ fontWeight: 400, color: T.muted }}> · Day {day} of plan</span>}
+            </div>
+            {activeChild.dob && (() => {
+              const mo = Math.floor((Date.now() - new Date(activeChild.dob)) / (1000 * 60 * 60 * 24 * 30.44));
+              const stage = mo < 3 ? "Newborn" : mo < 12 ? "Infant" : mo < 36 ? "Toddler" : "Preschooler";
+              return <div style={{ fontFamily: font, fontSize: 11, color: T.muted }}>{stage}</div>;
+            })()}
+          </div>
+          <TierBadge tier={tier} />
+        </div>
+      )}
+
       {/* ── INLINE DRAFT (shown when CTA triggers it) ── */}
-      {showDraft && guidance && (
+      {showDraft && guidance && activeTab === "insights" && (
         <InlineDraft
           guidance={guidance}
           clientData={clientData}
@@ -762,7 +921,7 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
       )}
 
       {/* ── LOADING STATE ── */}
-      {loading && (
+      {loading && activeTab === "insights" && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ fontFamily: font, fontSize: 12, color: T.subText, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
             <PulseDot color={T.sage} size={5} />
@@ -773,7 +932,7 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
       )}
 
       {/* ── ERROR STATE ── */}
-      {error && !loading && (
+      {error && !loading && activeTab === "insights" && (
         <div style={{ padding: "12px 14px", borderRadius: 12, background: TIERS.urgent.badgeBg, border: `0.5px solid ${TIERS.urgent.border}`, marginBottom: 20 }}>
           <div style={{ fontFamily: font, fontSize: 13, color: TIERS.urgent.badge, marginBottom: 6 }}>{error}</div>
           <button onClick={() => generateGuidance(true)} style={{ background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.sage, cursor: "pointer", padding: 0 }}>
@@ -783,7 +942,7 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
       )}
 
       {/* ── GUIDANCE CONTENT ── */}
-      {guidance && !loading && (
+      {activeTab === "insights" && guidance && !loading && (
         <>
           {/* ── 2. ACTIVE PATTERN CARD ── */}
           <div style={{ marginBottom: 24 }}>

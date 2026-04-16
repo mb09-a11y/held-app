@@ -282,8 +282,8 @@ export default function RCCShell() {
       if (event === "INITIAL_SESSION") return;
       setSession(newSession);
       if (newSession?.user) {
-        if (currentUser) return;
-        await loadProfile(newSession.user.id, newSession.user.email);
+        const hasCachedUser = !!localStorage.getItem("rcc_user");
+        await loadProfile(newSession.user.id, newSession.user.email, hasCachedUser);
       } else {
         setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
         setOnboardingStep(inviteToken || consultantInviteToken || coInviteToken ? "register" : null);

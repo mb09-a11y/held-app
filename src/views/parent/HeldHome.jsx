@@ -737,47 +737,6 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
 
 
 
-        {/* ── RETURN LOOPS (Where do you want to go?) ── */}
-        <div style={{
-          fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",
-          color: T.muted, fontFamily: font, marginBottom: 10,
-        }}>
-          Where do you want to go?
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
-          {RETURN_LOOPS.map(loop => (
-            <button
-              key={loop.id}
-              onClick={() => {
-                if (loop.target === "sos") onSOS();
-                else if (loop.target === "ns") onNSCheckin();
-                else setTab(loop.target);
-              }}
-              style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "12px 14px", borderRadius: 14,
-                background: T.card, border: `1px solid ${T.border}`,
-                cursor: "pointer", textAlign: "left",
-              }}
-            >
-              <span style={{ fontSize: 20, flexShrink: 0 }}>{loop.emoji}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{
-                  fontFamily: font, fontSize: 11, fontWeight: 700, color: T.teal,
-                  letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 2,
-                }}>
-                  {loop.label}
-                </div>
-                <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted }}>{loop.desc}</div>
-              </div>
-              <span style={{ fontFamily: font, fontSize: 12, color: T.teal, fontWeight: 600, whiteSpace: "nowrap" }}>
-                {loop.cta}
-              </span>
-            </button>
-          ))}
-        </div>
-
         {/* ── QUICK ACCESS ── */}
         <div style={{
           fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",

@@ -38,15 +38,12 @@ import { MilestonesModule } from "./modules/milestones/MilestonesModule.jsx";
 import { Messaging }        from "./modules/messaging/Messaging.jsx";
 import { IntakeForm }       from "./modules/intake/IntakeForm.jsx";
 
-// ── Consultant (UNCHANGED)
-import { ConsultantFamilies, ConsultantAccount } from "./views/consultant/ConsultantViews.jsx";
-import { ConsultantHome } from "./views/consultant/ConsultantHome.jsx";
+// ── Consultant — new co-pilot shell (full rewrite)
+// ConsultantShell owns its own nav, routing, and data via consultantStore.js
+import ConsultantShell from "./views/consultant/ConsultantShell.jsx";
 
 // ── Admin (UNCHANGED)
 import { AdminDashboard, AdminConsultants, AdminBilling, AdminFamilies, AdminSettings } from "./views/admin/AdminViews.jsx";
-
-// ── Regulation module (consultant view — UNCHANGED)
-import { RegulationModule } from "./modules/regulation/RegulationModule.jsx";
 
 import { useTier } from "./hooks/useTier.js";
 
@@ -69,13 +66,7 @@ const PARENT_TABS = [
   { id: "insights",   label: "Insights",   icon: "✦"  },
 ];
 
-const CONSULTANT_TABS = [
-  { id: "families", label: "Home",       icon: "🏡" },
-  { id: "messages", label: "Messages",   icon: "💬" },
-  { id: "sleep",    label: "Sleep",      icon: "🌙" },
-  { id: "regulation",label: "Regulation",icon: "🌿" },
-  { id: "account",  label: "Account",    icon: "⚙️" },
-];
+// Note: consultant nav is now fully owned by ConsultantShell — no CONSULTANT_TABS needed here
 
 const ADMIN_TABS = [
   { id: "dashboard",   label: "Dashboard",  icon: "📊" },
@@ -236,24 +227,59 @@ export default function RCCShell() {
     return () => { mounted = false; subscription.unsubscribe(); };
   }, [inviteToken, consultantInviteToken, coInviteToken]);
 
-  // ── INVITE LOADER (UNCHANGED)
+  // ── INVITE LOADER
   useEffect(() => {
     if (!inviteToken && !consultantInviteToken && !coInviteToken) { setInviteLoading(false); return; }
+    let ignore = false;
     async function loadInvite() {
+      setInviteLoading(true);
       try {
         if (inviteToken) {
-          const { data } = await supabase.from("invites").select("*").eq("token", inviteToken).maybeSingle();
-          setInviteRecord(data || null);
-        } else if (consultantInviteToken) {
-          const { data } = await supabase.from("invites").select("*").eq("token", consultantInviteToken).eq("invite_kind", "consultant").maybeSingle();
-          setInviteRecord(data || null);
+          const { data, error } = await supabase.from("invites").select("*").eq("token", inviteToken).maybeSingle();
+          if (error) throw error;
+          if (!ignore) {
+            setInviteRecord(data ? { ...data, invite_kind: data.invite_kind || "family" } : null);
+            if (!session?.user) setOnboardingStep(data ? "register" : null);
+          }
+          return;
         }
-      } catch {}
-      setInviteLoading(false);
-      if (!session?.user) setOnboardingStep("register");
+        if (consultantInviteToken) {
+          const { data, error } = await supabase.from("invites").select("*").eq("token", consultantInviteToken).eq("invite_kind", "consultant").maybeSingle();
+          if (error) throw error;
+          if (!ignore) {
+            setInviteRecord(data ? { ...data, invite_kind: "consultant" } : null);
+            if (!session?.user) setOnboardingStep(data ? "register" : null);
+          }
+          return;
+        }
+        if (coInviteToken) {
+          const email = decodeURIComponent(coInviteToken).toLowerCase();
+          const { data, error } = await supabase
+            .from("co_caregivers")
+            .select("*, families(*)")
+            .eq("email", email)
+            .eq("status", "pending")
+            .maybeSingle();
+          if (error) throw error;
+          if (!ignore) {
+            setInviteRecord(data ? { ...data, invite_kind: "co_caregiver", invite_email: email } : null);
+            if (!session?.user) setOnboardingStep(data ? "register" : null);
+          }
+          return;
+        }
+      } catch (err) {
+        console.error("[RCCShell] loadInvite error:", err);
+        if (!ignore) {
+          setInviteRecord(null);
+          if (!session?.user) setOnboardingStep(null);
+        }
+      } finally {
+        if (!ignore) setInviteLoading(false);
+      }
     }
     loadInvite();
-  }, [inviteToken, consultantInviteToken, coInviteToken]);
+    return () => { ignore = true; };
+  }, [inviteToken, consultantInviteToken, coInviteToken, session]);
 
   // ── Stripe upgrade refresh (UNCHANGED)
   useEffect(() => {
@@ -271,14 +297,24 @@ export default function RCCShell() {
   }, [upgradeSuccess, session]);
 
   // ── LOAD PROFILE (UNCHANGED logic)
-  async function loadProfile(userId, email, fromCache = false) {
+  async function loadProfile(userId, authEmail = null, fromCache = false) {
     if (!fromCache) setAuthLoading(true);
     try {
-      const { data: profile } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
-      const resolvedEmail = email || profile?.email;
-      const merged = profile
-        ? { ...profile, id: userId, email: resolvedEmail }
-        : { id: userId, email: resolvedEmail, role: "parent", name: resolvedEmail };
+      const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+      ]);
+      if (profileError) throw profileError;
+
+      const resolvedEmail = (authEmail || authUser?.email || profile?.email || null)?.toLowerCase?.() || authEmail || authUser?.email || profile?.email || null;
+      const merged = {
+        ...(profile || {}),
+        id: userId,
+        name: profile?.name || authUser?.user_metadata?.name || (resolvedEmail ? resolvedEmail.split("@")[0] : "there"),
+        role: profile?.role || authUser?.user_metadata?.role || "parent",
+        consultant_pin: profile?.consultant_pin || authUser?.user_metadata?.consultant_pin || null,
+        email: resolvedEmail,
+      };
 
       setCurrentUser(merged);
       try { localStorage.setItem("rcc_user", JSON.stringify(merged)); } catch {}
@@ -290,59 +326,110 @@ export default function RCCShell() {
           supabase.from("families").select("*"),
           supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal", "admin"]),
         ]);
-        setFamilies(fams || []); setConsultants(cons || []); setChildren([]); setOnboardingStep(null);
+        setFamilies(fams || []);
+        setConsultants(cons || []);
+        setChildren([]);
+        setOnboardingStep(null);
+        return;
+      }
 
-      } else if (isConsultant(merged.role)) {
+      if (isConsultant(merged.role)) {
         setTab("families");
         const { data: fams } = await supabase.from("families").select("*").eq("consultant_id", userId);
-        setFamilies(fams || []); setConsultants([]); setChildren([]); setOnboardingStep(null);
+        setFamilies(fams || []);
+        setConsultants([]);
+        setChildren([]);
+        setOnboardingStep(null);
+        return;
+      }
 
-      } else {
-        setTab("home");
-        const [{ data: byId }, { data: byEmail }] = await Promise.all([
-          supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
-          resolvedEmail
-            ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle()
+      setTab("home");
+
+      const [{ data: byId }, { data: byEmail }] = await Promise.all([
+        supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
+        resolvedEmail
+          ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      let familyData = byId || byEmail || null;
+
+      if (!byId && byEmail) {
+        supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
+      }
+
+      if (!familyData && resolvedEmail) {
+        const { data: coRecord } = await supabase
+          .from("co_caregivers")
+          .select("family_id")
+          .eq("email", resolvedEmail)
+          .in("status", ["pending", "active"])
+          .maybeSingle();
+
+        if (coRecord) {
+          const { data: coFamily } = await supabase
+            .from("families")
+            .select("*")
+            .eq("id", coRecord.family_id)
+            .maybeSingle();
+
+          if (coFamily) {
+            familyData = coFamily;
+            merged.role = "co_caregiver";
+            setCurrentUser(prev => ({ ...(prev || merged), role: "co_caregiver" }));
+            try {
+              const cached = JSON.parse(localStorage.getItem("rcc_user") || "{}");
+              localStorage.setItem("rcc_user", JSON.stringify({ ...cached, ...merged, role: "co_caregiver" }));
+            } catch {}
+            supabase
+              .from("co_caregivers")
+              .update({ status: "active" })
+              .eq("family_id", coRecord.family_id)
+              .eq("email", resolvedEmail);
+          }
+        }
+      }
+
+      if (familyData) {
+        setFamilies([familyData]);
+        setActiveFamilyId(familyData.id);
+
+        const parentIdForKids = (familyData.parent_id && familyData.parent_id !== userId)
+          ? familyData.parent_id
+          : userId;
+
+        const [{ data: resolvedKids }, { data: cons }, { data: intake }] = await Promise.all([
+          supabase.from("children").select("*").eq("parent_id", parentIdForKids).order("created_at", { ascending: true }),
+          familyData.consultant_id
+            ? supabase.from("profiles").select("*").eq("id", familyData.consultant_id).maybeSingle()
             : Promise.resolve({ data: null }),
+          supabase.from("intake_responses").select("*").eq("family_id", familyData.id).maybeSingle(),
         ]);
 
-        let family = byId || byEmail;
-        if (!family && coInviteToken) {
-          const { data: cof } = await supabase.from("families").select("*").contains("co_caregiver_ids", [userId]).maybeSingle();
-          family = cof;
-        }
+        const kidList = resolvedKids || [];
+        setChildren(kidList);
+        if (kidList.length && !activeChildId) setActiveChildId(kidList[0].id);
+        setConsultants(cons ? [cons] : []);
 
-        if (family) {
-          setFamilies([family]);
-          setActiveFamilyId(family.id);
-
-          const [{ data: kids }, { data: cons }, { data: intake }] = await Promise.all([
-            supabase.from("children").select("*").eq("parent_id", userId),
-            family.consultant_id
-              ? supabase.from("profiles").select("*").eq("id", family.consultant_id).maybeSingle()
-              : Promise.resolve({ data: null }),
-            supabase.from("intake_responses").select("*").eq("family_id", family.id).maybeSingle(),
-          ]);
-
-          const kidList = kids || [];
-          setChildren(kidList);
-          if (kidList.length) setActiveChildId(kidList[0].id);
-          setConsultants(cons ? [cons] : []);
-          // Only trigger child onboarding if they genuinely have no children.
-          // Guards against race conditions re-showing ChildInfoStep to existing users.
-          const alreadyHasChildren = kidList.length > 0;
-          setOnboardingStep(
-            merged.role === "co_caregiver" ? null :
-            alreadyHasChildren ? (intake ? null : "intake") :
-            "child"
-          );
+        const alreadyHasChildren = kidList.length > 0;
+        if (merged.role === "co_caregiver") {
+          setOnboardingStep(null);
+        } else if (!alreadyHasChildren) {
+          setOnboardingStep("child");
+        } else if (!intake && familyData.require_intake) {
+          setOnboardingStep("intake");
         } else {
-          setFamilies([]); setChildren([]); setConsultants([]);
-          setOnboardingStep(inviteToken ? "register" : "child");
+          setOnboardingStep(null);
         }
+      } else {
+        setFamilies([]);
+        setChildren([]);
+        setConsultants([]);
+        setOnboardingStep(coInviteToken ? null : (inviteToken ? "register" : "child"));
       }
     } catch (err) {
       console.error("[RCCShell] loadProfile error:", err);
+      setProfileReady(true);
     } finally {
       setAuthLoading(false);
     }
@@ -360,63 +447,70 @@ export default function RCCShell() {
     if (error) throw error;
   }
 
-  async function handleRegister({ email, password, name, role, inviteToken: tok, consultantInviteToken: ctok, isCoCaregiver }) {
-    const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name, role } } });
+  async function handleRegister({ email, password, name, role = "parent", inviteToken: tok, consultantInviteToken: ctok, isCoCaregiver }) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { name, role } } });
     if (error) throw error;
-    const userId = data.user?.id;
-    if (!userId) throw new Error("No user ID returned.");
-
-    await supabase.from("profiles").upsert({ id: userId, email, name, role: isCoCaregiver ? "co_caregiver" : role || "parent" }, { onConflict: "id" });
-
-    if (tok) {
-      await supabase.from("invites").update({ accepted_at: new Date().toISOString(), accepted_by: userId }).eq("token", tok);
+    if (data.user) {
+      if (tok && role === "parent") {
+        const { error: familyError } = await supabase
+          .from("families")
+          .update({ parent_id: data.user.id, invite_email: normalizedEmail })
+          .eq("invite_token", tok);
+        if (familyError) throw familyError;
+      } else if (role === "parent" && !tok && !isCoCaregiver) {
+        const { error: familyError } = await supabase.from("families").insert({
+          parent_id: data.user.id,
+          invite_email: normalizedEmail,
+          require_intake: false,
+          intake_complete: false,
+        });
+        if (familyError) console.error("Family creation error:", familyError);
+      }
+      if (ctok && role !== "parent") {
+        await supabase.from("consultant_invites").update({ accepted_at: new Date().toISOString(), status: "accepted" }).eq("token", ctok);
+      }
+      if (isCoCaregiver) {
+        await supabase.from("co_caregivers").update({ status: "active", user_id: data.user.id }).eq("email", normalizedEmail);
+      }
+      clearInviteFromUrl();
+      await loadProfile(data.user.id, normalizedEmail);
     }
-    if (ctok) {
-      await supabase.from("invites").update({ accepted_at: new Date().toISOString(), accepted_by: userId }).eq("token", ctok);
-    }
-    if (isCoCaregiver && coInviteToken) {
-      await supabase.rpc("add_co_caregiver", { p_token: coInviteToken, p_user_id: userId });
-    }
-    clearInviteFromUrl();
-    await loadProfile(userId, email);
   }
 
   async function saveChildInfo(child) {
     if (!currentUser?.id) throw new Error("No signed-in parent found.");
-    const { error: childError } = await supabase.from("children").insert({
-      parent_id: currentUser.id,
-      name: child.name,
-      dob: child.dob || null,
-      weight_lbs: child.weight_lbs ? Number(child.weight_lbs) : null,
-      weight_oz: child.weight_oz ? Number(child.weight_oz) : null,
-    });
-    if (childError) throw childError;
-
-    let family = families[0];
-    if (!family) {
-      const { data: newFam, error: famError } = await supabase.from("families").insert({
+    setChildSaving(true);
+    try {
+      const payload = {
         parent_id: currentUser.id,
-        invite_email: currentUser.email,
-      }).select().single();
-      if (famError) throw famError;
-      family = newFam;
-      setFamilies([family]);
-      setActiveFamilyId(family.id);
+        name: child.name,
+        dob: child.dob || null,
+        weight_lbs: child.weight_lbs ? Number(child.weight_lbs) : null,
+        weight_oz: child.weight_oz ? Number(child.weight_oz) : null,
+      };
+      const { error: childError } = await supabase.from("children").insert(payload);
+      if (childError) throw childError;
+      const { error: profileError } = await supabase.from("profiles").update({
+        child_name: child.name,
+        dob: child.dob || null,
+        weight_lbs: child.weight_lbs ? Number(child.weight_lbs) : null,
+        weight_oz: child.weight_oz ? Number(child.weight_oz) : null,
+      }).eq("id", currentUser.id);
+      if (profileError) throw profileError;
+      const { data: kids } = await supabase.from("children").select("*").eq("parent_id", currentUser.id).order("created_at", { ascending: true });
+      setChildren(kids || []);
+      if (kids?.length > 0 && !activeChildId) setActiveChildId(kids[0].id);
+      const family = families[0];
+      if (family?.require_intake && !family?.intake_complete) setOnboardingStep("intake");
+      else {
+        setOnboardingStep(null);
+        setTab("home");
+        clearInviteFromUrl();
+      }
+    } finally {
+      setChildSaving(false);
     }
-
-    const { data: kids } = await supabase.from("children").select("*").eq("family_id", family.id);
-    const allKids = kids || [];
-    if (!allKids.length) {
-      const { data: freshKids } = await supabase.from("children").select("*").eq("parent_id", currentUser.id);
-      setChildren(freshKids || []);
-      if (freshKids?.length) setActiveChildId(freshKids[0].id);
-    } else {
-      setChildren(allKids);
-      if (allKids.length) setActiveChildId(allKids[0].id);
-    }
-
-    const { data: intake } = await supabase.from("intake_responses").select("*").eq("family_id", family.id).maybeSingle();
-    setOnboardingStep(intake ? null : "intake");
   }
 
   async function completeIntake(intakeData) {
@@ -442,7 +536,6 @@ export default function RCCShell() {
   async function sendFamilyInvite() {
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
-      // Generate token and insert invite record first
       const token = crypto.randomUUID();
       const { error: insertError } = await supabase.from("invites").insert({
         token,
@@ -506,20 +599,33 @@ export default function RCCShell() {
   }
 
   async function sendCoInvite() {
-    if (!coInviteEmail) { setCoInviteError("Please enter an email address."); return; }
+    if (!coInviteEmail.trim()) { setCoInviteError("Please enter an email address."); return; }
     setCoInviteBusy(true); setCoInviteError(""); setCoInviteSuccess("");
     try {
+      const familyId = activeFamily?.id;
+      if (!familyId) throw new Error("No active family found.");
+      const normalizedEmail = coInviteEmail.trim().toLowerCase();
+
+      const { error: insertError } = await supabase.from("co_caregivers").upsert({
+        family_id: familyId,
+        invited_by: currentUser?.id,
+        email: normalizedEmail,
+        status: "pending",
+      }, { onConflict: "family_id,email" });
+      if (insertError) throw insertError;
+
       const { error } = await supabase.functions.invoke("send-invite", {
         body: {
-          email: coInviteEmail,
-          family_id: activeFamily?.id,
+          email: normalizedEmail,
+          familyId,
+          family_id: familyId,
           invited_by: currentUser?.id,
           invited_by_name: currentUser?.name,
           isCo: true,
         },
       });
-      if (error) throw error;
-      setCoInviteSuccess(`Invite sent to ${coInviteEmail}!`);
+      if (error) console.warn("[RCCShell] co-caregiver email send failed but DB record was created:", error);
+      setCoInviteSuccess(`Invite sent to ${normalizedEmail}!`);
       setCoInviteEmail("");
     } catch (e) {
       setCoInviteError(e.message || "Failed to send invite.");
@@ -563,7 +669,7 @@ export default function RCCShell() {
 
   // Auth screens
   if (!session || !currentUser) {
-    const coEmail = coInviteToken ? new URLSearchParams(window.location.search).get("email") : null;
+    const coEmail = coInviteToken ? decodeURIComponent(coInviteToken) : null;
     return (
       <ThemeCtx.Provider value={T}>
         {authScreen === "login" ? (
@@ -574,7 +680,7 @@ export default function RCCShell() {
             onRegistered={handleRegister}
             inviteToken={inviteToken}
             consultantInviteToken={consultantInviteToken}
-            coInviteEmail={coEmail}
+            coInviteEmail={inviteRecord?.invite_email || coEmail}
             inviteRecord={inviteRecord}
           />
         )}
@@ -608,7 +714,6 @@ export default function RCCShell() {
   }
 
   // ─── MAIN APP ─────────────────────────────────────────────────────────────
-  const tabs = isParent ? PARENT_TABS : isAdmin(role) ? ADMIN_TABS : CONSULTANT_TABS;
   const unread = {}; // TODO: wire real unread counts
 
   return (
@@ -707,7 +812,8 @@ export default function RCCShell() {
             minHeight: "100vh",
             overflowY: "auto",
           }}>
-            {/* PARENT VIEW */}
+
+            {/* ─── PARENT VIEW ─────────────────────────────────────────────── */}
             {isParent && (
               <>
                 {tab === "home" && (
@@ -744,31 +850,20 @@ export default function RCCShell() {
               </>
             )}
 
-            {/* CONSULTANT VIEW */}
+            {/* ─── CONSULTANT VIEW ──────────────────────────────────────────── */}
+            {/* ConsultantShell owns its own nav, routing, and bottom tabs.     */}
+            {/* It receives currentUser and logout so it can show the consultant */}
+            {/* name and handle sign-out from within the shell.                  */}
             {isConsultant(role) && !isAdmin(role) && (
-              <div style={{ display: "flex", height: "100vh" }}>
-                {!isMobile && (
-                  <SideNav
-                    tabs={CONSULTANT_TABS.map(t => ({ ...t, icon: t.icon }))}
-                    active={tab}
-                    setActive={setTab}
-                    currentUser={currentUser}
-                    onLogout={logout}
-                    unread={unread}
-                  />
-                )}
-                <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-                  {tab === "families"   && <ConsultantHome user={currentUser} />}
-                  {tab === "messages"   && <Messaging user={currentUser} activeFamily={activeFamily} onFindConsultant={() => setShowFindConsultant(true)} />}
-                  {tab === "sleep"      && <SleepTabView onOpenDrawer={() => setDrawerOpen(true)} />}
-                  {tab === "regulation" && <RegulationModule />}
-                  {tab === "account"    && <ConsultantAccount user={currentUser} onLogout={logout} />}
-                </div>
-                {isMobile && <BottomNav tabs={CONSULTANT_TABS} active={tab} setActive={setTab} />}
+              <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+                <ConsultantShell
+                  currentUser={currentUser}
+                  logout={logout}
+                />
               </div>
             )}
 
-            {/* ADMIN VIEW */}
+            {/* ─── ADMIN VIEW ───────────────────────────────────────────────── */}
             {isAdmin(role) && (
               <div style={{ display: "flex", height: "100vh" }}>
                 {!isMobile && (
@@ -791,6 +886,7 @@ export default function RCCShell() {
                 {isMobile && <BottomNav tabs={ADMIN_TABS} active={tab} setActive={setTab} />}
               </div>
             )}
+
           </div>
         </div>
       </AppCtx.Provider>
