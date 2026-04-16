@@ -216,8 +216,13 @@ export default function RCCShell() {
       if (event === "INITIAL_SESSION") return;
       setSession(newSession);
       if (newSession?.user) {
-        if (currentUser) return;
-        await loadProfile(newSession.user.id, newSession.user.email);
+        // Always load profile on SIGNED_IN so authLoading clears and the app renders.
+        // On other events (TOKEN_REFRESHED etc.) skip if we already have the user loaded.
+        if (event === "SIGNED_IN" || !currentUser) {
+          await loadProfile(newSession.user.id, newSession.user.email);
+        } else {
+          setAuthLoading(false);
+        }
       } else {
         setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
         setOnboardingStep(inviteToken || consultantInviteToken || coInviteToken ? "register" : null);
