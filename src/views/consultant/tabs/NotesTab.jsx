@@ -7,7 +7,7 @@ const TAGS = ["Progress", "Parent concern", "Plan adjustment", "Regression", "Wi
 
 export default function NotesTab({ family, activeChild }) {
   const T = useT();
-  const { notes, addNote } = useConsultantNotes();
+  const { notes, addNote } = useConsultantNotes(family?.id);
   const [text, setText] = useState("");
   const [selectedTags, setSelectedTags] = useState([]);
 

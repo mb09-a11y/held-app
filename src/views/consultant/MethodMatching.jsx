@@ -62,7 +62,7 @@ function generatePlanReadyMessage(family, child, method) {
 export default function MethodMatching({ familyId, childId, onNavigate }) {
   const T = useT();
   const { families } = useFamilies();
-  const { intake } = useIntake();
+  const { intake } = useIntake(familyId);
   const { changeMethod } = usePlans();
 
   const family = families.find(f => f.id === familyId);

@@ -1,7 +1,7 @@
 // views/consultant/FamilyDetail.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT, font, serif } from "../../core/shared.jsx";
-import { useFamilies, useNSLog } from "./data/consultantStore.js";
+import { useFamilies, useNSLog, useMessages } from "./data/consultantStore.js";
 import NSBanner from "./shared/NSBanner.jsx";
 import ChildSelector from "./shared/ChildSelector.jsx";
 import InsightsTab  from "./tabs/InsightsTab.jsx";
@@ -11,19 +11,116 @@ import IntakeTab    from "./tabs/IntakeTab.jsx";
 import NotesTab     from "./tabs/NotesTab.jsx";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
 
-const TABS = ["Insights", "Sleep Data", "Plan", "Intake", "Notes"];
+const TABS = ["Insights", "Sleep Data", "Plan", "Intake", "Notes", "Messages"];
 
-export default function FamilyDetail({ familyId, onNavigate, onBack }) {
+// ── Inline messages tab for within FamilyDetail ──────────────────────────────
+function FamilyMessagesTab({ family, triggerCoPilot, onNavigate }) {
   const T = useT();
-  const { families } = useFamilies();
-  const { nsLog } = useNSLog();
+  const { messages, sendMessage, loadMessages } = useMessages();
+  const [compose, setCompose] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const family = families.find(f => f.id === familyId);
+  const thread = messages[family?.id] || [];
+
+  useEffect(() => {
+    if (family?.id) loadMessages(family.id);
+  }, [family?.id]);
+
+  const handleSend = () => {
+    if (!compose.trim()) return;
+    setSending(true);
+    sendMessage(family.id, compose.trim());
+    setCompose("");
+    setTimeout(() => setSending(false), 300);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 400 }}>
+      {/* Co-Pilot draft button */}
+      <div style={{ padding: "10px 18px 0" }}>
+        <button
+          onClick={() => onNavigate("responseBuilder", { familyId: family.id })}
+          style={{
+            width: "100%", background: "#2D4A35", color: "#fff", border: "none",
+            borderRadius: 12, padding: "10px 0", fontFamily: font, fontSize: 13,
+            fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center",
+            justifyContent: "center", gap: 6,
+          }}
+        >
+          ✨ Draft with Co-Pilot
+        </button>
+      </div>
+
+      {/* Thread */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "10px 18px" }}>
+        {thread.length === 0 ? (
+          <div style={{ textAlign: "center", color: T.muted, fontFamily: font, fontSize: 13, marginTop: 24 }}>
+            No messages yet with {family?.name}.
+          </div>
+        ) : thread.map(msg => (
+          <div key={msg.id} style={{
+            display: "flex",
+            justifyContent: msg.from === "consultant" ? "flex-end" : "flex-start",
+            marginBottom: 10,
+          }}>
+            <div style={{
+              maxWidth: "78%", padding: "9px 13px", borderRadius: 14,
+              background: msg.from === "consultant" ? "#2D4A35" : T.card,
+              color: msg.from === "consultant" ? "#fff" : T.text,
+              fontFamily: font, fontSize: 13, lineHeight: 1.5,
+              boxShadow: T.shadow,
+            }}>
+              {msg.text}
+              <div style={{ fontSize: 9, marginTop: 4, opacity: 0.55 }}>{msg.time}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Compose */}
+      <div style={{ padding: "10px 18px 16px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 8 }}>
+        <input
+          value={compose}
+          onChange={e => setCompose(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
+          placeholder="Message…"
+          style={{
+            flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${T.border}`,
+            background: T.inputBg, color: T.text, fontFamily: font, fontSize: 13, outline: "none",
+          }}
+        />
+        <button
+          onClick={handleSend}
+          disabled={!compose.trim() || sending}
+          style={{
+            background: compose.trim() ? "#2D4A35" : T.faint,
+            color: compose.trim() ? "#fff" : T.muted,
+            border: "none", borderRadius: 20, padding: "10px 16px",
+            fontFamily: font, fontSize: 13, fontWeight: 600, cursor: compose.trim() ? "pointer" : "default",
+          }}
+        >
+          {sending ? "…" : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function FamilyDetail({ familyId, family: familyProp, params, onNavigate, onBack }) {
+  const T = useT();
+  const { families, loading } = useFamilies();
+  const { nsLog } = useNSLog(familyId);
+
+  const family = familyProp || families.find(f => f.id === familyId);
   const [activeChildId, setActiveChildId] = useState(
     family?.children?.find(c => c.status === "urgent")?.id || family?.children?.[0]?.id
   );
-  const [activeTab, setActiveTab] = useState("Insights");
+  const [activeTab, setActiveTab] = useState(params?.defaultTab || "Insights");
   const [viewingIntake, setViewingIntake] = useState(false);
+
+  if (!family && loading) return (
+    <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>Loading…</div>
+  );
 
   if (!family) return (
     <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>Family not found.</div>
@@ -112,6 +209,7 @@ export default function FamilyDetail({ familyId, onNavigate, onBack }) {
         {activeTab === "Plan"       && <PlanTab      family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
         {activeTab === "Intake"     && <IntakeTab    family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
         {activeTab === "Notes"      && <NotesTab     family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+        {activeTab === "Messages"   && <FamilyMessagesTab family={family} triggerCoPilot={params?.triggerCoPilot} onNavigate={onNavigate} />}
       </div>
     </div>
   );

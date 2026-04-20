@@ -1,13 +1,10 @@
 // views/consultant/RedFlags.jsx
-import { useState } from "react";
 import { useT, font, serif } from "../../core/shared.jsx";
-import { useFamilies, useMessages } from "./data/consultantStore.js";
+import { useFamilies } from "./data/consultantStore.js";
 
 export default function RedFlags({ onNavigate }) {
   const T = useT();
   const { families } = useFamilies();
-  const { sendMessage } = useMessages();
-  const [nudgeSent, setNudgeSent] = useState(false);
 
   const urgentFamilies = families.filter(f => f.urgency === "urgent");
   const watchFamilies  = families.filter(f => f.urgency === "watch");
@@ -86,35 +83,53 @@ export default function RedFlags({ onNavigate }) {
         </div>
       ))}
 
-      {/* Engagement drop (simulated) */}
-      <div style={{ padding: "8px 18px 4px", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: T.muted, fontWeight: 600, fontFamily: font }}>
-        📉 Engagement
-      </div>
-      <div style={{ margin: "0 18px 10px", background: T.card, borderRadius: 16, padding: "13px 15px", boxShadow: T.shadow }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <div style={{ fontSize: 18 }}>📉</div>
-          <div style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 600, color: T.muted, fontFamily: font }}>No log in 3 days</div>
-        </div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4, fontFamily: font }}>Torres family</div>
-        <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, marginBottom: 8, fontFamily: font }}>
-          Inconsistent tracking often precedes plan abandonment. A gentle nudge now can prevent it.
-        </div>
-        <button
-          onClick={() => {
-            sendMessage("fam_torres", "Hey! Just checking in — we haven't seen a log in a few days. How are things going? Even a quick update helps us keep your plan on track. 🌿");
-            setNudgeSent(true);
-          }}
-          disabled={nudgeSent}
-          style={{
-            background: nudgeSent ? T.faint : T.teal,
-            color: nudgeSent ? T.muted : "#fff",
-            border: "none", padding: "7px 16px", borderRadius: 20,
-            fontSize: 11, fontWeight: 600, cursor: nudgeSent ? "default" : "pointer",
-            fontFamily: font, transition: "all .2s",
-          }}>
-          {nudgeSent ? "✓ Nudge sent" : "Send gentle nudge"}
-        </button>
-      </div>
+      {/* Engagement drop — families with no recent messages */}
+      {(() => {
+        // Flag families that have no lastMessage and aren't brand new
+        const disengaged = families.filter(f => {
+          if (!f.lastMessage && !f.lastMessageTime) return false; // never messaged, skip
+          if (!f.lastMessageTime) return true;
+          // Check if last message was more than 3 days ago
+          // lastMessageTime is a time string like "10:22 AM" so we use lastMsg timestamp
+          return false; // will improve with real timestamp data
+        });
+        // For now surface any family that has children but no messages at all
+        const noMessages = families.filter(f => f.children?.length > 0 && !f.lastMessage);
+        if (!noMessages.length) return null;
+        return (
+          <>
+            <div style={{ padding: "8px 18px 4px", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: T.muted, fontWeight: 600, fontFamily: font }}>
+              📉 Engagement
+            </div>
+            {noMessages.map(fam => (
+              <div key={fam.id} style={{ margin: "0 18px 10px", background: T.card, borderRadius: 16, padding: "13px 15px", boxShadow: T.shadow }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ fontSize: 18 }}>📉</div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 600, color: T.muted, fontFamily: font }}>No messages yet</div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4, fontFamily: font }}>{fam.name}</div>
+                <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, marginBottom: 8, fontFamily: font }}>
+                  No messages logged yet for this family. A quick check-in builds trust early.
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() => onNavigate("responseBuilder", { familyId: fam.id })}
+                    style={{ background: T.teal, color: "#fff", border: "none", padding: "7px 16px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font }}
+                  >
+                    Send check-in
+                  </button>
+                  <button
+                    onClick={() => onNavigate("family", { familyId: fam.id })}
+                    style={{ background: "transparent", color: T.muted, border: `1px solid ${T.border}`, padding: "7px 14px", borderRadius: 20, fontSize: 11, cursor: "pointer", fontFamily: font }}
+                  >
+                    View family
+                  </button>
+                </div>
+              </div>
+            ))}
+          </>
+        );
+      })()}
 
       {/* All clear */}
       {goodFamilies.length > 0 && (

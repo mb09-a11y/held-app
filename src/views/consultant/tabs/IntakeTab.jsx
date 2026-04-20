@@ -47,10 +47,10 @@ function TempBar({ label, value }) {
   );
 }
 
-export default function IntakeTab({ activeChild, onNavigate }) {
+export default function IntakeTab({ activeChild, family, onNavigate }) {
   const T = useT();
-  const { intake } = useIntake();
-  const data = intake[activeChild?.id];
+  const { intake } = useIntake(family?.id || activeChild?.familyId);
+  const data = intake[activeChild?.id] || intake[family?.id];
 
   if (!data) return (
     <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>

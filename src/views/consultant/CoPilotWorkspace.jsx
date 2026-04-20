@@ -4,12 +4,7 @@ import { useT, font, serif } from "../../core/shared.jsx";
 import { useFamilies, useMessages } from "./data/consultantStore.js";
 import { callAI } from "../../lib/ai.js";
 
-const SUGGESTED = [
-  { q: "What's driving Benji's night wakings?",    familyId: "fam_chen" },
-  { q: "How should I prep for Leo tonight?",        familyId: "fam_sharma" },
-  { q: "Which families need attention this week?",  familyId: null },
-  { q: "Draft a check-in for Rina",                 familyId: "fam_okafor" },
-];
+// SUGGESTED prompts are now generated dynamically from real families in the component
 
 function buildSystemPrompt(families) {
   const summary = families.map(f => {
@@ -44,6 +39,32 @@ export default function CoPilotWorkspace({ onNavigate }) {
   const [loading, setLoading] = useState(false);
   const [sharedIds, setSharedIds] = useState(new Set());
   const scrollRef = useRef(null);
+
+  // Generate suggested prompts from real families
+  const SUGGESTED = (() => {
+    const prompts = [];
+    // Most urgent child first
+    const urgentFam = families.find(f => f.urgency === "urgent");
+    const urgentChild = urgentFam?.children?.find(c => c.status === "urgent") || urgentFam?.children?.[0];
+    if (urgentChild && urgentFam) {
+      prompts.push({ q: `What's driving ${urgentChild.name}'s sleep issues?`, familyId: urgentFam.id });
+    }
+    // Watch family — prep for tonight
+    const watchFam = families.find(f => f.urgency === "watch");
+    const watchChild = watchFam?.children?.[0];
+    if (watchChild && watchFam) {
+      prompts.push({ q: `How should I prep for ${watchChild.name} tonight?`, familyId: watchFam.id });
+    }
+    // Always include a general prompt
+    prompts.push({ q: "Which families need attention this week?", familyId: null });
+    // Draft check-in for a "good" family
+    const goodFam = families.find(f => f.urgency === "good");
+    const goodChild = goodFam?.children?.[0];
+    if (goodChild && goodFam) {
+      prompts.push({ q: `Draft a check-in for ${goodChild.name}'s family`, familyId: goodFam.id });
+    }
+    return prompts.slice(0, 4);
+  })();
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

@@ -74,23 +74,35 @@ function LineChart({ lines, height = 52 }) {
   );
 }
 
-export default function SleepDataTab({ activeChild }) {
+export default function SleepDataTab({ family, activeChild }) {
   const T = useT();
   const [range, setRange] = useState("7d");
   const [patternDismissed, setPatternDismissed] = useState(false);
-  const stats = useSleepStats(activeChild?.id);
+  const rangeDays = range === "7d" ? 7 : range === "14d" ? 14 : 30;
+  const stats = useSleepStats(activeChild?.id, family?.id, rangeDays);
   const { plans, updatePlan } = usePlans();
-  const plan = plans[activeChild?.planId];
+  const plan = plans[activeChild?.planId] || plans[activeChild?.id];
 
-  const barData = [
-    { label: "Sat", value: 10.2, flag: false },
-    { label: "Sun", value: 10.8, flag: false },
-    { label: "Mon", value: 9.8,  flag: false },
-    { label: "Tue", value: 9.5,  flag: false },
-    { label: "Wed", value: 9.2,  flag: false },
-    { label: "Thu", value: 9.0,  flag: false },
-    { label: "Fri", value: 3.5,  flag: true  },
-  ];
+  // Build bar chart from real night sleep data
+  const rangeCount = rangeDays;
+  const barData = (() => {
+    const nights = stats.nights || [];
+    if (!nights.length) return [];
+    const dateMap = {};
+    for (const s of nights) {
+      const hrs = (s.durationMin || 0) / 60;
+      dateMap[s.date] = (dateMap[s.date] || 0) + hrs;
+    }
+    return Object.entries(dateMap)
+      .slice(0, rangeCount)
+      .reverse()
+      .map(([date, value]) => ({
+        label: date.split(",")[0],
+        value: Math.round(value * 10) / 10,
+        flag: value < 9,
+      }));
+  })();
+
 
   const isAlert = activeChild?.status === "urgent";
 
@@ -174,9 +186,9 @@ export default function SleepDataTab({ activeChild }) {
           <div style={{ fontSize: 15, fontWeight: 600, color: T.text, fontFamily: font }}>Nap 1</div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
             {[
-              { num: isAlert ? "1h 52m" : "1h 17m", lbl: "Avg" },
-              { num: "4h 50m", lbl: "Wake Win." },
-              { num: isAlert ? "28m" : "5m", lbl: "Settling" },
+              { num: stats.avgNapStr || "—", lbl: "Avg" },
+              { num: "—", lbl: "Wake Win." },
+              { num: stats.avgSettlingStr || "—", lbl: "Settling" },
             ].map((s, i) => (
               <div key={i} style={{ textAlign: "right" }}>
                 <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 600, color: isAlert && i !== 1 ? "#C08A3A" : T.teal }}>{s.num}</div>
@@ -186,15 +198,13 @@ export default function SleepDataTab({ activeChild }) {
           </div>
         </div>
         <LineChart lines={[
-          { points: [28, 26, 30, 24, 20, 18, 22], color: T.teal,   dashed: false },
-          { points: [40, 38, 42, 44, 46, 48, 46], color: "#D4AE72", dashed: true },
-          { points: [8,  9,  10, 8,  11, 9,  10], color: "#C4D2C2", dashed: true },
+          { points: stats.naps.slice(0,7).map(s => s.durationMin || 0).reverse(), color: T.teal, dashed: false },
+          { points: stats.naps.slice(0,7).map(s => s.settlingMin || 0).reverse(), color: "#D4AE72", dashed: true },
         ]} />
         <div style={{ display: "flex", gap: 12, marginBottom: 8 }}>
           {[
             { color: T.teal,    label: "Duration", dashed: false },
-            { color: "#D4AE72", label: "Settling", dashed: true },
-            { color: "#C4D2C2", label: "Wake Win.", dashed: true },
+            { color: "#D4AE72", label: "Settling",  dashed: true },
           ].map((l, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: T.muted, fontFamily: font }}>
               <div style={{ width: 16, height: 2, background: l.color, borderTop: l.dashed ? `2px dashed ${l.color}` : "none" }} />
@@ -204,7 +214,7 @@ export default function SleepDataTab({ activeChild }) {
         </div>
         <div style={{ display: "flex", gap: 7, alignItems: "flex-start", paddingTop: 8, borderTop: `1px solid ${T.border}`, fontSize: 11, color: T.muted, fontFamily: font, lineHeight: 1.5 }}>
           <span style={{ fontSize: 14 }}>{isAlert ? "⚠️" : "🌿"}</span>
-          <span>{isAlert ? "Nap trending long. Correlates with night wakings. Cap at 90 min." : "Nap 1 looking good. A consistent first nap anchors the rest of the day."}</span>
+          <span>{isAlert ? "Nap trending long. Correlates with night wakings. Cap at 90 min." : stats.naps.length ? "Nap 1 looking good. A consistent first nap anchors the rest of the day." : "No nap data logged yet."}</span>
         </div>
       </div>
 
@@ -214,9 +224,9 @@ export default function SleepDataTab({ activeChild }) {
           <div style={{ fontSize: 15, fontWeight: 600, color: "white", fontFamily: font }}>Night</div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 12 }}>
             {[
-              { num: isAlert ? "8h 12m" : "10h 18m", lbl: "Avg" },
-              { num: isAlert ? "2.8" : "0.5", lbl: "Wakings" },
-              { num: isAlert ? "42m" : "15m", lbl: "Settling" },
+              { num: stats.avgNightStr || "—",    lbl: "Avg" },
+              { num: String(stats.nights.filter(n => n.flag).length || 0), lbl: "Wakings" },
+              { num: stats.avgSettlingStr || "—", lbl: "Settling" },
             ].map((s, i) => (
               <div key={i} style={{ textAlign: "right" }}>
                 <div style={{ fontFamily: serif, fontSize: 18, color: i === 1 && isAlert ? "#E8A87C" : "rgba(255,255,255,0.85)" }}>{s.num}</div>
@@ -228,7 +238,7 @@ export default function SleepDataTab({ activeChild }) {
         <div style={{ height: 1, background: "rgba(255,255,255,0.12)", margin: "10px 0" }} />
         <div style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.5, fontFamily: font }}>
           <span style={{ fontSize: 14 }}>🌿</span>
-          <span>{isAlert ? "Night wakings are the main variable — watch for correlation with late or long naps." : "Night sleep is strong. Wakings are minimal — nervous system consolidating well."}</span>
+          <span>{isAlert ? "Night wakings are the main variable — watch for correlation with late or long naps." : stats.nights.length ? "Night sleep is strong. Wakings are minimal — nervous system consolidating well." : "No night sleep data logged yet."}</span>
         </div>
       </div>
 

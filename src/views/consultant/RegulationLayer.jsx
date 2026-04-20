@@ -26,6 +26,14 @@ export default function RegulationLayer({ familyName, onRegulated, onSkip }) {
     if (s.label !== "Grounded") setShowReset(true);
   };
 
+  const handleRegulated = () => {
+    onRegulated({ state: selectedState, skipped: false });
+  };
+
+  const handleSkip = () => {
+    onSkip({ state: null, skipped: true });
+  };
+
   return (
     <div style={{
       background: `linear-gradient(180deg, #EAF4F0, #F4F0EA)`,
@@ -78,7 +86,7 @@ export default function RegulationLayer({ familyName, onRegulated, onSkip }) {
           </div>
         )}
 
-        <button onClick={onRegulated} style={{
+        <button onClick={handleRegulated} style={{
           width: "100%", background: "#5C7A5E", color: "white",
           border: "none", borderRadius: 14, padding: 11,
           fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: font,
@@ -92,7 +100,7 @@ export default function RegulationLayer({ familyName, onRegulated, onSkip }) {
       </div>
 
       <div style={{ textAlign: "center", marginTop: 16, marginBottom: 16 }}>
-        <button onClick={onSkip} style={{
+        <button onClick={handleSkip} style={{
           background: "none", border: "none", cursor: "pointer",
           fontSize: 12, color: T.muted, fontFamily: font,
         }}>

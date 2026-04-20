@@ -1,437 +1,619 @@
 // ─── consultantStore.js ───────────────────────────────────────────────────────
-// All localStorage reads/writes for the consultant side.
-// Swap each function body for a Supabase call later — UI never changes.
+// All data hooks for the consultant side — backed by Supabase.
+// Each hook returns the same shape as before so UI components need no changes.
 
-import { useStorage, genId, now } from "../../../core/shared.jsx";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "../../../lib/supabase.js";
 
-// ─── SEED DATA ────────────────────────────────────────────────────────────────
-const SEED_FAMILIES = [
-  {
-    id: "fam_chen",
-    name: "Chen Family",
-    parents: "Sarah & James Chen",
-    nsState: "activated", // regulated | activated | overwhelmed
-    nsTrend: [2, 2, 3, 4, 4], // 1–5 scale, last 5 days
-    nsNote: "Activated 4 days running. Benji's rough nights are the likely driver.",
-    children: [
-      {
-        id: "child_maya",
-        name: "Maya",
-        age: "9 months",
-        emoji: "👶",
-        status: "watch", // good | watch | urgent
-        planId: "plan_maya",
-        method: "settled_support",
-        planDay: 6,
-      },
-      {
-        id: "child_benji",
-        name: "Benji",
-        age: "3 years",
-        emoji: "🧒",
-        status: "urgent",
-        planId: "plan_benji",
-        method: "chair_method",
-        planDay: 9,
-      },
-    ],
-    lastMessage: "I don't know how much more of this I can do. 😢",
-    lastMessageTime: "2h ago",
-    unread: true,
-    urgency: "urgent",
-    insight: "Benji — night wakings up after nap >2h. Maya — on track, no action needed.",
-    flags: ["Benji: undertired", "Parent NS: activated"],
-    positives: ["Maya: improving"],
-  },
-  {
-    id: "fam_sharma",
-    name: "Sharma Family",
-    parents: "Priya & Arjun Sharma",
-    nsState: "regulated",
-    nsTrend: [2, 2, 2, 3, 3],
-    nsNote: "Slightly elevated. Day 5 anxiety typical — monitor tonight.",
-    children: [
-      {
-        id: "child_leo",
-        name: "Leo",
-        age: "5 months",
-        emoji: "🌙",
-        status: "watch",
-        planId: "plan_leo",
-        method: "fading",
-        planDay: 5,
-      },
-    ],
-    lastMessage: "How long does this take?",
-    lastMessageTime: "6h ago",
-    unread: false,
-    urgency: "watch",
-    insight: "Day 5 regression window. Sleep latency increasing slightly — within normal range.",
-    flags: ["Regression window"],
-    positives: ["Method working"],
-  },
-  {
-    id: "fam_okafor",
-    name: "Okafor Family",
-    parents: "Amara & Dele Okafor",
-    nsState: "regulated",
-    nsTrend: [3, 2, 2, 2, 1],
-    nsNote: "Regulated and improving. Parent confidence increasing.",
-    children: [
-      {
-        id: "child_rina",
-        name: "Rina",
-        age: "11 months",
-        emoji: "⭐",
-        status: "good",
-        planId: "plan_rina",
-        method: "chair_method",
-        planDay: 14,
-      },
-    ],
-    lastMessage: "Last night was amazing!",
-    lastMessageTime: "1d ago",
-    unread: false,
-    urgency: "good",
-    insight: "Sleep latency decreased 18 min this week. Night wakings down 4 → 1.",
-    flags: [],
-    positives: ["Improving", "Parent confident"],
-  },
-];
+// Inlined so consultantStore has zero imports from the app module tree,
+// which prevents Vite's circular dependency warning.
+const genId = () => Math.random().toString(36).slice(2, 10);
 
-const SEED_PLANS = {
-  plan_benji: {
-    id: "plan_benji",
-    childId: "child_benji",
-    familyId: "fam_chen",
-    method: "chair_method",
-    methodLabel: "Chair Method",
-    startDate: "2026-04-02",
-    napCapMinutes: 120,
-    consultantNotes: {
-      night_7: "Parent reported significant protest — normal for this transition",
-      night_9: "Nap was 1h 52m today — may affect settling tonight",
-    },
-    phases: [
-      {
-        id: "ph1", label: "Nights 1–3: Chair by the Crib",
-        desc: "Sit next to crib. Voice + light touch to calm — NOT to sleep.",
-        status: "done",
-        items: [
-          { id: "n1", text: "Night 1 complete", done: true },
-          { id: "n2", text: "Night 2 complete", done: true },
-          { id: "n3", text: "Night 3 complete", done: true },
-        ],
-      },
-      {
-        id: "ph2", label: "Nights 4–6: Chair in the Middle",
-        desc: "Move chair to middle of the room.",
-        status: "done",
-        items: [
-          { id: "n4", text: "Night 4 — wait 3 min before comfort", done: true },
-          { id: "n5", text: "Night 5 — wait 5 min before comfort", done: true },
-          { id: "n6", text: "Night 6 — wait 7 min before comfort", done: true },
-        ],
-      },
-      {
-        id: "ph3", label: "Night 7+: Leave the Room",
-        desc: "Put child down awake, leave. Wait 10–15 min before responding.",
-        status: "current",
-        items: [
-          { id: "n7", text: "Night 7 — leaving room, 10–15 min wait", done: true },
-          { id: "n8", text: "Night 8 complete", done: true },
-          { id: "n9", text: "Night 9 — tonight", done: false },
-        ],
-      },
-    ],
-  },
-  plan_maya: {
-    id: "plan_maya",
-    childId: "child_maya",
-    familyId: "fam_chen",
-    method: "settled_support",
-    methodLabel: "Settled Support",
-    startDate: "2026-04-05",
-    napCapMinutes: 90,
-    consultantNotes: {},
-    phases: [
-      {
-        id: "ph1", label: "Nights 1–3: Connected Comfort",
-        desc: "Sit beside the crib. Pat and shush to calm — not to sleep.",
-        status: "done",
-        items: [
-          { id: "n1", text: "Night 1 complete", done: true },
-          { id: "n2", text: "Night 2 complete", done: true },
-          { id: "n3", text: "Night 3 complete", done: true },
-        ],
-      },
-      {
-        id: "ph2", label: "Nights 4–6: Gentle Withdrawal",
-        desc: "Hand resting on baby — no active patting unless escalating.",
-        status: "current",
-        items: [
-          { id: "n4", text: "Night 4 complete", done: true },
-          { id: "n5", text: "Night 5 complete", done: true },
-          { id: "n6", text: "Night 6 — tonight", done: false },
-        ],
-      },
-    ],
-  },
-  plan_leo: {
-    id: "plan_leo",
-    childId: "child_leo",
-    familyId: "fam_sharma",
-    method: "fading",
-    methodLabel: "Fading",
-    startDate: "2026-04-06",
-    napCapMinutes: 90,
-    consultantNotes: {},
-    phases: [
-      {
-        id: "ph1", label: "Practicing stopping the prop while drowsy",
-        desc: "Use prop until drowsy — not fully asleep — then put down.",
-        status: "current",
-        items: [
-          { id: "n1", text: "Night 1 — prop to drowsy only", done: true },
-          { id: "n2", text: "Night 2 complete", done: true },
-          { id: "n3", text: "Night 3 complete", done: true },
-          { id: "n4", text: "Night 4 complete", done: true },
-          { id: "n5", text: "Night 5 — tonight", done: false },
-        ],
-      },
-    ],
-  },
-  plan_rina: {
-    id: "plan_rina",
-    childId: "child_rina",
-    familyId: "fam_okafor",
-    method: "chair_method",
-    methodLabel: "Chair Method",
-    startDate: "2026-03-28",
-    napCapMinutes: 90,
-    consultantNotes: {},
-    phases: [
-      {
-        id: "ph1", label: "Nights 1–3: Chair by the Crib", status: "done",
-        items: [
-          { id: "n1", text: "Night 1 complete", done: true },
-          { id: "n2", text: "Night 2 complete", done: true },
-          { id: "n3", text: "Night 3 complete", done: true },
-        ],
-      },
-      {
-        id: "ph2", label: "Nights 4–6: Chair in the Middle", status: "done",
-        items: [
-          { id: "n4", text: "Night 4 complete", done: true },
-          { id: "n5", text: "Night 5 complete", done: true },
-          { id: "n6", text: "Night 6 complete", done: true },
-        ],
-      },
-      {
-        id: "ph3", label: "Night 7+: Leave the Room", status: "done",
-        items: [
-          { id: "n7", text: "Night 7+ — independently sleeping 🎉", done: true },
-        ],
-      },
-    ],
-  },
-};
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-const SEED_INTAKE = {
-  child_benji: {
-    sleep_location: "Crib in own room",
-    sleep_props: "Rocking to sleep, white noise",
-    typical_bedtime: "8:00pm",
-    bedtime_worst: "9:30pm",
-    night_wakings_description: "2–4 times per night, needs rocking back",
-    consistency_capacity: 3,
-    stress_gag_vomit: false,
-    activity: 4, routine: 3, sociability: 3,
-    adaptability: 2, intensity: 5, sensitivity: 4,
-    mood: 3, distractibility: 3, persistence: 4,
-    ns_birth_body: "Emergency c-section after prolonged labor. 'It was traumatic.'",
-    ns_parent_anxiety: true,
-    ns_postpartum_concerns: true,
-    ns_unresolved: "Still feel guilty about the birth.",
-    goals: "Benji sleeping 7pm–6am with no wakings in 3 weeks",
-    non_negotiables: "No cry-it-out. I can't do it.",
-    magic_wand: "He just goes to sleep on his own and sleeps all night.",
-  },
-  child_maya: {
-    sleep_location: "Crib in own room",
-    sleep_props: "Nursing to sleep",
-    typical_bedtime: "7:00pm",
-    night_wakings_description: "1–2 wakings, nurses back to sleep",
-    consistency_capacity: 4,
-    activity: 3, routine: 4, sociability: 3,
-    adaptability: 3, intensity: 2, sensitivity: 3,
-    mood: 4, distractibility: 2, persistence: 3,
-    ns_parent_anxiety: true,
-    goals: "Sleep through the night independently",
-    non_negotiables: "Stay responsive, no extinction",
-    magic_wand: "She just sleeps.",
-  },
-};
-
-// Seed sleep session data (mirrors what parent would log)
-const SEED_SESSIONS = {
-  child_benji: [
-    { id: "s1", type: "night", emoji: "🌙", date: "Thu, Apr 9", time: "09:00 PM", duration: "11h 46m", settling: "11m", flag: null },
-    { id: "s2", type: "nap",   emoji: "☀️", date: "Thu, Apr 9", time: "01:30 PM", duration: "1h 52m",  settling: "13m", flag: "Long" },
-    { id: "s3", type: "night", emoji: "🌙", date: "Wed, Apr 8", time: "09:38 PM", duration: "11h 10m", settling: "2m",  flag: null },
-    { id: "s4", type: "nap",   emoji: "☀️", date: "Wed, Apr 8", time: "02:15 PM", duration: "1h 30m",  settling: "8m",  flag: null },
-    { id: "s5", type: "night", emoji: "🌙", date: "Tue, Apr 7", time: "09:05 PM", duration: "12h 25m", settling: "60m", flag: "Long settle" },
-    { id: "s6", type: "nap",   emoji: "☀️", date: "Tue, Apr 7", time: "01:45 PM", duration: "1h 35m",  settling: "0m",  flag: null },
-    { id: "s7", type: "night", emoji: "🌙", date: "Mon, Apr 6", time: "08:40 PM", duration: "10h 20m", settling: "35m", flag: "Long settle" },
-  ],
-  child_maya: [
-    { id: "m1", type: "night", emoji: "🌙", date: "Thu, Apr 9", time: "07:10 PM", duration: "11h 30m", settling: "8m",  flag: null },
-    { id: "m2", type: "nap",   emoji: "☀️", date: "Thu, Apr 9", time: "10:00 AM", duration: "1h 20m",  settling: "5m",  flag: null },
-    { id: "m3", type: "night", emoji: "🌙", date: "Wed, Apr 8", time: "07:00 PM", duration: "11h 45m", settling: "6m",  flag: null },
-    { id: "m4", type: "nap",   emoji: "☀️", date: "Wed, Apr 8", time: "10:15 AM", duration: "1h 15m",  settling: "4m",  flag: null },
-  ],
-};
-
-const SEED_NS_LOG = {
-  fam_chen: [
-    { id: "ns1", date: "Apr 9", state: "overwhelmed", note: "Three wakings last night" },
-    { id: "ns2", date: "Apr 8", state: "activated",   note: "Tired but managing" },
-    { id: "ns3", date: "Apr 7", state: "activated",   note: "" },
-    { id: "ns4", date: "Apr 6", state: "activated",   note: "Long night" },
-    { id: "ns5", date: "Apr 5", state: "regulated",   note: "Good day" },
-  ],
-  fam_sharma: [
-    { id: "ns6", date: "Apr 9", state: "activated", note: "Anxious about tonight" },
-    { id: "ns7", date: "Apr 8", state: "regulated",  note: "" },
-  ],
-  fam_okafor: [
-    { id: "ns8", date: "Apr 9", state: "regulated", note: "Feeling hopeful!" },
-    { id: "ns9", date: "Apr 8", state: "regulated", note: "" },
-  ],
-};
-
-// ─── HOOKS ────────────────────────────────────────────────────────────────────
-
-export function useFamilies() {
-  const [families, setFamilies] = useStorage("cons_families", SEED_FAMILIES);
-  return { families, setFamilies };
-}
-
-export function usePlans() {
-  const [plans, setPlans] = useStorage("cons_plans", SEED_PLANS);
-
-  const updatePlan = (planId, updater) => {
-    setPlans(prev => ({
-      ...prev,
-      [planId]: typeof updater === "function" ? updater(prev[planId]) : { ...prev[planId], ...updater },
-    }));
-  };
-
-  const toggleItem = (planId, phaseId, itemId) => {
-    setPlans(prev => {
-      const plan = prev[planId];
-      if (!plan) return prev;
-      return {
-        ...prev,
-        [planId]: {
-          ...plan,
-          phases: plan.phases.map(ph =>
-            ph.id !== phaseId ? ph : {
-              ...ph,
-              items: ph.items.map(it =>
-                it.id !== itemId ? it : { ...it, done: !it.done }
-              ),
-            }
-          ),
-        },
-      };
+// Reads the authenticated user directly from Supabase auth — no AppCtx dependency.
+// This avoids the circular import that happens when consultantStore → shared → RCCShell → consultant views → consultantStore.
+function useCurrentUser() {
+  const [user, setUser] = useState(null);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
     });
-  };
-
-  const addConsultantNote = (planId, nightKey, note) => {
-    setPlans(prev => ({
-      ...prev,
-      [planId]: {
-        ...prev[planId],
-        consultantNotes: { ...prev[planId]?.consultantNotes, [nightKey]: note },
-      },
-    }));
-  };
-
-  const changeMethod = (planId, method, methodLabel) => {
-    setPlans(prev => ({
-      ...prev,
-      [planId]: { ...prev[planId], method, methodLabel },
-    }));
-  };
-
-  return { plans, updatePlan, toggleItem, addConsultantNote, changeMethod };
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+  return user;
 }
 
-export function useIntake() {
-  const [intake] = useStorage("cons_intake", SEED_INTAKE);
-  return { intake };
+function calcAgeLabel(dob) {
+  if (!dob) return null;
+  const months = Math.floor((Date.now() - new Date(dob)) / (1000 * 60 * 60 * 24 * 30.44));
+  if (months < 24) return `${months} months`;
+  const years = Math.floor(months / 12);
+  const rem   = months % 12;
+  return rem > 0 ? `${years}y ${rem}mo` : `${years} years`;
 }
 
-export function useSessions() {
-  const [sessions] = useStorage("cons_sessions", SEED_SESSIONS);
-  return { sessions };
+function deriveUrgency(nsState) {
+  if (nsState === "overwhelmed") return "urgent";
+  if (nsState === "activated")   return "watch";
+  return "good";
 }
 
-export function useNSLog() {
-  const [nsLog] = useStorage("cons_nslog", SEED_NS_LOG);
-  return { nsLog };
-}
+// Map a Supabase family row + its children + latest message into the
+// shape the consultant UI expects.
+function normalizeFamilyRow(fam, children = [], lastMsg = null, nsCheckins = []) {
+  // Latest NS state comes from the most recent regulation_checkin for this family
+  const latestNS = nsCheckins[0];
+  const nsState = latestNS?.state
+    ? (latestNS.state.includes("overwhelmed") || latestNS.state.includes("activated")
+        ? latestNS.state.split("_")[0]
+        : "regulated")
+    : "regulated";
 
-export function useConsultantNotes() {
-  const [notes, setNotes] = useStorage("cons_notes", {});
-
-  const addNote = (familyId, childId, text, tags) => {
-    const key = childId || familyId;
-    setNotes(prev => ({
-      ...prev,
-      [key]: [{ id: genId(), text, tags, createdAt: now() }, ...(prev[key] || [])],
-    }));
-  };
-
-  return { notes, addNote };
-}
-
-export function useMessages() {
-  const [messages, setMessages] = useStorage("cons_messages", {
-    fam_chen: [
-      { id: "msg1", from: "parent", text: "She went down at 7 but woke up at 9 again. Third night in a row.", time: "Yesterday 8:12 PM" },
-      { id: "msg2", from: "consultant", text: "That's really hard. Three nights in a row is exhausting. I've been watching her data too — can I share what I'm seeing?", time: "8:14 PM" },
-      { id: "msg3", from: "parent", text: "Yes please. I feel like I'm failing her.", time: "10:02 PM" },
-      { id: "msg4", from: "consultant", text: "You are not failing her. What I'm seeing is a pattern I can explain — and adjust. Her nap yesterday was 2h 18m, keeping her undertired at bedtime.", time: "10:04 PM" },
-      { id: "msg5", from: "parent", text: "She woke up 3 times. I don't know how much more of this I can do. 😢", time: "This morning 7:48 AM" },
-    ],
-    fam_sharma: [
-      { id: "msg6", from: "parent", text: "How long does this take?", time: "Yesterday 2:00 PM" },
-      { id: "msg7", from: "consultant", text: "Great question. Most families see real change by night 7–10. You're on night 5 — right in the hardest stretch. Hang in there.", time: "2:10 PM" },
-    ],
-    fam_okafor: [
-      { id: "msg8", from: "parent", text: "Last night was amazing! She went down in 5 minutes!", time: "Yesterday 7:00 AM" },
-      { id: "msg9", from: "consultant", text: "That is incredible! This is exactly what we've been working toward. How do you feel?", time: "7:15 AM" },
-    ],
+  // NS trend: last 5 check-ins mapped to 1–5 scale
+  const nsTrend = nsCheckins.slice(0, 5).reverse().map(c => {
+    if (c.state?.includes("overwhelmed")) return 4;
+    if (c.state?.includes("activated"))   return 3;
+    return 2;
   });
 
-  const sendMessage = (familyId, text) => {
-    setMessages(prev => ({
-      ...prev,
-      [familyId]: [
-        ...(prev[familyId] || []),
-        { id: genId(), from: "consultant", text, time: "Just now" },
-      ],
-    }));
-  };
+  const normalizedChildren = children.map(child => ({
+    id: child.id,
+    name: child.name || "Child",
+    age: calcAgeLabel(child.dob) || child.age_label || "—",
+    dob: child.dob,
+    emoji: child.emoji || "🌙",
+    status: child.sleep_status || "good",
+    planId: child.id, // plan is keyed by child ID in the Supabase model
+    method: child.sleep_method || null,
+    planDay: child.plan_day || null,
+  }));
 
-  return { messages, sendMessage };
+  // Generate a simple insight from real data
+  const urgency = deriveUrgency(nsState);
+  const childSummary = normalizedChildren.length
+    ? normalizedChildren.map(c => {
+        if (c.status === "urgent") return `${c.name} — needs attention`;
+        if (c.status === "watch")  return `${c.name} — monitor tonight`;
+        return `${c.name} — on track`;
+      }).join(". ")
+    : null;
+
+  const insight = childSummary
+    || (nsState === "overwhelmed" ? "Parent in overwhelm — reach out today."
+      : nsState === "activated"   ? "Parent NS activated — check in proactively."
+      : "All on track — no action needed.");
+
+  return {
+    id: fam.id,
+    name: fam.display_name || fam.invite_email || "Family",
+    parents: fam.parent_name || fam.invite_email || "—",
+    nsState,
+    nsTrend: nsTrend.length > 0 ? nsTrend : [2, 2, 2, 2, 2],
+    nsNote: latestNS?.notes || "",
+    children: normalizedChildren,
+    lastMessage: lastMsg?.content || fam.last_message || "",
+    lastMessageTime: lastMsg?.created_at
+      ? new Date(lastMsg.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : "",
+    unread: fam.has_unread || false,
+    urgency,
+    intake_complete: fam.intake_complete || false,
+    insight,
+    flags: normalizedChildren.filter(c => c.status === "urgent").map(c => `${c.name}: needs attention`),
+    positives: normalizedChildren.filter(c => c.status === "good").map(c => `${c.name}: on track`),
+    consultant_id: fam.consultant_id,
+    parent_id: fam.parent_id,
+    sleep_plan_profile: fam.sleep_plan_profile,
+    sleep_progress: fam.sleep_progress,
+  };
 }
 
-// Sleep stats derived from sessions
-export function useSleepStats(childId) {
-  const { sessions } = useSessions();
+// ─── useFamilies ──────────────────────────────────────────────────────────────
+// Returns the consultant's assigned families with children, NS state, and
+// last message — the same shape SEED_FAMILIES used to provide.
+
+export function useFamilies() {
+  const user = useCurrentUser();
+  const [families, setFamilies] = useState([]);
+  const [loading, setLoading]   = useState(true);
+
+  const load = useCallback(async () => {
+    // Get user directly from session to avoid stale closure race condition
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) { setLoading(false); return; }
+    setLoading(true);
+
+    try {
+      // 1. Families assigned to this consultant
+      const { data: fams = [] } = await supabase
+        .from("families")
+        .select("*")
+        .eq("consultant_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (!fams.length) { setFamilies([]); setLoading(false); return; }
+
+      const famIds = fams.map(f => f.id);
+
+      // 2. All children for these families
+      const { data: allChildren = [] } = await supabase
+        .from("children")
+        .select("*")
+        .in("family_id", famIds);
+
+      // 3. Latest message per family (last 1 per family)
+      const { data: allMessages = [] } = await supabase
+        .from("messages")
+        .select("family_id, content, created_at, sender_role")
+        .in("family_id", famIds)
+        .order("created_at", { ascending: false });
+
+      // 4. NS check-ins (regulation_checkins) for these families — last 10 each
+      const { data: allCheckins = [] } = await supabase
+        .from("regulation_checkins")
+        .select("family_id, state, notes, checked_in_at")
+        .in("family_id", famIds)
+        .order("checked_in_at", { ascending: false })
+        .limit(50);
+
+      // 5. Parent profiles for display names
+      const parentIds = fams.map(f => f.parent_id).filter(Boolean);
+      const { data: parentProfiles = [] } = parentIds.length
+        ? await supabase.from("profiles").select("id, name").in("id", parentIds)
+        : { data: [] };
+
+      const profileMap = Object.fromEntries(parentProfiles.map(p => [p.id, p]));
+
+      // Group by family ID
+      const childrenByFamily  = {};
+      const messagesByFamily  = {};
+      const checkinsByFamily  = {};
+
+      for (const c of allChildren) {
+        (childrenByFamily[c.family_id] ||= []).push(c);
+      }
+      for (const m of allMessages) {
+        // Only keep the first (most recent) per family
+        if (!messagesByFamily[m.family_id]) messagesByFamily[m.family_id] = m;
+      }
+      for (const c of allCheckins) {
+        (checkinsByFamily[c.family_id] ||= []).push(c);
+      }
+
+      const normalized = fams.map(fam => {
+        const enriched = {
+          ...fam,
+          parent_name: profileMap[fam.parent_id]?.name || fam.display_name,
+        };
+        return normalizeFamilyRow(
+          enriched,
+          childrenByFamily[fam.id] || [],
+          messagesByFamily[fam.id] || null,
+          checkinsByFamily[fam.id] || []
+        );
+      });
+
+      // Sort: urgent first, then watch, then good
+      const urgencyOrder = { urgent: 0, watch: 1, good: 2 };
+      normalized.sort((a, b) => (urgencyOrder[a.urgency] ?? 3) - (urgencyOrder[b.urgency] ?? 3));
+
+      setFamilies(normalized);
+    } catch (err) {
+      console.error("[useFamilies]", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return { families, setFamilies, loading, reload: load };
+}
+
+// ─── usePlans ─────────────────────────────────────────────────────────────────
+// Plans are stored on families.sleep_plan_profile (JSON) and
+// families.sleep_progress (JSON checkbox state).
+// planId === childId in the real model.
+
+export function usePlans() {
+  // Plans are loaded per-child in the PlanTab — this hook provides
+  // the mutation helpers that PlanTab and SleepDataTab call.
+  // The plan object is: { id, method, methodLabel, phases, napCapMinutes, ... }
+  // keyed by childId (which doubles as planId).
+
+  const [localPlans, setLocalPlans] = useState({});
+
+  const updatePlan = useCallback(async (planId, updater) => {
+    // planId is the child's ID; family ID is on the plan object itself
+    setLocalPlans(prev => {
+      const current = prev[planId] || {};
+      const updated = typeof updater === "function" ? updater(current) : { ...current, ...updater };
+      // Fire-and-forget Supabase write using the familyId on the plan
+      if (updated.familyId) {
+        supabase.from("families")
+          .update({ sleep_plan_profile: updated })
+          .eq("id", updated.familyId)
+          .then(({ error }) => { if (error) console.error("[usePlans] updatePlan:", error); });
+      }
+      return { ...prev, [planId]: updated };
+    });
+  }, []);
+
+  const toggleItem = useCallback(async (planId, phaseId, itemId) => {
+    setLocalPlans(prev => {
+      const plan = prev[planId];
+      if (!plan) return prev;
+      const updated = {
+        ...plan,
+        phases: plan.phases.map(ph =>
+          ph.id !== phaseId ? ph : {
+            ...ph,
+            items: ph.items.map(it =>
+              it.id !== itemId ? it : { ...it, done: !it.done }
+            ),
+          }
+        ),
+      };
+      // Persist progress
+      if (updated.familyId) {
+        const progress = {};
+        for (const ph of updated.phases) {
+          for (const it of ph.items) {
+            if (it.done) progress[it.id] = true;
+          }
+        }
+        supabase.from("families")
+          .update({ sleep_progress: progress, sleep_plan_profile: updated })
+          .eq("id", updated.familyId)
+          .catch(err => console.error("[usePlans] toggleItem:", err));
+      }
+      return { ...prev, [planId]: updated };
+    });
+  }, []);
+
+  const addConsultantNote = useCallback(async (planId, nightKey, note) => {
+    setLocalPlans(prev => {
+      const plan = prev[planId];
+      if (!plan) return prev;
+      const updated = {
+        ...plan,
+        consultantNotes: { ...plan.consultantNotes, [nightKey]: note },
+      };
+      if (updated.familyId) {
+        supabase.from("families")
+          .update({ sleep_plan_profile: updated })
+          .eq("id", updated.familyId)
+          .catch(err => console.error("[usePlans] addConsultantNote:", err));
+      }
+      return { ...prev, [planId]: updated };
+    });
+  }, []);
+
+  const changeMethod = useCallback(async (planId, method, methodLabel) => {
+    setLocalPlans(prev => {
+      const plan = prev[planId];
+      if (!plan) return prev;
+      const updated = { ...plan, method, methodLabel };
+      if (updated.familyId) {
+        supabase.from("families")
+          .update({ sleep_plan_profile: updated })
+          .eq("id", updated.familyId)
+          .catch(err => console.error("[usePlans] changeMethod:", err));
+      }
+      return { ...prev, [planId]: updated };
+    });
+  }, []);
+
+  // Seed a plan object into local state (called by PlanTab after loading from Supabase)
+  const seedPlan = useCallback((planId, planData) => {
+    setLocalPlans(prev => ({ ...prev, [planId]: planData }));
+  }, []);
+
+  return { plans: localPlans, updatePlan, toggleItem, addConsultantNote, changeMethod, seedPlan };
+}
+
+// ─── useIntake ────────────────────────────────────────────────────────────────
+// Returns intake responses keyed by childId, loaded from intake_responses table.
+
+export function useIntake(familyId) {
+  const [intake, setIntake] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!familyId) return;
+    setLoading(true);
+    supabase
+      .from("intake_responses")
+      .select("*")
+      .eq("family_id", familyId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          // Map to the child-keyed shape the UI expects
+          // intake_responses has a child_id column; fall back to familyId key
+          const key = data.child_id || familyId;
+          setIntake({ [key]: data });
+        }
+        setLoading(false);
+      })
+      .catch(err => { console.error("[useIntake]", err); setLoading(false); });
+  }, [familyId]);
+
+  return { intake, loading };
+}
+
+// ─── useSessions ──────────────────────────────────────────────────────────────
+// Returns sleep sessions keyed by childId from sleep_logs table.
+// rangeDays controls how far back to fetch (7 | 14 | 30)
+
+export function useSessions(familyId, rangeDays = 30) {
+  const [sessions, setSessions] = useState({});
+  const [loading, setLoading]   = useState(false);
+
+  useEffect(() => {
+    if (!familyId) return;
+    setLoading(true);
+
+    const since = new Date(Date.now() - rangeDays * 86400000).toISOString();
+    supabase
+      .from("sleep_logs")
+      .select("*")
+      .eq("family_id", familyId)
+      .eq("type", "sleep_session")
+      .gte("ts", since)
+      .order("ts", { ascending: false })
+      .then(({ data = [] }) => {
+        const byChild = {};
+        for (const row of data) {
+          const key = row.child_id || familyId;
+          (byChild[key] ||= []).push(normalizeSleepLog(row));
+        }
+        setSessions(byChild);
+        setLoading(false);
+      })
+      .catch(err => { console.error("[useSessions]", err); setLoading(false); });
+  }, [familyId, rangeDays]);
+
+  return { sessions, loading };
+}
+
+function normalizeSleepLog(row) {
+  // Use total_sleep_ms if available (most accurate), fall back to ts/end_ts diff
+  const durationMs = row.total_sleep_ms
+    ? row.total_sleep_ms
+    : (row.end_ts && row.ts ? new Date(row.end_ts) - new Date(row.ts) : 0);
+
+  const durationMin = Math.round(durationMs / 60000);
+  const durationH   = Math.floor(durationMin / 60);
+  const durationM   = durationMin % 60;
+  const durationStr = durationH > 0 ? `${durationH}h ${durationM}m` : `${durationM}m`;
+
+  // session_type: "night" = night sleep, anything else (or null) = nap
+  const isNight = row.session_type === "night";
+
+  // settling = time from session start to fell_asleep_ts
+  const settlingMs  = row.fell_asleep_ts && row.ts
+    ? new Date(row.fell_asleep_ts) - new Date(row.ts)
+    : 0;
+  const settlingMin = Math.max(0, Math.round(settlingMs / 60000));
+
+  return {
+    id:          row.id,
+    type:        isNight ? "night" : "nap",
+    emoji:       isNight ? "🌙" : "☀️",
+    date:        new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    time:        new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    duration:    durationStr,
+    durationMin,
+    settling:    settlingMin > 0 ? `${settlingMin}m` : "0m",
+    settlingMin,
+    flag:        !isNight && durationMin > 120 ? "Long"
+               : isNight  && durationH < 8     ? "Short"
+               : settlingMin > 30              ? "Long settle"
+               : null,
+    raw: row,
+  };
+}
+
+// ─── useNSLog ─────────────────────────────────────────────────────────────────
+// Returns regulation check-ins keyed by familyId from regulation_checkins table.
+
+export function useNSLog(familyId) {
+  const [nsLog, setNsLog] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!familyId) return;
+    setLoading(true);
+    supabase
+      .from("regulation_checkins")
+      .select("id, state, notes, checked_in_at, family_id")
+      .eq("family_id", familyId)
+      .order("checked_in_at", { ascending: false })
+      .limit(20)
+      .then(({ data = [] }) => {
+        const normalized = data.map(row => ({
+          id: row.id,
+          date: new Date(row.checked_in_at).toLocaleDateString([], { month: "short", day: "numeric" }),
+          state: normalizeNSState(row.state),
+          note: row.notes || "",
+        }));
+        setNsLog({ [familyId]: normalized });
+        setLoading(false);
+      })
+      .catch(err => { console.error("[useNSLog]", err); setLoading(false); });
+  }, [familyId]);
+
+  return { nsLog, loading };
+}
+
+function normalizeNSState(state) {
+  if (!state) return "regulated";
+  if (state.includes("overwhelmed")) return "overwhelmed";
+  if (state.includes("activated"))   return "activated";
+  return "regulated";
+}
+
+// ─── useConsultantNotes ───────────────────────────────────────────────────────
+// Reads/writes consultant session notes from consultant_notes table.
+// The table stores: { family_id, notes (text), ai_insights (jsonb) }
+
+export function useConsultantNotes(familyId) {
+  const user = useCurrentUser();
+  const [notes, setNotes]   = useState({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!familyId) return;
+    setLoading(true);
+    supabase
+      .from("consultant_notes")
+      .select("*")
+      .eq("family_id", familyId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          // Normalize: store as array of note objects keyed by familyId
+          // to match the shape addNote produces
+          const existing = Array.isArray(data.notes_array)
+            ? data.notes_array
+            : data.notes
+              ? [{ id: data.id, text: data.notes, tags: [], createdAt: data.updated_at }]
+              : [];
+          setNotes({ [familyId]: existing });
+        }
+        setLoading(false);
+      })
+      .catch(err => { console.error("[useConsultantNotes]", err); setLoading(false); });
+  }, [familyId]);
+
+  const addNote = useCallback(async (famId, childId, text, tags = []) => {
+    const key = childId || famId;
+    const newNote = { id: genId(), text, tags, createdAt: new Date().toISOString(), childId };
+
+    // Optimistic update
+    setNotes(prev => ({
+      ...prev,
+      [key]: [newNote, ...(prev[key] || [])],
+    }));
+
+    // Persist — upsert keyed on family_id
+    try {
+      const { data: existing } = await supabase
+        .from("consultant_notes")
+        .select("notes_array")
+        .eq("family_id", famId)
+        .maybeSingle();
+
+      const updated = [newNote, ...(existing?.notes_array || [])];
+      await supabase
+        .from("consultant_notes")
+        .upsert({
+          family_id: famId,
+          consultant_id: (await supabase.auth.getSession()).data.session?.user?.id,
+          notes_array: updated,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "family_id" });
+    } catch (err) {
+      console.error("[useConsultantNotes] addNote:", err);
+    }
+  }, []);
+
+  return { notes, addNote, loading };
+}
+
+// ─── useMessages ──────────────────────────────────────────────────────────────
+// Reads/writes messages from the real messages table.
+// Keyed by familyId to match the shape the UI expects.
+
+export function useMessages() {
+  const user = useCurrentUser();
+  const [messages, setMessages] = useState({});
+
+  // Load messages for a specific family (called lazily by MessagesTab)
+  const loadMessages = useCallback(async (familyId) => {
+    if (!familyId) return;
+    const { data = [], error } = await supabase
+      .from("messages")
+      .select("id, content, sender_role, created_at, type")
+      .eq("family_id", familyId)
+      .order("created_at", { ascending: true })
+      .limit(100);
+
+    if (error) { console.error("[useMessages] load:", error); return; }
+
+    const normalized = data.map(row => ({
+      id: row.id,
+      from: row.sender_role === "consultant" || row.sender_role === "consultant_internal"
+        ? "consultant"
+        : "parent",
+      text: row.content || "",
+      time: new Date(row.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    }));
+
+    setMessages(prev => ({ ...prev, [familyId]: normalized }));
+  }, []);
+
+  const sendMessage = useCallback(async (familyId, text) => {
+    if (!familyId || !text?.trim()) return;
+
+    const optimisticId = `opt_${Date.now()}`;
+    const optimistic = { id: optimisticId, from: "consultant", text, time: "Just now" };
+
+    // Optimistic update
+    setMessages(prev => ({
+      ...prev,
+      [familyId]: [...(prev[familyId] || []), optimistic],
+    }));
+
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .insert({
+          family_id: familyId,
+          sender_id: (await supabase.auth.getSession()).data.session?.user?.id,
+          sender_role: (await supabase.auth.getSession()).data.session?.user?.user_metadata?.role || "consultant",
+          content: text,
+          type: "text",
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Replace optimistic with real row
+      setMessages(prev => ({
+        ...prev,
+        [familyId]: (prev[familyId] || []).map(m =>
+          m.id === optimisticId
+            ? { id: data.id, from: "consultant", text: data.content, time: new Date(data.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) }
+            : m
+        ),
+      }));
+    } catch (err) {
+      console.error("[useMessages] sendMessage:", err);
+      // Roll back optimistic on failure
+      setMessages(prev => ({
+        ...prev,
+        [familyId]: (prev[familyId] || []).filter(m => m.id !== optimisticId),
+      }));
+    }
+  }, []);
+
+  return { messages, sendMessage, loadMessages };
+}
+
+// ─── useSleepStats ────────────────────────────────────────────────────────────
+// Derives sleep stats for a child from the sessions hook.
+// Signature unchanged — SleepDataTab calls useSleepStats(childId).
+
+export function useSleepStats(childId, familyId, rangeDays = 30) {
+  const { sessions } = useSessions(familyId, rangeDays);
   const childSessions = sessions[childId] || [];
   const nights = childSessions.filter(s => s.type === "night");
   const naps   = childSessions.filter(s => s.type === "nap");
@@ -443,16 +625,9 @@ export function useSleepStats(childId) {
     return Number(h) * 60 + Number(m);
   };
 
-  const avgNight = nights.length
-    ? Math.round(nights.reduce((a, s) => a + parseMin(s.duration), 0) / nights.length)
+  const avg = arr => arr.length
+    ? Math.round(arr.reduce((a, s) => a + parseMin(s), 0) / arr.length)
     : 0;
-  const avgNap = naps.length
-    ? Math.round(naps.reduce((a, s) => a + parseMin(s.duration), 0) / naps.length)
-    : 0;
-  const avgSettling = nights.length
-    ? Math.round(nights.reduce((a, s) => a + parseMin(s.settling), 0) / nights.length)
-    : 0;
-  const flaggedNaps = naps.filter(s => s.flag === "Long").length;
 
   const fmtMin = m => {
     const h = Math.floor(m / 60);
@@ -460,9 +635,14 @@ export function useSleepStats(childId) {
     return h > 0 ? `${h}h ${min}m` : `${min}m`;
   };
 
+  const avgNight    = avg(nights.map(s => s.duration));
+  const avgNap      = avg(naps.map(s => s.duration));
+  const avgSettling = avg(nights.map(s => s.settling));
+  const flaggedNaps = naps.filter(s => s.flag === "Long").length;
+
   return {
-    avgNightStr: fmtMin(avgNight),
-    avgNapStr: fmtMin(avgNap),
+    avgNightStr:    fmtMin(avgNight),
+    avgNapStr:      fmtMin(avgNap),
     avgSettlingStr: fmtMin(avgSettling),
     flaggedNaps,
     sessions: childSessions,

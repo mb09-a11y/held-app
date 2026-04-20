@@ -1,7 +1,8 @@
 // views/consultant/tabs/PlanTab.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT, font, serif, mono } from "../../../core/shared.jsx";
 import { usePlans } from "../data/consultantStore.js";
+import { supabase } from "../../../lib/supabase.js";
 import InsightCard from "../shared/InsightCard.jsx";
 
 // ─── COLORS ───────────────────────────────────────────────────────────────────
@@ -564,16 +565,47 @@ function SetupPanel({ plan, onSave, onClose }) {
     </div>
   );
 }
-export default function PlanTab({ activeChild, onNavigate }) {
+export default function PlanTab({ family, activeChild, onNavigate }) {
   const T = useT();
-  const { plans, toggleItem, addConsultantNote, updatePlan } = usePlans();
+  const { plans, toggleItem, addConsultantNote, updatePlan, seedPlan } = usePlans();
   const [showSetup, setShowSetup] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [noteText, setNoteText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showSendPanel, setShowSendPanel] = useState(false);
 
-  const plan = plans[activeChild?.planId];
+  const familyId = family?.id;
+  const planKey  = activeChild?.id || activeChild?.planId;
+
+  // Load plan from Supabase on mount / child change
+  useEffect(() => {
+    if (!familyId || !planKey) return;
+    supabase
+      .from("families")
+      .select("sleep_plan_profile, sleep_progress")
+      .eq("id", familyId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data?.sleep_plan_profile) return;
+        const profile = data.sleep_plan_profile;
+        // Merge saved progress back into phases
+        const progress = data.sleep_progress || {};
+        const phases = (profile.phases || []).map(ph => ({
+          ...ph,
+          items: ph.items.map(it => ({ ...it, done: !!progress[it.id] })),
+        }));
+        seedPlan(planKey, {
+          ...profile,
+          id: planKey,
+          familyId,
+          phases,
+          consultantNotes: profile.consultantNotes || {},
+        });
+      })
+      .catch(err => console.error("[PlanTab] load:", err));
+  }, [familyId, planKey]);
+
+  const plan = plans[planKey];
 
   if (!plan) return (
     <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>
@@ -593,7 +625,7 @@ export default function PlanTab({ activeChild, onNavigate }) {
   };
 
   const handleSave = (updated) => {
-    updatePlan(plan.id, updated);
+    updatePlan(planKey, { ...updated, familyId, id: planKey });
     setShowSetup(false);
   };
 
@@ -636,7 +668,7 @@ export default function PlanTab({ activeChild, onNavigate }) {
           title="Cap nap at 90 min before changing method."
           body="Try schedule adjustment for 3 nights before switching method. If no improvement by Night 12, method change may be warranted."
           actions={[
-            { label: "Apply", onClick: () => updatePlan(plan.id, { napCapMinutes: 90 }) },
+            { label: "Apply", onClick: () => updatePlan(planKey, { napCapMinutes: 90 }) },
             { label: "Switch method instead", onClick: () => setShowSetup(true) },
           ]}
         />
@@ -649,7 +681,7 @@ export default function PlanTab({ activeChild, onNavigate }) {
           <div style={{ fontSize: 14, color: T.text, fontFamily: font }}>{plan.napCapMinutes} min max</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={() => updatePlan(plan.id, { napCapMinutes: Math.max(30, (plan.napCapMinutes || 90) - 5) })} style={{
+          <button onClick={() => updatePlan(planKey, { napCapMinutes: Math.max(30, (plan.napCapMinutes || 90) - 5) })} style={{
             width: 28, height: 28, borderRadius: 7, border: `1px solid ${T.border}`,
             background: T.faint, fontSize: 16, cursor: "pointer", color: T.text,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -657,14 +689,14 @@ export default function PlanTab({ activeChild, onNavigate }) {
           <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 700, color: C.teal, minWidth: 36, textAlign: "center" }}>
             {plan.napCapMinutes}m
           </span>
-          <button onClick={() => updatePlan(plan.id, { napCapMinutes: Math.min(240, (plan.napCapMinutes || 90) + 5) })} style={{
+          <button onClick={() => updatePlan(planKey, { napCapMinutes: Math.min(240, (plan.napCapMinutes || 90) + 5) })} style={{
             width: 28, height: 28, borderRadius: 7, border: `1px solid ${T.border}`,
             background: T.faint, fontSize: 16, cursor: "pointer", color: T.text,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>+</button>
           <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
             {[60, 90, 120].map(m => (
-              <div key={m} onClick={() => updatePlan(plan.id, { napCapMinutes: m })} style={{
+              <div key={m} onClick={() => updatePlan(planKey, { napCapMinutes: m })} style={{
                 padding: "3px 7px", borderRadius: 16, fontSize: 10,
                 background: plan.napCapMinutes === m ? C.teal : T.faint,
                 color: plan.napCapMinutes === m ? "#fff" : T.muted,
@@ -759,7 +791,7 @@ export default function PlanTab({ activeChild, onNavigate }) {
                   display: "flex", alignItems: "flex-start", gap: 10,
                   padding: "8px 0", borderBottom: `1px solid ${T.border}`,
                 }}>
-                  <button onClick={() => toggleItem(plan.id, ph.id, item.id)} style={{
+                  <button onClick={() => toggleItem(planKey, ph.id, item.id)} style={{
                     width: 20, height: 20, borderRadius: 6,
                     border: `1.5px solid ${item.done ? C.teal : T.border}`,
                     background: item.done ? C.teal : "transparent",
@@ -799,7 +831,7 @@ export default function PlanTab({ activeChild, onNavigate }) {
                       }}
                     />
                     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                      <button onClick={() => handleNoteSubmit(plan.id, item.id)} style={{
+                      <button onClick={() => handleNoteSubmit(planKey, item.id)} style={{
                         background: C.teal, color: "#fff", border: "none",
                         borderRadius: 10, padding: "6px 14px", fontSize: 12, cursor: "pointer", fontFamily: font,
                       }}>Save</button>

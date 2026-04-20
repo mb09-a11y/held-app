@@ -1,13 +1,24 @@
 // views/consultant/ConsultantHome.jsx
-import { useT, font, serif } from "../../core/shared.jsx";
+import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { useFamilies } from "./data/consultantStore.js";
 import ProactiveCard from "./shared/ProactiveCard.jsx";
 
 const URGENCY_ORDER = { urgent: 0, watch: 1, good: 2 };
 
+function getGreeting() {
+  const hour = new Date().getHours(); // uses device/browser local time
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function ConsultantHome({ onNavigate, onOpenDrawer }) {
   const T = useT();
+  const { currentUser } = useApp();
   const { families } = useFamilies();
+
+  const firstName = currentUser?.name?.split(" ")[0] || currentUser?.email?.split("@")[0] || "there";
+  const greeting  = `${getGreeting()}, ${firstName}.`;
 
   const sorted = [...families].sort(
     (a, b) => (URGENCY_ORDER[a.urgency] ?? 3) - (URGENCY_ORDER[b.urgency] ?? 3)
@@ -42,7 +53,7 @@ export default function ConsultantHome({ onNavigate, onOpenDrawer }) {
 
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: serif, fontSize: 22, fontStyle: "italic", color: "#fff", lineHeight: 1.3 }}>
-              Good morning, Sarah.
+              {greeting}
             </div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontFamily: font }}>
               {urgent > 0
@@ -181,14 +192,25 @@ export default function ConsultantHome({ onNavigate, onOpenDrawer }) {
         <span style={{ fontSize: 14, color: T.muted }}>›</span>
       </div>
 
-      {/* ── Proactive nudge ── */}
-      <ProactiveCard
-        icon="🔮"
-        label="Tonight, expect"
-        text="Leo Sharma's parent is statistically likely to reach out between 10pm–1am. Day 5 regression window. Prepare your response now."
-        cta="Draft message →"
-        onCta={() => onNavigate("responseBuilder", { familyId: "fam_sharma" })}
-      />
+      {/* ── Proactive nudge — derived from real families ── */}
+      {(() => {
+        // Find the most at-risk family to surface tonight
+        const watchFam = sorted.find(f => f.urgency === "watch" || f.urgency === "urgent");
+        if (!watchFam) return null;
+        const watchChild = watchFam.children?.find(c => c.status === "urgent" || c.status === "watch") || watchFam.children?.[0];
+        const text = watchFam.urgency === "urgent"
+          ? `${watchFam.name} is in distress — ${watchFam.nsState === "overwhelmed" ? "parent overwhelmed" : "child needs attention"}. Prepare a regulated response before tonight.`
+          : `${watchFam.name}'s parent may reach out tonight. ${watchFam.insight} Prepare your response now.`;
+        return (
+          <ProactiveCard
+            icon="🔮"
+            label="Tonight, expect"
+            text={text}
+            cta="Draft message →"
+            onCta={() => onNavigate("responseBuilder", { familyId: watchFam.id })}
+          />
+        );
+      })()}
 
     </div>
   );

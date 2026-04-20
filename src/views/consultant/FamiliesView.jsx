@@ -9,8 +9,16 @@ const URGENCY_ORDER = { urgent: 0, watch: 1, good: 2 };
 
 export default function FamiliesView({ onNavigate }) {
   const T = useT();
-  const { families } = useFamilies();
+  const { families, loading } = useFamilies();
   const [filter, setFilter] = useState("All");
+
+  const handleCTA = (family) => {
+    onNavigate("family", {
+      familyId: family.id,
+      defaultTab: "Messages",
+      triggerCoPilot: true,
+    });
+  };
 
   const filtered = [...families]
     .sort((a, b) => (URGENCY_ORDER[a.urgency] ?? 3) - (URGENCY_ORDER[b.urgency] ?? 3))
@@ -49,7 +57,7 @@ export default function FamiliesView({ onNavigate }) {
       </div>
 
       {filtered.map(fam => (
-        <ClientCard key={fam.id} family={fam} onPress={() => onNavigate("family", { familyId: fam.id })} />
+        <ClientCard key={fam.id} family={fam} onPress={() => onNavigate("family", { familyId: fam.id })} onCTA={handleCTA} />
       ))}
 
       {filtered.length === 0 && (
