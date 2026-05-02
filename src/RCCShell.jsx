@@ -118,7 +118,7 @@ export default function RCCShell() {
   const [authLoading, setAuthLoading] = useState(() => {
     try { return !localStorage.getItem("rcc_user"); } catch { return true; }
   });
-  const [authScreen, setAuthScreen] = useState("login");
+  const [authScreen, setAuthScreen] = useState(inviteToken || coInviteToken ? "register" : "login");
   const [profileReady, setProfileReady] = useState(() => {
     try { return !!localStorage.getItem("rcc_user"); } catch { return false; }
   });
@@ -558,9 +558,17 @@ export default function RCCShell() {
   }
 
   async function completeIntake(intakeData) {
-    const family = families[0]; if (!family) return;
-    await supabase.from("intake_responses").upsert({ family_id: family.id, ...intakeData }, { onConflict: "family_id" });
-    setOnboardingStep(null);
+    const family = activeFamily || families[0];
+    try {
+      if (family?.id) {
+        await supabase.from("families").update({ intake_complete: true }).eq("id", family.id);
+        await supabase.from("intake_responses").upsert({ family_id: family.id, ...intakeData }, { onConflict: "family_id" });
+      }
+    } catch (e) {
+      console.error("[completeIntake]", e);
+    } finally {
+      setOnboardingStep(null);
+    }
   }
 
   function clearInviteFromUrl() {
@@ -608,15 +616,18 @@ export default function RCCShell() {
         expires_at: expiresAt,
       });
 
-      // Send the email
-      const { error } = await supabase.functions.invoke("send-invite", {
-        body: {
-          email: familyInviteForm.email.trim().toLowerCase(),
-          inviteToken: token,
-          requireIntake: familyInviteForm.require_intake,
-          consultantId: currentUser?.id,
-        },
-      });
+      // Send the email — timeout after 10s so it never hangs
+      const { error } = await Promise.race([
+        supabase.functions.invoke("send-invite", {
+          body: {
+            email: familyInviteForm.email.trim().toLowerCase(),
+            inviteToken: token,
+            requireIntake: familyInviteForm.require_intake,
+            consultantId: currentUser?.id,
+          },
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Email send timed out — invite was created, check if email arrived.")), 10000)),
+      ]);
       if (error) throw error;
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
       setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
