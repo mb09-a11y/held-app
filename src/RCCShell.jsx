@@ -495,9 +495,13 @@ export default function RCCShell() {
       if (tok && role === "parent") {
         const { error: familyError } = await supabase
           .from("families")
-          .update({ parent_id: data.user.id, invite_email: normalizedEmail })
+          .update({ parent_id: data.user.id })
           .eq("invite_token", tok);
         if (familyError) throw familyError;
+        // Mark the invite as accepted
+        await supabase.from("family_invites")
+          .update({ status: "accepted", accepted_at: new Date().toISOString() })
+          .eq("token", tok);
       } else if (role === "parent" && !tok && !isCoCaregiver) {
         const { error: familyError } = await supabase.from("families").insert({
           parent_id: data.user.id,
@@ -577,22 +581,35 @@ export default function RCCShell() {
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
       const token = crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-      const { error: insertError } = await supabase.from("family_invites").insert({
+      // Create the family row — this is what handleRegister looks up on signup
+      const { data: familyData, error: familyError } = await supabase.from("families").insert({
+        invite_email: familyInviteForm.email.trim().toLowerCase(),
+        invite_token: token,
+        display_name: familyInviteForm.display_name || null,
+        consultant_id: currentUser?.id,
+        require_intake: familyInviteForm.require_intake,
+        intake_complete: false,
+      }).select("id").single();
+      if (familyError) throw familyError;
+
+      // Also record in family_invites for tracking
+      await supabase.from("family_invites").insert({
+        family_id: familyData.id,
         token,
-        email: familyInviteForm.email,
+        email: familyInviteForm.email.trim().toLowerCase(),
         parent_name: familyInviteForm.display_name || null,
         consultant_id: currentUser?.id,
         require_intake: familyInviteForm.require_intake,
         status: "pending",
         expires_at: expiresAt,
       });
-      if (insertError) throw insertError;
 
+      // Send the email
       const { error } = await supabase.functions.invoke("send-invite", {
         body: {
-          email: familyInviteForm.email,
+          email: familyInviteForm.email.trim().toLowerCase(),
           inviteToken: token,
           requireIntake: familyInviteForm.require_intake,
           consultantId: currentUser?.id,

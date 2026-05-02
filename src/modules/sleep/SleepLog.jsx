@@ -921,18 +921,25 @@ export function SleepLog({ user, activeFamily, initialTab }) {
 
   useEffect(() => {
     if (!familyId) { setLoadingLogs(false); return; }
+    let cancelled = false;
     setLoadingLogs(true);
     Promise.all([
       fetchLogs(familyId),
       fetchConfig(familyId),
       supabase.from("intake_responses").select("ideal_wake_time, wake_time").eq("family_id", familyId).maybeSingle().then(({data})=>data).catch(()=>null),
     ]).then(([logData, cfgData, intakeData]) => {
+      if (cancelled) return;
       setLogs(logData);
       const merged = cfgData || {};
       if (!merged.targetMorningWake && intakeData) merged.targetMorningWake = intakeData.ideal_wake_time || intakeData.wake_time || null;
       setConfigState(prev => ({ ...prev, ...merged }));
       setLoadingLogs(false);
-    }).catch(err => { console.error("[SleepLog] load error:", err); setLoadingLogs(false); });
+    }).catch(err => {
+      if (cancelled) return;
+      console.error("[SleepLog] load error:", err);
+      setLoadingLogs(false);
+    });
+    return () => { cancelled = true; };
   }, [familyId]);
 
   const childLogs = activeChild ? logs.filter(l => !l.child_id || l.child_id === activeChild.id) : logs;
@@ -953,8 +960,13 @@ export function SleepLog({ user, activeFamily, initialTab }) {
   const refreshLogs = useCallback(async () => {
     if (!familyId) return;
     setLoadingLogs(true);
-    setLogs(await fetchLogs(familyId));
-    setLoadingLogs(false);
+    try {
+      setLogs(await fetchLogs(familyId));
+    } catch (err) {
+      console.error("[SleepLog] refresh error:", err);
+    } finally {
+      setLoadingLogs(false);
+    }
   }, [familyId]);
 
   const addEntry = useCallback(async (type, data) => {

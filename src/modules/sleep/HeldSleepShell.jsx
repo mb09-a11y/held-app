@@ -134,16 +134,19 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
   const [planExists, setPlanExists] = useState(null); // null = loading
   useEffect(() => {
     if (!activeFamily?.id || !canAccessSleepPlan) { setPlanExists(false); return; }
+    let cancelled = false;
     supabase
       .from("families")
       .select("sleep_plan_profile")
       .eq("id", activeFamily.id)
       .maybeSingle()
       .then(({ data }) => {
-        // A plan exists if sleep_plan_profile has been set AND has a method chosen
+        if (cancelled) return;
         const profile = data?.sleep_plan_profile;
         setPlanExists(!!(profile && profile.method && profile.childName));
-      });
+      })
+      .catch(() => { if (!cancelled) setPlanExists(false); });
+    return () => { cancelled = true; };
   }, [activeFamily?.id, canAccessSleepPlan]);
 
   const hasConsultant = !!(activeFamily?.consultant_id || (consultants && consultants.length > 0));
