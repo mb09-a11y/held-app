@@ -258,10 +258,10 @@ export default function RCCShell() {
       setInviteLoading(true);
       try {
         if (inviteToken) {
-          const { data, error } = await supabase.from("invites").select("*").eq("token", inviteToken).maybeSingle();
+          const { data, error } = await supabase.from("family_invites").select("*").eq("token", inviteToken).maybeSingle();
           if (error) throw error;
           if (!ignore) {
-            setInviteRecord(data ? { ...data, invite_kind: data.invite_kind || "family" } : null);
+            setInviteRecord(data ? { ...data, invite_kind: "family" } : null);
             if (!session?.user) setOnboardingStep(data ? "register" : null);
           }
           return;
@@ -577,12 +577,16 @@ export default function RCCShell() {
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
       const token = crypto.randomUUID();
-      const { error: insertError } = await supabase.from("invites").insert({
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+      const { error: insertError } = await supabase.from("family_invites").insert({
         token,
-        invite_email: familyInviteForm.email,
-        invite_kind: "family",
-        invited_by: currentUser?.id,
+        email: familyInviteForm.email,
+        parent_name: familyInviteForm.display_name || null,
+        consultant_id: currentUser?.id,
         require_intake: familyInviteForm.require_intake,
+        status: "pending",
+        expires_at: expiresAt,
       });
       if (insertError) throw insertError;
 
