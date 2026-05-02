@@ -7,7 +7,7 @@ import ClientCard from "./shared/ClientCard.jsx";
 const FILTERS = ["All", "🔴 Urgent", "🟡 Watch", "🟢 On track"];
 const URGENCY_ORDER = { urgent: 0, watch: 1, good: 2 };
 
-export default function FamiliesView({ onNavigate }) {
+export default function FamiliesView({ onNavigate, onInviteFamily }) {
   const T = useT();
   const { families, loading } = useFamilies();
   const [filter, setFilter] = useState("All");
@@ -32,13 +32,30 @@ export default function FamiliesView({ onNavigate }) {
 
   return (
     <div style={{ background: T.gradientBg, flex: 1, overflowY: "auto" }}>
-      <div style={{ padding: "14px 18px 2px" }}>
-        <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: T.headingText, marginBottom: 4 }}>
-          Your Families
+      <div style={{ padding: "14px 18px 2px", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: T.headingText, marginBottom: 4 }}>
+            Your Families
+          </div>
+          <div style={{ fontSize: 12, color: T.muted, fontFamily: font }}>
+            Sorted by who needs you most
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: T.muted, fontFamily: font }}>
-          Sorted by who needs you most
-        </div>
+        {onInviteFamily && (
+          <button
+            onClick={onInviteFamily}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "9px 16px", borderRadius: 20,
+              background: "#5C7A5E", border: "none",
+              color: "#fff", fontFamily: font, fontSize: 13,
+              fontWeight: 600, cursor: "pointer", flexShrink: 0,
+              marginTop: 6,
+            }}
+          >
+            + Invite family
+          </button>
+        )}
       </div>
 
       {/* Filter pills */}

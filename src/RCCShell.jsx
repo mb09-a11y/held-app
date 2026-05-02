@@ -899,6 +899,7 @@ export default function RCCShell() {
                 <ConsultantShell
                   currentUser={currentUser}
                   logout={logout}
+                  onInviteFamily={() => { closeInvitePanels(); setShowInviteFamily(true); }}
                 />
               </div>
             )}

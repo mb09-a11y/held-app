@@ -466,7 +466,7 @@ function MessagesTab({ onNavigate }) {
   );
 }
 
-export default function ConsultantShell({ currentUser: currentUserProp, logout }) {
+export default function ConsultantShell({ currentUser: currentUserProp, logout, onInviteFamily }) {
   const T = useT();
   const { families } = useFamilies();
   const { currentUser: appUser } = useApp();
@@ -568,8 +568,8 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout }
   // ── Base tab views ────────────────────────────────────────────────────────
   const renderBaseTab = () => {
     if (activeTab === "home")     return <ConsultantHome   onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} />;
-    if (activeTab === "families") return <FamiliesView     onNavigate={navigate} />;
-    if (activeTab === "plans")    return <FamiliesView     onNavigate={navigate} />;
+    if (activeTab === "families") return <FamiliesView     onNavigate={navigate} onInviteFamily={onInviteFamily} />;
+    if (activeTab === "plans")    return <FamiliesView     onNavigate={navigate} onInviteFamily={onInviteFamily} />;
     if (activeTab === "copilot")  return <CoPilotWorkspace onNavigate={navigate} />;
     if (activeTab === "messages") return <MessagesTab onNavigate={navigate} />;
     return null;
