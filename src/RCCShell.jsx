@@ -118,7 +118,12 @@ export default function RCCShell() {
   const [authLoading, setAuthLoading] = useState(() => {
     try { return !localStorage.getItem("rcc_user"); } catch { return true; }
   });
-  const [authScreen, setAuthScreen] = useState(inviteToken || coInviteToken ? "register" : "login");
+  const [authScreen, setAuthScreen] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return (p.get("invite") || p.get("co_invite")) ? "register" : "login";
+    } catch { return "login"; }
+  });
   const [profileReady, setProfileReady] = useState(() => {
     try { return !!localStorage.getItem("rcc_user"); } catch { return false; }
   });
