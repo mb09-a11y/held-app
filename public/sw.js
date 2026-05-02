@@ -33,39 +33,14 @@ self.addEventListener('fetch', (event) => {
     event.request.method !== 'GET' ||
     event.request.url.includes('supabase.co') ||
     event.request.url.includes('anthropic.com') ||
-    event.request.url.includes('cloudinary.com') ||
-    event.request.url.includes('resend.com')
+    event.request.url.includes('cloudinary.com')
   ) {
     return;
   }
 
-  // Network-first for JS, CSS, JSX bundles — never serve stale code
-  const url = new URL(event.request.url);
-  const isAsset = url.pathname.includes('/assets/') ||
-    url.pathname.endsWith('.js') ||
-    url.pathname.endsWith('.jsx') ||
-    url.pathname.endsWith('.css') ||
-    url.pathname.endsWith('.mjs');
-
-  if (isAsset) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          // Cache fresh copy
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => caches.match(event.request)) // fallback to cache only if offline
-    );
-    return;
-  }
-
-  // Cache-first for images, fonts, and other static assets
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+      return cached || fetch(event.request).then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
