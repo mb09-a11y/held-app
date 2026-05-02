@@ -57,6 +57,23 @@ const ROLES = {
 const isConsultant = role => role === ROLES.consultant || role === ROLES.consultant_internal;
 const isAdmin = role => role === ROLES.admin;
 
+// ─── SAFE CACHE FIELDS ───────────────────────────────────────────────────────
+// Only cache fields needed to render the shell before the real profile loads.
+// NEVER cache: consultant_pin, stripe_customer_id, payment_failed, or any
+// financial/payment data. These stay server-side only.
+const SAFE_CACHE_FIELDS = [
+  "id", "name", "email", "role", "subscription_tier",
+  "ai_messages_used", "ai_messages_reset_at",
+  "child_name", "dob",
+];
+
+function buildSafeCache(userObj) {
+  return SAFE_CACHE_FIELDS.reduce((acc, key) => {
+    if (userObj[key] !== undefined) acc[key] = userObj[key];
+    return acc;
+  }, {});
+}
+
 // ─── TAB DEFINITIONS ─────────────────────────────────────────────────────────
 const PARENT_TABS = [
   { id: "home",       label: "Home",       icon: "🏡" },
@@ -156,7 +173,8 @@ export default function RCCShell() {
   function goToScripts() {
     setLibraryDefaultTab("scripts");
     setLibraryKey(k => k + 1);
-    setTab("library");
+    // Use setTimeout to ensure defaultTab is set before tab switch renders LibraryModule
+    setTimeout(() => setTab("library"), 0);
   }
 
   // ── URL invite tokens (UNCHANGED logic)
@@ -307,11 +325,11 @@ export default function RCCShell() {
     try {
       const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
         supabase.auth.getUser(),
-        supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+        supabase.from("profiles").select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin").eq("id", userId).maybeSingle(),
       ]);
       if (profileError) throw profileError;
 
-      const resolvedEmail = (authEmail || authUser?.email || profile?.email || null)?.toLowerCase?.() || authEmail || authUser?.email || profile?.email || null;
+      const resolvedEmail = (authEmail || authUser?.email || profile?.user_email || null)?.toLowerCase?.() || authEmail || authUser?.email || profile?.user_email || null;
       const merged = {
         ...(profile || {}),
         id: userId,
@@ -322,7 +340,8 @@ export default function RCCShell() {
       };
 
       setCurrentUser(merged);
-      try { localStorage.setItem("rcc_user", JSON.stringify(merged)); } catch {}
+      // ── SECURITY: Only cache safe, non-sensitive fields ───────────────────
+      try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache(merged))); } catch {}
       setProfileReady(true);
 
       if (isAdmin(merged.role)) {
@@ -384,7 +403,8 @@ export default function RCCShell() {
             setCurrentUser(prev => ({ ...(prev || merged), role: "co_caregiver" }));
             try {
               const cached = JSON.parse(localStorage.getItem("rcc_user") || "{}");
-              localStorage.setItem("rcc_user", JSON.stringify({ ...cached, ...merged, role: "co_caregiver" }));
+              // ── SECURITY: Only cache safe, non-sensitive fields ─────────────
+              localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...cached, ...merged, role: "co_caregiver" })));
             } catch {}
             supabase
               .from("co_caregivers")
@@ -454,7 +474,22 @@ export default function RCCShell() {
 
   async function handleRegister({ email, password, name, role = "parent", inviteToken: tok, consultantInviteToken: ctok, isCoCaregiver }) {
     const normalizedEmail = email.trim().toLowerCase();
-    const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { name, role } } });
+    // ── SECURITY: Don't pass role in signUp options — role is determined
+    // server-side by the DB trigger based on a validated invite token.
+    // Passing role here would allow client-side role escalation.
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: {
+        data: {
+          name,
+          // Pass consultant invite token so DB trigger can validate and assign role
+          consultantInviteToken: ctok || null,
+          // Do NOT pass role — the DB trigger defaults to 'parent' and only
+          // elevates to consultant if a valid consultantInviteToken is found
+        }
+      }
+    });
     if (error) throw error;
     if (data.user) {
       if (tok && role === "parent") {

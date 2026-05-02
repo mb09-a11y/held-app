@@ -3,8 +3,9 @@
 // Header: "{childName}'s day" large serif + age · day subtext.
 // Child pill in top bar alongside refresh. Tabs below header.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
+import { supabase } from "../../lib/supabase.js";
 import { SleepLog } from "./SleepLog.jsx";
 import { SleepPlanTracker } from "./SleepPlanTracker.jsx";
 
@@ -77,11 +78,77 @@ const MM_BANNERS = {
   wellness: "Health and sleep are the same story, told from two different angles.",
 };
 
+// ── Waiting card shown when consultant is assigned but hasn't built the plan yet ──
+function WaitingForPlan({ T, consultantName }) {
+  const moss = "#5C7A5E";
+  const sand = "#E8DDD0";
+  return (
+    <div style={{
+      margin: "8px 0", padding: "28px 20px 32px", borderRadius: 20,
+      background: `linear-gradient(150deg, ${moss}12, ${sand}55)`,
+      border: `1px solid ${moss}28`, textAlign: "center",
+    }}>
+      <div style={{ fontSize: 36, marginBottom: 14 }}>🌱</div>
+      <div style={{
+        fontFamily: serif, fontSize: 20, color: "#2D4A35",
+        lineHeight: 1.25, marginBottom: 10,
+      }}>
+        Your sleep plan is on its way
+      </div>
+      <p style={{
+        fontFamily: font, fontSize: 13.5, color: "#5C7A5E",
+        lineHeight: 1.65, marginBottom: 20, maxWidth: 280, margin: "0 auto 20px",
+      }}>
+        {consultantName
+          ? `${consultantName} is reviewing your intake and building a personalized plan for your family.`
+          : "Your consultant is reviewing your intake and building a personalized plan for your family."
+        }
+      </p>
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 8,
+        padding: "10px 18px", borderRadius: 30,
+        background: `${moss}18`, border: `1px solid ${moss}30`,
+      }}>
+        <span style={{ fontSize: 14 }}>📬</span>
+        <span style={{ fontFamily: font, fontSize: 12.5, color: moss, fontWeight: 600 }}>
+          You'll be notified when it's ready
+        </span>
+      </div>
+      <p style={{
+        fontFamily: font, fontSize: 12, color: "#5C7A5E99",
+        marginTop: 18, lineHeight: 1.5,
+      }}>
+        In the meantime, use the Sleep Log to start tracking — your data will be here when your plan arrives.
+      </p>
+    </div>
+  );
+}
+
 export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
   const T = useT();
-  const { currentUser, activeFamily, activeChild } = useApp();
+  const { currentUser, activeFamily, activeChild, consultants } = useApp();
   const [view, setView] = useState("log");
   const [sleepTab, setSleepTab] = useState("today");
+
+  // ── Check whether a real plan has been built yet ──
+  const [planExists, setPlanExists] = useState(null); // null = loading
+  useEffect(() => {
+    if (!activeFamily?.id || !canAccessSleepPlan) { setPlanExists(false); return; }
+    supabase
+      .from("families")
+      .select("sleep_plan_profile")
+      .eq("id", activeFamily.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        // A plan exists if sleep_plan_profile has been set AND has a method chosen
+        const profile = data?.sleep_plan_profile;
+        setPlanExists(!!(profile && profile.method && profile.childName));
+      });
+  }, [activeFamily?.id, canAccessSleepPlan]);
+
+  const hasConsultant = !!(activeFamily?.consultant_id || (consultants && consultants.length > 0));
+  const waitingForPlan = canAccessSleepPlan && hasConsultant && planExists === false;
+  const consultantName = consultants?.[0]?.name || null;
 
   const childName = activeChild?.name || "your little one";
   const age = activeChild?.dob ? ageLabel(activeChild.dob) : null;
@@ -158,8 +225,8 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
           </div>
         )}
 
-        {/* Upgrade nudge */}
-        {!canAccessSleepPlan && (
+        {/* Upgrade nudge — only shown to non-consultant-linked free users */}
+        {!canAccessSleepPlan && !hasConsultant && (
           <div style={{ marginBottom: 14, padding: "12px 16px", borderRadius: 12, background: `${T.teal}0c`, border: `1px solid ${T.teal}25`, display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontSize: 18 }}>📋</span>
             <div>
@@ -189,7 +256,11 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
           </>
         )}
 
-        {view === "plan" && canAccessSleepPlan && (
+        {view === "plan" && canAccessSleepPlan && waitingForPlan && (
+          <WaitingForPlan T={T} consultantName={consultantName} />
+        )}
+
+        {view === "plan" && canAccessSleepPlan && !waitingForPlan && planExists !== null && (
           <SleepPlanTracker user={currentUser} activeFamily={activeFamily} />
         )}
       </div>

@@ -190,6 +190,9 @@ function calculateAge(dob) {
 }
 
 // ─── DB ROW → UI MESSAGE ──────────────────────────────────────────────────────
+// NOTE: audioPath / filePath store the raw storage path (e.g. "family-id/uuid.webm")
+// NOT a public URL. Signed URLs are resolved at render time via the signedUrls state map.
+// Legacy rows that already contain full https:// URLs are handled gracefully in getSignedUrl.
 function normalizeMsg(row) {
   return {
     id: row.id,
@@ -197,8 +200,8 @@ function normalizeMsg(row) {
     type: row.type,
     content: row.content,
     sender: row.sender_role,
-    audioUrl: row.audio_url,
-    fileUrl: row.file_url,
+    audioPath: row.audio_url,   // raw storage path or legacy URL
+    filePath: row.file_url,     // raw storage path or legacy URL
     fileName: row.file_name,
     fileType: row.file_type,
     fileSize: row.file_size,
@@ -281,7 +284,7 @@ function VoiceMessage({ url, duration, color = C.teal, small = false }) {
 }
 
 // ─── MESSAGE BUBBLE ───────────────────────────────────────────────────────────
-function MessageBubble({ msg, isOwn, onPin, onSearch }) {
+function MessageBubble({ msg, isOwn, onPin, onSearch, signedUrls = {} }) {
   const T = useT();
   const [menuOpen, setMenuOpen] = useState(false);
   const isAI = msg.sender === "ai";
@@ -313,12 +316,12 @@ function MessageBubble({ msg, isOwn, onPin, onSearch }) {
             </p>
           )}
           {msg.type === "voice" && (
-            <VoiceMessage url={msg.audioUrl} duration={msg.duration} color={isOwn ? C.teal : isAI ? C.purple : C.warm} />
+            <VoiceMessage url={signedUrls[msg.audioPath] || msg.audioPath} duration={msg.duration} color={isOwn ? C.teal : isAI ? C.purple : C.warm} />
           )}
           {msg.type === "file" && (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {msg.fileType?.startsWith("image") ? (
-                <img src={msg.fileUrl} alt={msg.fileName} style={{ maxWidth: 200, maxHeight: 180, borderRadius: 10, display: "block" }} />
+                <img src={signedUrls[msg.filePath] || msg.filePath} alt={msg.fileName} style={{ maxWidth: 200, maxHeight: 180, borderRadius: 10, display: "block" }} />
               ) : (
                 <>
                   <span style={{ fontSize: 24 }}>{fileIcon(msg.fileType)}</span>
@@ -404,7 +407,7 @@ async function callRCCAI(messages, familyContext) {
 }
 
 // ─── FILES TAB ────────────────────────────────────────────────────────────────
-function FilesTab({ messages, searchQuery, setSearchQuery }) {
+function FilesTab({ messages, searchQuery, setSearchQuery, signedUrls = {} }) {
   const T = useT();
   const [tagFilter, setTagFilter] = useState("all");
   const files = messages.filter(m => m.type === "file" || m.type === "voice");
@@ -455,10 +458,10 @@ function FilesTab({ messages, searchQuery, setSearchQuery }) {
             {m.type === "voice" ? (
               <div>
                 <div style={{ fontSize: 24, marginBottom: 8 }}>🎙️</div>
-                <VoiceMessage url={m.audioUrl} duration={m.duration} color={C.purple} small />
+                <VoiceMessage url={signedUrls[m.audioPath] || m.audioPath} duration={m.duration} color={C.purple} small />
               </div>
             ) : m.fileType?.startsWith("image") ? (
-              <img src={m.fileUrl} alt={m.fileName} style={{ width: "100%", borderRadius: 8, marginBottom: 8, maxHeight: 120, objectFit: "cover" }} />
+              <img src={signedUrls[m.filePath] || m.filePath} alt={m.fileName} style={{ width: "100%", borderRadius: 8, marginBottom: 8, maxHeight: 120, objectFit: "cover" }} />
             ) : (
               <div style={{ fontSize: 32, marginBottom: 8 }}>{fileIcon(m.fileType)}</div>
             )}
@@ -633,16 +636,77 @@ Use the child's name naturally. Know what method they're on and what day — don
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, aiTyping]);
 
+  // ── Scroll up when iOS keyboard appears ──────────────────────────────────
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function handleResize() {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }
+    vv.addEventListener("resize", handleResize);
+    return () => vv.removeEventListener("resize", handleResize);
+  }, []);
+
+  // ── Resolve signed URLs for all messages that have a storage path ─────────
+  // Runs whenever dbMessages changes. Skips paths already resolved or legacy URLs.
+  useEffect(() => {
+    const paths = dbMessages
+      .flatMap(m => [m.audioPath, m.filePath])
+      .filter(Boolean)
+      .filter(p => !p.startsWith("http") && !signedUrls[p]); // skip already resolved
+
+    if (paths.length === 0) return;
+
+    let cancelled = false;
+    Promise.all(
+      paths.map(async p => {
+        const url = await getSignedUrl(p);
+        return [p, url];
+      })
+    ).then(pairs => {
+      if (cancelled) return;
+      setSignedUrls(prev => ({
+        ...prev,
+        ...Object.fromEntries(pairs.filter(([, url]) => url)),
+      }));
+    });
+
+    return () => { cancelled = true; };
+  }, [dbMessages]);
+
+  // ── Signed URL state — resolves storage paths → temporary URLs at render time ──
+  // Files in the "message-files" bucket are private (not publicly accessible).
+  // We generate 1-hour signed URLs and cache them here by storage path.
+  const [signedUrls, setSignedUrls] = useState({});
+
+  // Generates a 1-hour signed URL from a storage path.
+  // Handles legacy rows that already contain full https:// URLs (passes them through).
+  async function getSignedUrl(pathOrUrl) {
+    if (!pathOrUrl) return null;
+    if (pathOrUrl.startsWith("http")) return pathOrUrl; // legacy full URL — use as-is
+    const { data, error } = await supabase.storage
+      .from("message-files")
+      .createSignedUrl(pathOrUrl, 3600); // 1 hour
+    if (error) {
+      console.error("[storage] signed URL error:", error.message);
+      return null;
+    }
+    return data.signedUrl;
+  }
+
   // ── Upload file/voice blob to Supabase Storage ────────────────────────────
+  // Returns the STORAGE PATH only — not a public URL.
+  // Signed URLs are generated separately at render time via getSignedUrl().
   async function uploadToStorage(blob, fileName) {
-    const ext = fileName.split(".").pop();
+    const ext = fileName.split(".").pop().toLowerCase();
     const path = `${activeFamily.id}/${crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage
       .from("message-files")
       .upload(path, blob, { contentType: blob.type, upsert: false });
     if (error) throw error;
-    const { data } = supabase.storage.from("message-files").getPublicUrl(path);
-    return data.publicUrl;
+    return path; // storage path only — NOT a public URL
   }
 
   // ── Write a message row to Supabase (with optimistic UI update) ───────────
@@ -655,8 +719,8 @@ Use the child's name naturally. Know what method they're on and what day — don
       pinnedTo: null,
       type: fields.type,
       content: fields.content,
-      audioUrl: fields.audio_url,
-      fileUrl: fields.file_url,
+      audioPath: fields.audio_url,
+      filePath: fields.file_url,
       fileName: fields.file_name,
       fileType: fields.file_type,
       fileSize: fields.file_size,
@@ -728,8 +792,11 @@ Use the child's name naturally. Know what method they're on and what day — don
     }
     try {
       const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-      const publicUrl = await uploadToStorage(blob, `voice.${ext}`);
-      sendToDb({ type: "voice", audio_url: publicUrl, duration_secs: duration });
+      const storagePath = await uploadToStorage(blob, `voice.${ext}`);
+      // Pre-populate signedUrls with the local blob URL so the sender sees
+      // their voice note immediately while the signed URL resolves in background
+      setSignedUrls(prev => ({ ...prev, [storagePath]: url }));
+      sendToDb({ type: "voice", audio_url: storagePath, duration_secs: duration });
     } catch (e) {
       console.error("Voice upload failed:", e);
     }
@@ -776,15 +843,41 @@ Use the child's name naturally. Know what method they're on and what day — don
     const file = e.target.files[0];
     if (!file) return;
     e.target.value = "";
+
+    // ── SECURITY: Validate file type and size before upload ──────────────────
+    const ALLOWED_MIME_TYPES = new Set([
+      "image/jpeg", "image/png", "image/gif", "image/webp",
+      "application/pdf",
+      "video/mp4", "video/webm", "video/quicktime",
+    ]);
+    const SAFE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "pdf", "mp4", "webm", "mov"]);
+    const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+
+    if (!ALLOWED_MIME_TYPES.has(file.type)) {
+      alert("Only images, PDFs, and videos can be shared.");
+      return;
+    }
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!SAFE_EXTENSIONS.has(ext)) {
+      alert("File type not supported.");
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      alert("File is too large. Maximum size is 20MB.");
+      return;
+    }
+
     if (mode === "ai") {
-      // AI tab: blob URL is fine, ephemeral
       const url = URL.createObjectURL(file);
       sendAi({ type: "file", fileName: file.name, fileType: file.type, fileSize: file.size, fileUrl: url, sender: "parent" });
       return;
     }
     try {
-      const url = await uploadToStorage(file, file.name);
-      sendToDb({ type: "file", file_url: url, file_name: file.name, file_type: file.type, file_size: file.size });
+      const blobUrl = URL.createObjectURL(file);
+      const storagePath = await uploadToStorage(file, file.name);
+      // Pre-populate signedUrls so the sender sees the file immediately
+      setSignedUrls(prev => ({ ...prev, [storagePath]: blobUrl }));
+      sendToDb({ type: "file", file_url: storagePath, file_name: file.name, file_type: file.type, file_size: file.size });
     } catch (e) {
       console.error("File upload failed:", e);
     }
@@ -975,7 +1068,7 @@ Use the child's name naturally. Know what method they're on and what day — don
         {/* FILES TAB */}
         {mode === "files" && (
           <div style={{ flex: 1, margin: "14px auto 0", padding: "0 20px", overflowY: "auto" }}>
-            <FilesTab messages={dbMessages} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+            <FilesTab messages={dbMessages} searchQuery={searchQuery} setSearchQuery={setSearchQuery} signedUrls={signedUrls} />
           </div>
         )}
 
@@ -1042,6 +1135,7 @@ Use the child's name naturally. Know what method they're on and what day — don
                   isOwn={msg.sender === "consultant" || msg.sender === "parent"}
                   onPin={pinMessage}
                   onSearch={q => setSearchQuery(q)}
+                  signedUrls={signedUrls}
                 />
               </div>
             ))}
@@ -1056,9 +1150,10 @@ Use the child's name naturally. Know what method they're on and what day — don
             style={{
               width: "100%",
               minWidth: 0,
-              padding: "12px 20px 24px",
+              padding: "12px 20px calc(24px + env(safe-area-inset-bottom, 0px))",
               flexShrink: 0,
-              borderTop: `1px solid ${T.faint}`
+              borderTop: `1px solid ${T.faint}`,
+              paddingBottom: "max(24px, calc(24px + env(safe-area-inset-bottom, 0px)))",
             }}
           >
             {/* AI limit reached — upgrade prompt */}

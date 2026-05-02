@@ -341,23 +341,34 @@ function StepResult({ state, onClose, onBack, T }) {
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
-export function NSCheckinFlow({ onClose }) {
+export function NSCheckinFlow({ onClose, onCheckinSaved }) {
   const T = useT();
   const { currentUser, activeFamily } = useApp();
   const [step, setStep] = useState("pulse");
   const [selectedState, setSelectedState] = useState(null);
 
   async function saveCheckin(state) {
-    if (!currentUser?.id || !activeFamily?.id) return;
+    if (!currentUser?.id || !activeFamily?.id) {
+      console.warn("[NSCheckinFlow] Missing user or family ID — skipping save", { userId: currentUser?.id, familyId: activeFamily?.id });
+      return;
+    }
     try {
-      await supabase.from("regulation_checkins").insert({
+      const { error } = await supabase.from("regulation_checkins").insert({
         user_id: currentUser.id,
         family_id: activeFamily.id,
+        type: new Date().getHours() < 12 ? "am" : "pm",
         state,
         source: "ns_checkin",
         checked_in_at: new Date().toISOString(),
       });
-    } catch { /* silent */ }
+      if (error) {
+        console.error("[NSCheckinFlow] Insert failed:", error);
+      } else {
+        onCheckinSaved?.();
+      }
+    } catch (err) {
+      console.error("[NSCheckinFlow] Unexpected error:", err);
+    }
   }
 
   function handleSelectState(state) {

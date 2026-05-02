@@ -1,22 +1,18 @@
 // src/views/parent/HeldInsights.jsx
-// Rebuilt to match wireframe: NS narrative, meaning maker cards,
-// behavior pattern, parent's own pattern with real alert, end of day reflection.
+// Three-tab Insights: Your story / Foundation / Root cellar
 
 import { useState, useEffect, useMemo } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import HeldTree from "./HeldTree.jsx";
 
-// ─── COLORS ──────────────────────────────────────────────────────────────────
-// C is now generated inside components using T tokens - no file-level constant needed
-
-// ─── DATA HOOK — 30 days for pattern detection ───────────────────────────────
+// ─── DATA HOOK ───────────────────────────────────────────────────────────────
 function useInsightsData(userId, familyId, childId) {
-  const [data, setData] = useState({ checkins: [], sleepSessions: [], loading: true });
+  const [data, setData] = useState({ checkins: [], sleepSessions: [], ventralCount: 0, loading: true });
 
   useEffect(() => {
     if (!userId || !familyId) { setData(d => ({ ...d, loading: false })); return; }
     const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
-    const since7  = new Date(Date.now() - 7  * 86400000).toISOString();
 
     Promise.all([
       supabase.from("regulation_checkins")
@@ -24,28 +20,23 @@ function useInsightsData(userId, familyId, childId) {
         .eq("user_id", userId)
         .gte("checked_in_at", since30)
         .order("checked_in_at", { ascending: true }),
-      (() => {
-        // Query by family_id only — child_id may not be set on all entries.
-        // Filter by child_id client-side after fetch to avoid empty results.
-        return supabase.from("sleep_logs")
-          .select("type, ts, end_ts, total_sleep_ms, session_type, child_id")
-          .eq("family_id", familyId)
-          .gte("ts", since30)
-          .eq("type", "sleep_session")
-          .order("ts", { ascending: false });
-      })(),
-    ]).then(([{ data: checkins }, { data: sleep }]) => {
+      supabase.from("sleep_logs")
+        .select("type, ts, end_ts, total_sleep_ms, session_type, child_id")
+        .eq("family_id", familyId)
+        .gte("ts", since30)
+        .eq("type", "sleep_session")
+        .order("ts", { ascending: false }),
+      supabase.from("regulation_checkins")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .in("state", ["Regulated"]),
+    ]).then(([{ data: checkins }, { data: sleep }, { count: ventralCount }]) => {
       const allSleep = (sleep || []).filter(s => s.end_ts);
-      // Only filter by child_id client-side if entries have child_id set
       const hasChildIds = allSleep.some(s => s.child_id);
       const filteredSleep = hasChildIds && childId
         ? allSleep.filter(s => !s.child_id || s.child_id === childId)
         : allSleep;
-      setData({
-        checkins: checkins || [],
-        sleepSessions: filteredSleep,
-        loading: false,
-      });
+      setData({ checkins: checkins || [], sleepSessions: filteredSleep, ventralCount: ventralCount ?? 0, loading: false });
     });
   }, [userId, familyId, childId]);
 
@@ -55,15 +46,12 @@ function useInsightsData(userId, familyId, childId) {
 // ─── PATTERN ANALYSIS ────────────────────────────────────────────────────────
 function analyzePatterns(checkins, sleepSessions) {
   const now = Date.now();
-  const week = 7 * 86400000;
-  // Use 30 days for checkins (not 7) so existing data shows up
   const month = 30 * 86400000;
   const recent = checkins.filter(c => now - new Date(c.checked_in_at) < month);
   const realCheckins = recent.filter(c =>
     c.source !== "evening_close" && !c.state?.startsWith("ec_") && c.state != null
   );
 
-  // State frequency
   const stateFreq = {};
   realCheckins.forEach(c => {
     if (c.state) stateFreq[c.state] = (stateFreq[c.state] || 0) + 1;
@@ -72,11 +60,10 @@ function analyzePatterns(checkins, sleepSessions) {
   const activationCount = realCheckins.filter(c =>
     ["Fight","Flight","Freeze","Shutdown","Stretched"].includes(c.state)
   ).length;
-  const steadyCount = realCheckins.filter(c => (c.state === "Steady" || c.state === "Regulated")).length;
+  const steadyCount = realCheckins.filter(c => c.state === "Regulated").length;
 
-  // Time-of-day pattern (30 days of activated states)
   const hourBuckets = {};
-  checkins.filter(c => c.state && !["Steady", "Regulated"].includes(c.state) && !c.source?.includes?.("evening")).forEach(c => {
+  checkins.filter(c => c.state && c.state !== "Regulated" && !c.source?.includes?.("evening")).forEach(c => {
     const h = new Date(c.checked_in_at).getHours();
     hourBuckets[h] = (hourBuckets[h] || 0) + 1;
   });
@@ -94,7 +81,6 @@ function analyzePatterns(checkins, sleepSessions) {
     alertTimeStr = fmt(h > 0 ? h - 1 : 23);
   }
 
-  // Sleep quality — use total_sleep_ms if available, fall back to ts/end_ts diff
   const getSleepMs = s => {
     if (s.total_sleep_ms) return s.total_sleep_ms;
     if (s.ts && s.end_ts) return Math.max(0, new Date(s.end_ts) - new Date(s.ts));
@@ -105,33 +91,32 @@ function analyzePatterns(checkins, sleepSessions) {
     ? sessionsWithDuration.reduce((s, l) => s + getSleepMs(l), 0) / sessionsWithDuration.length
     : 0;
   const avgSleepHrs = avgSleepMs > 0 ? parseFloat((avgSleepMs / 3600000).toFixed(1)) : null;
-  // Rough night = night session under 8h, OR any session under 6h if no session_type set
+  const since7 = new Date(Date.now() - 7 * 86400000);
   const roughNights = sleepSessions.filter(s => {
     const hrs = getSleepMs(s) / 3600000;
     if (hrs <= 0) return false;
+    if (new Date(s.ts) < since7) return false; // only last 7 days
     return s.session_type === "night" ? hrs < 8 : hrs < 6;
   }).length;
   const shortNapCount = sleepSessions.filter(s => {
     const hrs = getSleepMs(s) / 3600000;
+    if (new Date(s.ts) < since7) return false; // only last 7 days
     return hrs > 0 && hrs < 1.5 && s.session_type !== "night";
   }).length;
 
-  // Morning/evening
   const morningCheckins = recent.filter(c => c.source === "morning_moment");
   const eveningCheckins = recent.filter(c => c.source === "evening_close");
 
-  // Bar chart
   const days = Array.from({ length: 7 }).map((_, i) => {
     const d = new Date(Date.now() - (6 - i) * 86400000);
     const label = d.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
     const dc = realCheckins.filter(c => new Date(c.checked_in_at).toDateString() === d.toDateString());
     const score = dc.length > 0
-      ? dc.reduce((s, c) => s + ((c.state === "Steady" || c.state === "Regulated") ? 5 : c.state === "Stretched" ? 3 : 1.5), 0) / dc.length
+      ? dc.reduce((s, c) => s + (c.state === "Regulated" ? 5 : c.state === "Stretched" ? 3 : 1.5), 0) / dc.length
       : 0;
     return { label, score, count: dc.length, hasData: dc.length > 0 };
   });
 
-  // Consecutive activated days
   let consecutiveActivated = 0;
   for (let i = days.length - 1; i >= 0; i--) {
     const d = new Date(Date.now() - (6 - i) * 86400000);
@@ -143,7 +128,6 @@ function analyzePatterns(checkins, sleepSessions) {
     else break;
   }
 
-  // Week narrative
   let weekNarrative = null;
   if (realCheckins.length > 0) {
     if (consecutiveActivated >= 3) {
@@ -157,7 +141,6 @@ function analyzePatterns(checkins, sleepSessions) {
     }
   }
 
-  // Meaning maker
   let meaningMaker = null;
   const sleepAndActivation = roughNights >= 2 && activationCount >= 3;
   const sleepDebt = roughNights >= 2 || shortNapCount >= 3;
@@ -212,31 +195,35 @@ function analyzePatterns(checkins, sleepSessions) {
     };
   }
 
-  // Behavior pattern — show if there's any activation, regardless of steady ratio
   let behaviorPattern = null;
-  if (activationCount >= 1) {
-    if (topState?.[0] === "Shutdown" || topState?.[0] === "Freeze") {
+  if (activationCount >= 2) {
+    if ((topState?.[0] === "Shutdown" || topState?.[0] === "Freeze") && topState[1] >= 2) {
       behaviorPattern = {
         quote: `Withdrawal isn't weakness — it's a protective response.`,
         body: `When the system shuts down, it's protecting itself from overload. Connection and gentle movement are the way back — not willpower.`,
         chip: { emoji: "🌿", label: "Polyvagal" },
       };
-    } else if (topState?.[0] === "Flight") {
+    } else if (topState?.[0] === "Flight" && topState[1] >= 2) {
       behaviorPattern = {
         quote: `More boundary pushing = seeking control, not defiance.`,
         body: `Boundary-testing spikes when a child's world feels unpredictable. They're not pushing your buttons — they're looking for the edges to feel safe.`,
         chip: { emoji: "🌿", label: "Attachment" },
       };
-    } else if (topState?.[0] === "Fight" && realCheckins.length >= 3) {
+    } else if (topState?.[0] === "Fight" && topState[1] >= 2) {
       behaviorPattern = {
         quote: `Meltdowns cluster when the tank is empty.`,
         body: `High-activation states in parents and children are contagious — not because of bad parenting, but because nervous systems mirror each other. Your regulation is your child's regulation.`,
         chip: { emoji: "🌿", label: "Co-regulation" },
       };
+    } else if (topState?.[0] === "Stretched" && topState[1] >= 2) {
+      behaviorPattern = {
+        quote: `Running on fumes changes how everything lands.`,
+        body: `When you're stretched, your window of tolerance narrows — what would normally roll off you sticks. That's not a character flaw. That's biology asking for a reset.`,
+        chip: { emoji: "🌿", label: "Nervous System" },
+      };
     }
   }
 
-  // Your pattern
   let yourPattern = null;
   if (peakTimeStr && alertTimeStr) {
     const peakHr = parseInt(peakHour[0]);
@@ -248,7 +235,6 @@ function analyzePatterns(checkins, sleepSessions) {
     };
   }
 
-  // End of day
   const today = new Date().toDateString();
   const todayCheckins = realCheckins.filter(c => new Date(c.checked_in_at).toDateString() === today);
   const hadEvening = eveningCheckins.some(c => new Date(c.checked_in_at).toDateString() === today);
@@ -263,22 +249,34 @@ function analyzePatterns(checkins, sleepSessions) {
       : `"Even one moment of noticing is the practice."`,
   };
 
+  // 7-day streak
+  let streak = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.now() - i * 86400000).toDateString();
+    const hasLog = checkins.some(c => new Date(c.checked_in_at).toDateString() === d);
+    if (hasLog) streak++;
+    else break;
+  }
+  const streakDays = Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date(Date.now() - (6 - i) * 86400000).toDateString();
+    return checkins.some(c => new Date(c.checked_in_at).toDateString() === d);
+  });
+
   return {
     days, weekNarrative, meaningMaker, behaviorPattern, yourPattern,
     endOfDay, topState, realCheckins, avgSleepHrs, morningCheckins, eveningCheckins,
-    roughNights, shortNapCount, sessionsWithDuration,
+    roughNights, shortNapCount, sessionsWithDuration, streak, streakDays,
   };
 }
 
-// ─── INSIGHT CARD ────────────────────────────────────────────────────────────
+// ─── SHARED SUB-COMPONENTS ────────────────────────────────────────────────────
 function InsightCard({ eyebrow, quote, body, chip, accentColor }) {
   const T = useT();
   return (
     <div style={{
       borderRadius: 16, padding: "18px 18px 16px",
       background: T.card2, border: `1px solid ${T.border}`,
-      borderLeft: `4px solid ${accentColor}`,
-      marginBottom: 12,
+      borderLeft: `4px solid ${accentColor}`, marginBottom: 12,
     }}>
       {eyebrow && (
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: accentColor, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>
@@ -293,33 +291,430 @@ function InsightCard({ eyebrow, quote, body, chip, accentColor }) {
       </div>
       {chip && (
         <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, background: T.tealLight, border: "1px solid #C4D8CA", fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal }}>
-          <span>{chip.emoji}</span>
-          <span>{chip.label}</span>
+          <span>{chip.emoji}</span><span>{chip.label}</span>
         </div>
       )}
     </div>
   );
 }
 
-// ─── COMPONENT ────────────────────────────────────────────────────────────────
+function SectionLabel({ text }) {
+  const T = useT();
+  return (
+    <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 10, marginTop: 4 }}>
+      {text}
+    </div>
+  );
+}
+
+// ─── YOUR STORY TAB ───────────────────────────────────────────────────────────
+function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, setTab, onScripts }) {
+  const T = useT();
+  const {
+    meaningMaker, behaviorPattern, yourPattern, endOfDay,
+    realCheckins, streak, streakDays,
+  } = patterns;
+
+  const total = profile?.total_ns_logs ?? 0;
+  const ventral = ventralCount ?? 0;
+  const leaves = profile?.leaves ?? 0;
+  const resilience = Math.min(Math.round((total / 120) * 100), 100);
+  const visualProgress = Math.min(Math.round((weekCount / 22) * 100), 100);
+  const stabilityRate = total > 0 ? Math.round((ventral / total) * 100) : 0;
+  const capacityLabel = resilience >= 75 ? "Deeply anchored" : resilience >= 45 ? "Structure stabilizing" : "Foundation building";
+
+  let nsQuote = null;
+  if (weekCount <= 3) {
+    nsQuote = `Your nervous system has been checked in ${total} time${total === 1 ? "" : "s"}. You are noticing — and the roots are real, even when you can't see them yet.`;
+  } else if (weekCount <= 7) {
+    nsQuote = `${ventral} of your ${total} check-ins have been ventral — a ${stabilityRate}% stability rate. Your trunk is rising. The work below ground is starting to show.`;
+  } else if (weekCount <= 12) {
+    const direction = resilience >= 50 ? "climbing" : "building";
+    nsQuote = `Your system stability is at ${stabilityRate}% and ${direction}. You've been showing up for ${weekCount} weeks. That's ${total} moments of noticing — each one a ring in your trunk.`;
+  } else {
+    nsQuote = `Something is shifting. ${stabilityRate}% stability, ${leaves} leaves banked. Your branches are reaching because your roots earned it.`;
+  }
+
+  const hasData = realCheckins.length >= 1;
+
+  return (
+    <div>
+      {/* ── REGULATION TREE ── */}
+      {/* hideStats wrapper — hides the score row HeldTree renders internally */}
+      <div style={{ paddingBottom: 16 }} className="held-tree-no-stats">
+        <style>{`.held-tree-no-stats .tree-stats-row { display: none !important; }`}</style>
+        <HeldTree
+          userWeekCount={weekCount}
+          totalNsLogs={total}
+          ventralPoints={ventral}
+          latestNsState={profile?.latest_ns_state ?? null}
+          hideStats={true}
+        />
+      </div>
+
+      {/* ── STATS ROW ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {[
+          { label: "CHECK-INS", value: total },
+          { label: "LEAVES",    value: leaves },
+          { label: "WEEK",      value: weekCount },
+        ].map(s => (
+          <div key={s.label} style={{
+            flex: 1, borderRadius: 14, padding: "14px 10px 12px",
+            background: T.card2, border: `1px solid ${T.border}`, textAlign: "center",
+          }}>
+            <div style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1 }}>{s.value}</div>
+            <div style={{ fontFamily: font, fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase", color: T.muted, marginTop: 5 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── NS NARRATIVE ── */}
+      <SectionLabel text="Your nervous system story" />
+      <div style={{
+        borderRadius: 16, padding: "18px 18px 16px",
+        background: T.card2, border: `1px solid ${T.border}`,
+        borderLeft: `4px solid ${T.teal}`, marginBottom: 16,
+      }}>
+        <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.6, marginBottom: 14 }}>
+          "{nsQuote}"
+        </div>
+        <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
+          System resilience
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ fontFamily: font, fontSize: 13, color: T.headingText }}>{capacityLabel}</div>
+          <div style={{ fontFamily: serif, fontSize: 15, color: T.teal, fontWeight: 700 }}>{resilience}%</div>
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", marginBottom: 10 }}>
+          <div style={{ height: "100%", width: `${resilience}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
+        </div>
+        <div style={{ fontFamily: font, fontSize: 12, color: T.muted, fontStyle: "italic", lineHeight: 1.6 }}>
+          Visual progress is {visualProgress}% — but your foundation is at {resilience}%. The canopy is coming.
+        </div>
+      </div>
+
+      {/* ── 7-DAY STREAK ── */}
+      <SectionLabel text="7-day streak" />
+      <div style={{ borderRadius: 16, padding: "16px 18px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {streakDays.map((filled, i) => (
+            <div key={i} style={{
+              flex: 1, height: 10, borderRadius: 5,
+              background: filled ? T.teal : T.border,
+              transition: "background 0.3s",
+            }} />
+          ))}
+        </div>
+        <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
+          {streak >= 7
+            ? "7-day streak complete — your roots are locked in 🌳"
+            : `${streak} of 7 days — ${7 - streak} more day${7 - streak === 1 ? "" : "s"} locks in this progress permanently`}
+        </div>
+      </div>
+
+      {/* ── EMPTY STATE ── */}
+      {!hasData && !loading && (
+        <div style={{ borderRadius: 16, padding: "24px 20px", marginBottom: 12, background: T.card2, border: `1px solid ${T.border}`, textAlign: "center" }}>
+          <div style={{ fontSize: 28, marginBottom: 10 }}>🌱</div>
+          <div style={{ fontFamily: serif, fontSize: 16, color: T.headingText, marginBottom: 6 }}>Patterns need a little time</div>
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.65, marginBottom: 16 }}>
+            Log a few check-ins and your personalized insights will appear here.
+          </div>
+          <button onClick={() => setTab("home")} style={{ padding: "10px 20px", borderRadius: 24, background: T.bark, color: "#fff", border: "none", fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            Do a check-in →
+          </button>
+        </div>
+      )}
+
+      {/* ── MEANING MAKER ── */}
+      {meaningMaker && (
+        <InsightCard eyebrow="Meaning Maker" quote={meaningMaker.quote} body={meaningMaker.body} chip={meaningMaker.chip} accentColor={T.warm} />
+      )}
+
+      {/* ── BEHAVIOR PATTERN ── */}
+      {behaviorPattern && (
+        <InsightCard eyebrow="Behavior Pattern" quote={behaviorPattern.quote} body={behaviorPattern.body} chip={behaviorPattern.chip} accentColor={T.teal} />
+      )}
+
+      {/* ── YOUR PATTERN ── */}
+      {yourPattern && (
+        <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, borderLeft: `4px solid ${T.teal}`, marginBottom: 12 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>Your Pattern</div>
+          <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.55, marginBottom: 10 }}>"{yourPattern.quote}"</div>
+          <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 14 }}>{yourPattern.body}</div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, background: T.tealLight, border: `1px solid ${T.teal}40`, fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal, cursor: "pointer" }}>
+            ⏰ {yourPattern.alertLabel}
+          </div>
+        </div>
+      )}
+
+      {/* ── END OF DAY ── */}
+      {(endOfDay.checkinsToday > 0 || endOfDay.sleepLoggedToday) && (
+        <div style={{ borderRadius: 16, padding: "18px 20px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 12 }}>
+          <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 12 }}>End of Day</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            {[
+              { done: endOfDay.checkinsToday >= 1 },
+              { done: endOfDay.sleepLoggedToday },
+              { done: endOfDay.checkinsToday >= 2 },
+              { done: endOfDay.eveningDone },
+            ].map((item, i) => (
+              <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: item.done ? T.tealMid : T.border, transition: "background 0.3s" }} />
+            ))}
+          </div>
+          <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.6 }}>
+            {endOfDay.quote}
+          </div>
+        </div>
+      )}
+
+      {/* ── NO INSIGHTS YET ── */}
+      {hasData && !meaningMaker && !behaviorPattern && !yourPattern && (
+        <div style={{ borderRadius: 16, padding: "16px 18px", marginBottom: 12, background: T.card2, border: `1px solid ${T.border}` }}>
+          <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
+            🌿 Keep logging — your meaning maker and behavior patterns will appear after a few more days of data.
+          </div>
+        </div>
+      )}
+
+      {/* ── SCRIPTS LINK ── */}
+      <button onClick={() => onScripts ? onScripts() : setTab("library")} style={{ width: "100%", padding: "16px 18px", borderRadius: 16, background: T.card2, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 14, cursor: "pointer", textAlign: "left", marginBottom: 8 }}>
+        <span style={{ fontSize: 24 }}>💬</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText }}>Scripts for right now</div>
+          <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginTop: 2 }}>What to say in hard parenting moments</div>
+        </div>
+        <span style={{ color: T.muted, fontSize: 16 }}>›</span>
+      </button>
+    </div>
+  );
+}
+
+// ─── FOUNDATION TAB ───────────────────────────────────────────────────────────
+function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
+  const T = useT();
+  const { streak } = patterns;
+
+  const total = profile?.total_ns_logs ?? 0;
+  const ventral = ventralCount ?? 0;
+  const leaves = profile?.leaves ?? 0;
+  const resilience = Math.min(Math.round((total / 120) * 100), 100);
+  const visualProgress = Math.min(Math.round((weekCount / 22) * 100), 100);
+  const rootDepth = Math.round(resilience * 0.35);
+  const isSecure = streak >= 7;
+  const capacityLabel = resilience >= 75 ? "Deeply anchored" : resilience >= 45 ? "Structure stabilizing" : "Foundation building";
+  const anchorStrength = streak >= 7 ? "Level 2" : streak >= 5 ? "Level 1" : "Building";
+
+  // Seeded ring heights — stable across re-renders
+  const ringHeights = Array.from({ length: Math.max(weekCount, 5) }).map((_, i) => {
+    const seed = ((i * 7 + 3) % 5) + 1;
+    return 8 + seed * 5;
+  });
+
+  return (
+    <div>
+      {/* ── FOUNDATION STATUS REPORT ── */}
+      <SectionLabel text="Foundation status report" />
+      <div style={{
+        borderRadius: 18, padding: "20px 20px 18px",
+        background: `linear-gradient(160deg, ${T.bark}, ${T.bark})`,
+        marginBottom: 16,
+      }}>
+        <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: "rgba(255,255,255,0.88)", lineHeight: 1.65 }}>
+          "Foundation Status: {isSecure ? "Secure" : "Building"}. You've spent {weekCount} day{weekCount === 1 ? "" : "s"} noticing your state. Your roots have expanded {rootDepth}% deeper. Your biological capacity for stress {isSecure ? "has levelled up" : "is increasing"}."
+        </div>
+      </div>
+
+      {/* ── VENTRAL CAPACITY SCORE ── */}
+      <SectionLabel text="Ventral capacity score" />
+      <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontFamily: serif, fontSize: 38, color: T.headingText, lineHeight: 1 }}>{resilience}%</div>
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted, textAlign: "right", paddingTop: 6 }}>{capacityLabel}</div>
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ height: "100%", width: `${resilience}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
+        </div>
+        <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
+          Every regulated check-in adds to your rolling system stability average. Visual progress is {visualProgress}% — but your foundation is at {resilience}%. The canopy is coming.
+        </div>
+      </div>
+
+      {/* ── BY THE NUMBERS ── */}
+      <SectionLabel text="By the numbers" />
+      <div style={{ borderRadius: 16, padding: "18px 18px 4px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
+        {[
+          { label: "Regulated check-ins", sub: "Ventral (Steady/Regulated) states", value: `${ventral} of ${total}` },
+          { label: "Leaves banked",        sub: "Deep forest green — hard earned", value: String(leaves) },
+          { label: "Repair blooms",        sub: "Worth 3× root depth each",        value: "0" },
+          { label: "Anchor strength",      sub: "Meltdown resistance rating",       value: anchorStrength, useSerif: true },
+        ].map((row, i, arr) => (
+          <div key={row.label}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 14 }}>
+              <div>
+                <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText, marginBottom: 2 }}>{row.label}</div>
+                <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>{row.sub}</div>
+              </div>
+              <div style={{ fontFamily: serif, fontSize: row.useSerif ? 20 : 22, color: T.headingText, fontWeight: 400, marginLeft: 12 }}>
+                {row.value}
+              </div>
+            </div>
+            {i < arr.length - 1 && <div style={{ height: 1, background: T.border, marginBottom: 14 }} />}
+          </div>
+        ))}
+      </div>
+
+      {/* ── GROWTH RINGS ── */}
+      <SectionLabel text="Growth rings" />
+      <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 5, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" }}>
+          {ringHeights.map((h, i) => {
+            const opacity = 0.35 + (i / Math.max(ringHeights.length - 1, 1)) * 0.65;
+            const colorPick = i % 3 === 0 ? T.teal : i % 3 === 1 ? T.tealMid : T.bark;
+            return (
+              <div key={i} style={{
+                width: 28, height: h, borderRadius: 4,
+                background: colorPick, opacity, flexShrink: 0,
+              }} />
+            );
+          })}
+        </div>
+        <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.7 }}>
+          Each ring is a week. Thin rings were harder. Thick rings were weeks of steady ventral access. Growth is not linear — but it is cumulative.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ROOT CELLAR TAB ──────────────────────────────────────────────────────────
+function RootCellarTab({ profile, patterns }) {
+  const T = useT();
+  const { streak } = patterns;
+  const total = profile?.total_ns_logs ?? 0;
+  const leaves = profile?.leaves ?? 0;
+  const jarFill = Math.min(leaves / 40, 1);
+  const jarGlowing = leaves >= 10;
+
+  const badges = [
+    { icon: "⚓", name: "Foundational anchor", desc: "7 consecutive days of noticing your state",  earnedProof: "Proof of consistent self-awareness",   lockedProof: `${Math.max(0, 7 - streak)} more days to unlock`,         earned: streak >= 7 },
+    { icon: "🏛", name: "NS architect",         desc: "20 logs of identifying your state",          earnedProof: "Proof of naming it to tame it",         lockedProof: `${Math.max(0, 20 - total)} more check-ins to unlock`,    earned: total >= 20 },
+    { icon: "🔧", name: "Repair master",         desc: "5 rupture + repair sequences logged",        earnedProof: "Proof of biological recovery speed",    lockedProof: `${Math.max(0, 20 - total)} more check-ins to unlock`,    earned: total >= 20, warmAccent: true },
+    { icon: "🌱", name: "Steady ground",          desc: "30 total check-ins completed",              earnedProof: "Proof of sustained commitment",          lockedProof: `${Math.max(0, 30 - total)} more check-ins to unlock`,    earned: total >= 30 },
+    { icon: "🌳", name: "Deeply rooted",          desc: "60 total check-ins completed",              earnedProof: "Proof of long-term resilience building", lockedProof: `${Math.max(0, 60 - total)} more check-ins to unlock`,    earned: total >= 60 },
+  ];
+
+  return (
+    <div>
+      {/* ── INTRO ── */}
+      <div style={{ fontFamily: serif, fontSize: 16, fontStyle: "italic", color: T.muted, lineHeight: 1.7, marginBottom: 20 }}>
+        Your root cellar holds the proof of everything you've built. These aren't rewards — they're records.
+      </div>
+
+      {/* ── BADGES ── */}
+      <SectionLabel text="Your badges" />
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+        {badges.map(b => (
+          <div key={b.name} style={{
+            borderRadius: 16, padding: "14px 16px",
+            background: T.card2,
+            border: `1px solid ${T.border}`,
+            borderLeft: b.earned ? `4px solid ${b.warmAccent ? T.warm : T.teal}` : `1px solid ${T.border}`,
+            display: "flex", alignItems: "center", gap: 14,
+            opacity: b.earned ? 1 : 0.45,
+          }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: "50%", flexShrink: 0,
+              background: b.earned ? T.tealLight : T.border,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 20,
+            }}>
+              {b.icon}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText, marginBottom: 2 }}>{b.name}</div>
+              <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 4 }}>{b.desc}</div>
+              <div style={{
+                fontFamily: font, fontSize: 12, fontWeight: 600,
+                color: b.earned ? (b.warmAccent ? T.warm : T.teal) : T.muted,
+              }}>
+                {b.earned ? `Earned · ${b.earnedProof}` : `Locked · ${b.lockedProof}`}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── LEAF BANK ── */}
+      <SectionLabel text="Leaf bank" />
+      <div style={{ borderRadius: 16, padding: "16px 18px", background: T.card2, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+        <div style={{ position: "relative", width: 42, height: 52, flexShrink: 0 }}>
+          <img
+            src={jarGlowing ? "/tree/jar-full.png" : "/tree/jar-empty.png"}
+            alt="leaf jar"
+            style={{
+              width: "100%", height: "100%", objectFit: "contain",
+              boxShadow: jarGlowing ? `0 0 14px ${T.teal}66` : "none",
+              transition: "box-shadow 0.4s",
+            }}
+          />
+          <div style={{
+            position: "absolute", bottom: 3, left: 4, right: 4,
+            height: `${Math.round(jarFill * 70)}%`,
+            borderRadius: "0 0 4px 4px",
+            background: `${T.teal}44`,
+            transition: "height 0.5s",
+            pointerEvents: "none",
+          }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: serif, fontSize: 18, color: T.headingText, marginBottom: 4 }}>
+            {leaves} leaves banked
+          </div>
+          <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
+            {jarGlowing
+              ? "Your jar is glowing. These are hard-earned."
+              : `${10 - leaves} more to your next milestone. At 10 leaves your jar glows.`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
   const T = useT();
   const { currentUser, activeFamily, activeChild } = useApp();
+  const [insightTab, setInsightTab] = useState("story");
 
-  const { checkins, sleepSessions, loading } = useInsightsData(
+  const { checkins, sleepSessions, ventralCount, loading } = useInsightsData(
     currentUser?.id, activeFamily?.id, activeChild?.id
   );
 
+  const [profile, setProfile] = useState(null);
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    supabase
+      .from("profiles")
+      .select("created_at, total_ns_logs, ventral_points, latest_ns_state, leaves")
+      .eq("id", currentUser.id)
+      .single()
+      .then(({ data }) => setProfile(data));
+  }, [currentUser?.id]);
+
+  const weekCount = profile?.created_at
+    ? Math.floor((Date.now() - new Date(profile.created_at).getTime()) / (1000 * 60 * 60 * 24 * 7))
+    : 0;
+
   const patterns = useMemo(() => analyzePatterns(checkins, sleepSessions), [checkins, sleepSessions]);
 
-  const {
-    days, weekNarrative, meaningMaker, behaviorPattern, yourPattern,
-    endOfDay, realCheckins, avgSleepHrs, morningCheckins, eveningCheckins,
-    roughNights, shortNapCount, sessionsWithDuration,
-  } = patterns;
-
-  const hasData = realCheckins.length >= 1 || sleepSessions.length >= 1;
-  const maxScore = Math.max(...days.map(d => d.score), 1);
+  const tabs = [
+    { id: "story",      label: "Your story" },
+    { id: "foundation", label: "Foundation" },
+    { id: "cellar",     label: "Root cellar" },
+  ];
 
   return (
     <div style={{ paddingBottom: 90, background: T.bg, minHeight: "100vh" }}>
@@ -338,119 +733,51 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
         )}
       </div>
 
-      <div style={{ padding: "0 20px" }}>
-
-        {/* ── THIS WEEK ── */}
-        <div style={{ borderRadius: 18, padding: "18px 20px 16px", background: `linear-gradient(160deg, ${T.bark}, ${T.bark})`, marginBottom: 16 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", fontFamily: font, marginBottom: 12, fontWeight: 700 }}>
-            This week
-          </div>
-          {weekNarrative && (
-            <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: "rgba(255,255,255,0.88)", lineHeight: 1.55, marginBottom: 16 }}>
-              "{weekNarrative}"
-            </div>
-          )}
-          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontFamily: font, marginBottom: 6, letterSpacing: ".08em" }}>
-            The taller the bar, the more regulated you were
-          </div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 48, marginBottom: 10 }}>
-            {days.map((day, i) => (
-              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                <div style={{ width: "100%", borderRadius: "3px 3px 0 0", height: day.score > 0 ? `${(day.score / maxScore) * 40}px` : "3px", background: day.hasData ? `rgba(123,170,138,${0.35 + (day.score / maxScore) * 0.65})` : "rgba(255,255,255,0.08)", minHeight: 3, transition: "height 0.4s" }} />
-                <div style={{ fontFamily: font, fontSize: 9.5, color: "rgba(255,255,255,0.3)" }}>{day.label}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
-            {[
-              { label: "Check-ins", value: realCheckins.length || "—" },
-              { label: "Avg sleep", value: avgSleepHrs ? `${avgSleepHrs}h` : (sessionsWithDuration?.length ? `${Math.round(sessionsWithDuration.reduce((s,l)=>s+(l.total_sleep_ms||(new Date(l.end_ts)-new Date(l.ts))),0)/sessionsWithDuration.length/3600000*10)/10}h` : "—") },
-              { label: "Mornings",  value: morningCheckins.length > 0 ? morningCheckins.length : (realCheckins.filter(c => new Date(c.checked_in_at).getHours() < 12).length || "—") },
-              { label: "Evenings",  value: eveningCheckins.length > 0 ? eveningCheckins.length : (realCheckins.filter(c => new Date(c.checked_in_at).getHours() >= 17).length || "—") },
-            ].map(s => (
-              <div key={s.label} style={{ flex: 1, textAlign: "center" }}>
-                <div style={{ fontFamily: serif, fontSize: 18, color: "rgba(255,255,255,0.85)", lineHeight: 1 }}>{s.value}</div>
-                <div style={{ fontFamily: font, fontSize: 9, color: "rgba(255,255,255,0.3)", marginTop: 3, lineHeight: 1.3 }}>{s.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* ── EMPTY STATE ── */}
-        {!hasData && !loading && (
-          <div style={{ borderRadius: 16, padding: "24px 20px", marginBottom: 12, background: T.card2, border: `1px solid ${T.border}`, textAlign: "center" }}>
-            <div style={{ fontSize: 28, marginBottom: 10 }}>🌱</div>
-            <div style={{ fontFamily: serif, fontSize: 16, color: T.headingText, marginBottom: 6 }}>Patterns need a little time</div>
-            <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.65, marginBottom: 16 }}>
-              Log a few check-ins or sleep sessions and your personalized insights will appear here.
-            </div>
-            <button onClick={() => setTab("home")} style={{ padding: "10px 20px", borderRadius: 24, background: T.bark, color: "#fff", border: "none", fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-              Do a check-in →
+      {/* ── THREE-TAB NAV ── */}
+      <div style={{ padding: "0 20px 16px" }}>
+        <div style={{ display: "flex", background: T.card2, borderRadius: 22, padding: 4, border: `1px solid ${T.border}` }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setInsightTab(t.id)} style={{
+              flex: 1, padding: "9px 6px", borderRadius: 18, border: "none", cursor: "pointer",
+              fontFamily: font, fontSize: 13, fontWeight: insightTab === t.id ? 700 : 500,
+              background: insightTab === t.id ? T.card : "transparent",
+              color: insightTab === t.id ? T.headingText : T.muted,
+              boxShadow: insightTab === t.id ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+              transition: "all 0.2s",
+            }}>
+              {t.label}
             </button>
-          </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── TAB CONTENT ── */}
+      <div style={{ padding: "0 20px" }}>
+        {insightTab === "story" && (
+          <YourStoryTab
+            profile={profile}
+            weekCount={weekCount}
+            patterns={patterns}
+            loading={loading}
+            ventralCount={ventralCount}
+            setTab={setTab}
+            onScripts={onScripts}
+          />
         )}
-
-        {/* ── MEANING MAKER ── */}
-        {meaningMaker && (
-          <InsightCard eyebrow="Meaning Maker" quote={meaningMaker.quote} body={meaningMaker.body} chip={meaningMaker.chip} accentColor={T.warm} />
+        {insightTab === "foundation" && (
+          <FoundationTab
+            profile={profile}
+            weekCount={weekCount}
+            patterns={patterns}
+            ventralCount={ventralCount}
+          />
         )}
-
-        {/* ── BEHAVIOR PATTERN ── */}
-        {behaviorPattern && (
-          <InsightCard eyebrow="Behavior Pattern" quote={behaviorPattern.quote} body={behaviorPattern.body} chip={behaviorPattern.chip} accentColor={T.teal} />
+        {insightTab === "cellar" && (
+          <RootCellarTab
+            profile={profile}
+            patterns={patterns}
+          />
         )}
-
-        {/* ── YOUR PATTERN ── */}
-        {yourPattern && (
-          <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, borderLeft: `4px solid ${T.teal}`, marginBottom: 12 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>Your Pattern</div>
-            <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.55, marginBottom: 10 }}>"{yourPattern.quote}"</div>
-            <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 14 }}>{yourPattern.body}</div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, background: T.tealLight, border: `1px solid ${T.teal}40`, fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal, cursor: "pointer" }}>
-              ⏰ {yourPattern.alertLabel}
-            </div>
-          </div>
-        )}
-
-        {/* ── END OF DAY ── */}
-        {(endOfDay.checkinsToday > 0 || endOfDay.sleepLoggedToday) && (
-          <div style={{ borderRadius: 16, padding: "18px 20px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 12 }}>
-            <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 12 }}>End of Day</div>
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-              {[
-                { done: endOfDay.checkinsToday >= 1 },
-                { done: endOfDay.sleepLoggedToday },
-                { done: endOfDay.checkinsToday >= 2 },
-                { done: endOfDay.eveningDone },
-              ].map((item, i) => (
-                <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: item.done ? T.tealMid : T.border, transition: "background 0.3s" }} />
-              ))}
-            </div>
-            <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.6 }}>
-              {endOfDay.quote}
-            </div>
-          </div>
-        )}
-
-        {/* ── NO INSIGHTS YET ── */}
-        {hasData && !meaningMaker && !behaviorPattern && !yourPattern && (
-          <div style={{ borderRadius: 16, padding: "16px 18px", marginBottom: 12, background: T.card2, border: `1px solid ${T.border}` }}>
-            <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
-              🌿 Keep logging — your meaning maker and behavior patterns will appear after a few more days of data.
-            </div>
-          </div>
-        )}
-
-        {/* ── SCRIPTS LINK ── */}
-        <button onClick={() => onScripts ? onScripts() : setTab("library")} style={{ width: "100%", padding: "16px 18px", borderRadius: 16, background: T.card2, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 14, cursor: "pointer", textAlign: "left", marginBottom: 8 }}>
-          <span style={{ fontSize: 24 }}>💬</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText }}>Scripts for right now</div>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginTop: 2 }}>What to say in hard parenting moments</div>
-          </div>
-          <span style={{ color: T.muted, fontSize: 16 }}>›</span>
-        </button>
-
       </div>
     </div>
   );

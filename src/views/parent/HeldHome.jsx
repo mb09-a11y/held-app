@@ -23,13 +23,37 @@ function ageLabel(dob) {
   return months < 24 ? `${months}mo` : `${Math.floor(months / 12)}y`;
 }
 
-const INVITATIONS = [
-  "What do you want to bring to today?",
-  "One breath before you begin.",
-  "You don't have to be perfect. You just have to show up.",
-  "Your presence is the thing they'll remember.",
-  "Tired parents can still be loving parents.",
-  "Small, consistent steps build something real.",
+const DAILY_PROMPTS = [
+  { invitation: "You don't have to be perfect today — just present.", reset: "Put one hand on your chest, one on your stomach. Take 3 slow breaths.", script: "\"I'm here with you. We'll figure this out together.\"" },
+  { invitation: "Pause before you respond. Your nervous system leads the moment.", reset: "Drop your shoulders. Unclench your jaw. Inhale for 4, exhale for 6.", script: "\"Give me a second… I want to respond, not react.\"" },
+  { invitation: "A little frustration is okay. It's what you do with it that matters.", reset: "Name it silently: \"I'm feeling frustrated.\" Let it exist without acting.", script: "\"I'm feeling frustrated, so I'm going to slow down before we keep going.\"" },
+  { invitation: "Try taking three slow breaths before replying to your child.", reset: "Breathe in through your nose, out through your mouth — slow and audible.", script: "\"Okay, I'm ready now.\"" },
+  { invitation: "Connection first. Correction can come later.", reset: "Get physically lower — kneel or sit near your child.", script: "\"I see you're upset. I'm here. We'll talk about what happened.\"" },
+  { invitation: "Notice what's coming up for you before focusing on your child.", reset: "Ask yourself: \"What am I feeling right now?\" No fixing, just noticing.", script: "\"I need a quick pause so I can show up the way I want to.\"" },
+  { invitation: "You can hold a boundary and stay calm. Both can be true.", reset: "Stand or sit tall. Feel your feet grounded.", script: "\"I won't let you hit. I'm right here with you.\"" },
+  { invitation: "Let this moment be messy without needing to fix it immediately.", reset: "Take a breath and soften your eyes. Release urgency.", script: "\"We don't have to solve this right now.\"" },
+  { invitation: "Your child doesn't need perfection — they need your presence.", reset: "Make eye contact. Put your phone down.", script: "\"You have my attention right now.\"" },
+  { invitation: "Slow down. You don't have to rush through this moment.", reset: "Intentionally move 10% slower in your next action.", script: "\"Let's take this one step at a time.\"" },
+  { invitation: "If you raised your voice, repair is always available.", reset: "Exhale fully. Release the tension in your chest.", script: "\"I didn't like how I just spoke. I'm sorry. Let's try again.\"" },
+  { invitation: "Observe before you react. What's actually happening here?", reset: "Silently narrate: \"They're crying… they're tired… they're overwhelmed.\"", script: "\"Something feels hard for you right now.\"" },
+  { invitation: "Meet your child where they are, not where you wish they'd be.", reset: "Adjust your expectations in real time.", script: "\"This feels big for you, even if it seems small.\"" },
+  { invitation: "You're allowed to take a breath before deciding what to do next.", reset: "One full inhale, one full exhale — no rush.", script: "\"I'm thinking about what to do here.\"" },
+  { invitation: "This is a moment to guide, not control.", reset: "Relax your hands. Release physical tension.", script: "\"I'm going to help you through this.\"" },
+  { invitation: "Let go of the \"right\" response — choose a connected one.", reset: "Ask: \"What would connection look like right now?\"", script: "\"Let's figure this out together.\"" },
+  { invitation: "Your calm is more powerful than your control.", reset: "Lengthen your exhale. Slow your body down.", script: "\"I'm here. You're safe.\"" },
+  { invitation: "Notice your body — are you tense, rushed, overwhelmed?", reset: "Do a quick body scan from head to toe.", script: "\"I need to slow myself down for a second.\"" },
+  { invitation: "Stay in the gray. It doesn't have to be all or nothing.", reset: "Release the need for a perfect solution.", script: "\"We can find something that works for both of us.\"" },
+  { invitation: "You can be firm and kind at the same time.", reset: "Soften your tone without changing your boundary.", script: "\"I won't let that happen, and I'm here to help you.\"" },
+  { invitation: "Before correcting your child, check in with yourself.", reset: "Ask: \"Am I reacting or responding?\"", script: "\"Give me a second, I want to handle this well.\"" },
+  { invitation: "Not every moment needs a lesson. Some just need presence.", reset: "Sit beside your child without talking for 10 seconds.", script: "\"I'm right here.\"" },
+  { invitation: "Let your response come from intention, not reaction.", reset: "Pause → breathe → choose your next move.", script: "\"Here's what we're going to do.\"" },
+  { invitation: "Your child's behavior is communication — what are they telling you?", reset: "Ask: \"What need is underneath this?\"", script: "\"Are you feeling overwhelmed or needing help?\"" },
+  { invitation: "You don't have to solve this right now. Stay with them instead.", reset: "Place a gentle hand on their back or shoulder.", script: "\"I'm here with you while this feels hard.\"" },
+  { invitation: "Take one small step toward connection today.", reset: "Offer a hug, smile, or sit close.", script: "\"Come sit with me for a minute.\"" },
+  { invitation: "Trust yourself — you know your child better than anyone.", reset: "Take a breath and ground into your body.", script: "\"I've got this.\"" },
+  { invitation: "It's okay if this feels hard. You're still showing up.", reset: "Acknowledge yourself: \"This is hard, and I'm here.\"", script: "\"We're figuring this out together.\"" },
+  { invitation: "Choose curiosity over control in this moment.", reset: "Ask one genuine question before reacting.", script: "\"What happened from your perspective?\"" },
+  { invitation: "Come back to center. That's where your parenting lives.", reset: "Feel your feet. Take a slow breath. Return to your body.", script: "\"Let's reset together.\"" },
 ];
 
 const RETURN_LOOPS = [
@@ -64,14 +88,14 @@ function useRecentRegulationCheckins(userId, refreshKey = 0) {
   const [checkins, setCheckins] = useState([]);
   useEffect(() => {
     if (!userId) return;
-    const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
+    const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
     supabase
       .from("regulation_checkins")
       .select("state, checked_in_at, source")
       .eq("user_id", userId)
-      .gte("checked_in_at", since7)
+      .gte("checked_in_at", since14)
       .order("checked_in_at", { ascending: false })
-      .limit(30)
+      .limit(60)
       .then(({ data }) => setCheckins(data || []));
   }, [userId, refreshKey]);
   return checkins;
@@ -166,12 +190,18 @@ function HeldCheckinInline({ familyState, patterns, saveCheckin }) {
   );
 }
 
-export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onOpenDrawer, onNotifications, onGrounding, checkinRefreshKey = 0 }) {
+export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onOpenDrawer, onNotifications, onGrounding, checkinRefreshKey = 0, familyStateProp = null }) {
   const T = useT();
   const { currentUser, activeChild, activeFamily } = useApp();
 
   // ── Checkin flow data ──
-  const { familyState } = useFamilyState(activeFamily?.id, activeChild?.id, currentUser?.id);
+  const { familyState: fetchedFamilyState, refresh: refreshFamilyState } = useFamilyState(activeFamily?.id, activeChild?.id, currentUser?.id);
+  const familyState = familyStateProp ?? fetchedFamilyState;
+
+  // Re-fetch when a check-in completes
+  useEffect(() => {
+    if (checkinRefreshKey > 0) refreshFamilyState?.();
+  }, [checkinRefreshKey]);
   const { patterns, saveCheckin } = useCheckinHistory(currentUser?.id, activeFamily?.id);
 
   const checkin = useRecentCheckin(currentUser?.id, checkinRefreshKey);
@@ -184,8 +214,26 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
   const childName = activeChild?.name || "your little one";
   const childAge = activeChild?.dob ? ageLabel(activeChild.dob) : null;
 
-  // Daily invitation — cycles by day of month
-  const invitation = INVITATIONS[new Date().getDate() % INVITATIONS.length];
+  // Daily prompt — cycles by day of year so it's consistent for all users on same day
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+  const todayPrompt = DAILY_PROMPTS[dayOfYear % DAILY_PROMPTS.length];
+  const invitation = todayPrompt.invitation;
+
+  // Detect whether morning or evening check-in has already happened today
+  const today = new Date().toDateString();
+  const doneMorningToday = recentRegCheckins.some(c =>
+    new Date(c.checked_in_at).toDateString() === today &&
+    c.source === "morning_moment"
+  );
+  const doneEveningToday = recentRegCheckins.some(c =>
+    new Date(c.checked_in_at).toDateString() === today &&
+    c.source === "evening_close"
+  );
+
+  // 14-day rolling count — any check-in on a given day counts
+  const uniqueDaysCheckedIn = new Set(
+    recentRegCheckins.map(c => new Date(c.checked_in_at).toDateString())
+  ).size;
 
   // ── SCENARIO ENGINE — decides what the app says ──────────────────────────
   const scenario = useMemo(() => {
@@ -355,7 +403,9 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           }}>
             "{invitation}"
           </div>
-          {(showMorning || showEvening) && (
+
+          {/* Before check-in: show morning/evening button */}
+          {!doneMorningToday && !doneEveningToday && (showMorning || showEvening) && (
             <button
               onClick={showMorning ? onMorningMoment : onEveningClose}
               style={{
@@ -369,6 +419,42 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
               {showMorning ? "☀️ Morning moment →" : "🌙 Evening close →"}
             </button>
           )}
+
+          {/* After check-in: unlock 1-Minute Reset + Say This Instead */}
+          {(doneMorningToday || doneEveningToday) && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                padding: "10px 14px", borderRadius: 10,
+                background: `${T.teal}0d`, border: `1px solid ${T.teal}20`,
+                marginBottom: 8,
+              }}>
+                <div style={{
+                  fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                  color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 5,
+                }}>
+                  1-Minute Reset
+                </div>
+                <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.65, margin: 0 }}>
+                  {todayPrompt.reset}
+                </p>
+              </div>
+              <div style={{
+                padding: "10px 14px", borderRadius: 10,
+                background: "#A87B8A0d", border: "1px solid #A87B8A20",
+              }}>
+                <div style={{
+                  fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                  color: "#A87B8A", fontFamily: font, fontWeight: 700, marginBottom: 5,
+                }}>
+                  Say This Instead
+                </div>
+                <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: T.headingText, lineHeight: 1.6, margin: 0 }}>
+                  {todayPrompt.script}
+                </p>
+              </div>
+            </div>
+          )}
+
           <div style={{ height: 1, background: T.border, margin: "4px 0 12px" }} />
           <HeldCheckinInline
             familyState={familyState}
@@ -648,7 +734,7 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           const napTimeStr = `${earlyNapHr}:${earlyNapMin.toString().padStart(2, "0")}${earlyNapHr >= 12 ? "pm" : "am"}`.replace("am","am").replace("12:","12:");
 
           // Check if parent tends to be steadier on days with early naps
-          const steadyDominant = ["Steady","Regulated"].includes(familyState?.parentState?.nervousSystemTrend);
+          const steadyDominant = ["Regulated"].includes(familyState?.parentState?.nervousSystemTrend);
 
           return (
             <div style={{
@@ -692,9 +778,73 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           Held is thinking about you
         </div>
 
-        {/* Card 1: Time-of-day check-in prompt */}
+        {/* Card 1: Time-of-day check-in prompt — swaps after check-in */}
         {(() => {
           const hr = new Date().getHours();
+
+          // After morning check-in
+          if (doneMorningToday) {
+            return (
+              <div style={{
+                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+                background: T.card, border: `1px solid ${T.border}`,
+                borderLeft: `3px solid ${T.teal}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>🌱</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                      color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
+                    }}>
+                      You checked in
+                    </div>
+                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
+                      {uniqueDaysCheckedIn} of the last 14 days have had a check-in.{" "}
+                      {uniqueDaysCheckedIn >= 10
+                        ? "You're building something real."
+                        : uniqueDaysCheckedIn >= 5
+                        ? "Your nervous system is getting seen."
+                        : "Every day you show up counts."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // After evening check-in
+          if (doneEveningToday) {
+            return (
+              <div style={{
+                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+                background: T.card, border: `1px solid ${T.border}`,
+                borderLeft: `3px solid ${T.teal}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>🌙</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                      color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
+                    }}>
+                      Day closed
+                    </div>
+                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
+                      You closed out {uniqueDaysCheckedIn} of the last 14 days.{" "}
+                      {uniqueDaysCheckedIn >= 10
+                        ? "That consistency is your foundation."
+                        : uniqueDaysCheckedIn >= 5
+                        ? "Your nervous system is getting seen."
+                        : "Showing up at the end of the day matters."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // Default — not yet checked in
           const card = hr < 10
             ? { emoji: "🌅", label: "Morning reset", text: "Before the day picks up — one breath. What do you need right now?", cta: "Morning moment →", action: onMorningMoment }
             : hr < 14
@@ -704,6 +854,7 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
             : hr < 19
             ? { emoji: "🌿", label: "Evening reset", text: "Before the bedtime push — a moment to resource yourself. Even 60 seconds shifts what's available.", cta: "Regulation tools →", action: () => setTab("library") }
             : { emoji: "🌙", label: "Close the day", text: "You showed up today. Take a moment — just for you — before everything starts again tomorrow.", cta: "Evening close →", action: onEveningClose };
+
           return (
             <div style={{
               borderRadius: 16, padding: "14px 16px", marginBottom: 10,

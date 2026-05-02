@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { callAI } from "../../lib/ai.js";
@@ -149,6 +149,8 @@ function getEmotionalHeader(currentUser) {
 export function useFamilyState(familyId, childId, userId) {
   const [familyState, setFamilyState] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshCounter, setRefreshCounter] = useState(0);
+  const refresh = useCallback(() => setRefreshCounter(c => c + 1), []);
 
   useEffect(() => {
     if (!familyId) { setLoading(false); return; }
@@ -235,9 +237,9 @@ export function useFamilyState(familyId, childId, userId) {
     }
 
     load();
-  }, [familyId, childId, userId]);
+  }, [familyId, childId, userId, refreshCounter]);
 
-  return { familyState, loading };
+  return { familyState, loading, refresh };
 }
 
 // ─── AI INSIGHT HOOK ──────────────────────────────────────────────────────────
@@ -1078,10 +1080,10 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   const consultant = consultants?.[0];
   const isCo = currentUser?.role === "co_caregiver";
 
-  const { familyState, loading: fsLoading } = useFamilyState(
+  const { familyState, loading: fsLoading, refresh: refreshFamilyState } = useFamilyState(
     activeFamily?.id,
     activeChild?.id,
-    currentUser?.id
+    currentUser?.id,
   );
   const { insight, loading: insightLoading } = useAIInsight(familyState, isPremium);
   const { history: checkinHistory, patterns, saveCheckin } = useCheckinHistory(currentUser?.id, activeFamily?.id);
@@ -1193,7 +1195,7 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
     <div style={{ paddingBottom: 100 }}>
       {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} T={T} currentUser={currentUser} />}
       {showSOS && <SOSFlow onClose={() => setShowSOS(false)} setTab={setTab} />}
-      {showNS  && <NSCheckinFlow onClose={() => setShowNS(false)} />}
+      {showNS  && <NSCheckinFlow onClose={() => setShowNS(false)} onCheckinSaved={refreshFamilyState} />}
 
       {/* ── SOS FLOATING BUTTON ── */}
       <button onClick={() => setShowSOS(true)} style={{
