@@ -558,20 +558,9 @@ export default function RCCShell() {
   }
 
   async function completeIntake(intakeData) {
-    const family = activeFamily || families[0];
-    if (!family?.id) {
-      // families may not have loaded yet for brand new users — just advance the step
-      setOnboardingStep(null);
-      return;
-    }
-    try {
-      await supabase.from("families").update({ intake_complete: true }).eq("id", family.id);
-      await supabase.from("intake_responses").upsert({ family_id: family.id, ...intakeData }, { onConflict: "family_id" });
-    } catch (e) {
-      console.error("[completeIntake] error:", e);
-    } finally {
-      setOnboardingStep(null);
-    }
+    const family = families[0]; if (!family) return;
+    await supabase.from("intake_responses").upsert({ family_id: family.id, ...intakeData }, { onConflict: "family_id" });
+    setOnboardingStep(null);
   }
 
   function clearInviteFromUrl() {
@@ -594,20 +583,22 @@ export default function RCCShell() {
       const token = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Create the family row — this is what handleRegister looks up on signup
-      const { data: familyData, error: familyError } = await supabase.from("families").insert({
+      // Generate ID client-side so we don't need to read it back (avoids RLS SELECT issue)
+      const familyId = crypto.randomUUID();
+      const { error: familyError } = await supabase.from("families").insert({
+        id: familyId,
         invite_email: familyInviteForm.email.trim().toLowerCase(),
         invite_token: token,
         display_name: familyInviteForm.display_name || null,
         consultant_id: currentUser?.id,
         require_intake: familyInviteForm.require_intake,
         intake_complete: false,
-      }).select("id").single();
+      });
       if (familyError) throw familyError;
 
       // Also record in family_invites for tracking
       await supabase.from("family_invites").insert({
-        family_id: familyData.id,
+        family_id: familyId,
         token,
         email: familyInviteForm.email.trim().toLowerCase(),
         parent_name: familyInviteForm.display_name || null,
@@ -617,8 +608,8 @@ export default function RCCShell() {
         expires_at: expiresAt,
       });
 
-      // Send the email — with timeout so it never hangs indefinitely
-      const invokePromise = supabase.functions.invoke("send-invite", {
+      // Send the email
+      const { error } = await supabase.functions.invoke("send-invite", {
         body: {
           email: familyInviteForm.email.trim().toLowerCase(),
           inviteToken: token,
@@ -626,10 +617,6 @@ export default function RCCShell() {
           consultantId: currentUser?.id,
         },
       });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Email timed out — but the invite was created. Check if the email arrived.")), 10000)
-      );
-      const { error } = await Promise.race([invokePromise, timeoutPromise]);
       if (error) throw error;
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
       setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
