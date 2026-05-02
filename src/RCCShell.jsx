@@ -617,8 +617,8 @@ export default function RCCShell() {
         expires_at: expiresAt,
       });
 
-      // Send the email
-      const { error } = await supabase.functions.invoke("send-invite", {
+      // Send the email — with timeout so it never hangs indefinitely
+      const invokePromise = supabase.functions.invoke("send-invite", {
         body: {
           email: familyInviteForm.email.trim().toLowerCase(),
           inviteToken: token,
@@ -626,6 +626,10 @@ export default function RCCShell() {
           consultantId: currentUser?.id,
         },
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Email timed out — but the invite was created. Check if the email arrived.")), 10000)
+      );
+      const { error } = await Promise.race([invokePromise, timeoutPromise]);
       if (error) throw error;
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
       setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
