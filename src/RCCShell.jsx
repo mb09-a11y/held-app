@@ -622,7 +622,6 @@ export default function RCCShell() {
       });
 
       // Get session token explicitly to ensure it's attached to the edge function call
-      const { data: { session } } = await supabase.auth.getSession();
       const { error } = await Promise.race([
         supabase.functions.invoke("send-invite", {
           body: {
@@ -631,11 +630,10 @@ export default function RCCShell() {
             requireIntake: familyInviteForm.require_intake,
             consultantId: currentUser?.id,
           },
-          headers: session?.access_token
-            ? { Authorization: `Bearer ${session.access_token}` }
-            : {},
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Email send timed out — invite was created, check if email arrived.")), 10000)),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Email send timed out — invite was created, check if email arrived.")), 10000)
+        ),
       ]);
       if (error) throw error;
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
