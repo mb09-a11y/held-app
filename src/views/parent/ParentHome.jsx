@@ -1105,7 +1105,7 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
 
   // ── Next put-down suggestion (when awake) ──
   // Use age-based wake windows — rough but meaningful without full SleepLog config here
-  const childDobHome = activeChild?.dob;
+  const childDobHome = familyState?.childProfile?.dob || activeChild?.dob || null;
   const ageMonthsHome = (() => {
     if (!childDobHome) return null;
     const birth = new Date(childDobHome);
