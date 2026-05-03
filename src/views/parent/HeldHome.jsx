@@ -614,6 +614,80 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           </div>
         </div>
 
+        {/* ── DIAPER + FEED TILES (under-2 only) ── */}
+        {(() => {
+          if (!activeChild?.dob) return null;
+          const ageMonths = Math.floor((Date.now() - new Date(activeChild.dob)) / (1000 * 60 * 60 * 24 * 30.44));
+          if (ageMonths >= 24) return null;
+
+          const todayStr = new Date().toLocaleDateString("en-CA");
+          const allLogs = familyState?.sleepData?.weekSessions || [];
+          const todayLogs = allLogs.filter(l => {
+            return new Date(l.ts).toLocaleDateString("en-CA") === todayStr &&
+              (!activeChild?.id || !l.child_id || l.child_id === activeChild.id);
+          });
+
+          const wetCount   = todayLogs.filter(l => l.type === "diaper" && l.sub_type === "wet").length;
+          const dirtyCount = todayLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty").length;
+          const feedLogs   = todayLogs.filter(l => l.type === "feed");
+          const feedCount  = feedLogs.length;
+          const totalOz    = feedLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+          const nursingLogs = feedLogs.filter(l => l.mode === "nursing");
+          const totalNursingMins = nursingLogs.reduce((s, l) => {
+            if (l.duration_mins) return s + l.duration_mins;
+            if (l.ts && l.end_ts) return s + Math.round((new Date(l.end_ts) - new Date(l.ts)) / 60000);
+            return s;
+          }, 0);
+          const lastNursingLog = [...nursingLogs].sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+          const lastSide = lastNursingLog?.side || null;
+          const hasNursing = nursingLogs.length > 0;
+          const hasFormula = feedLogs.some(l => l.mode === "bottle" || l.mode === "formula" || (!l.mode && l.amount));
+          const feedingMode = hasNursing && hasFormula ? "combo" : hasNursing ? "breast" : "formula";
+
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              <div style={{ borderRadius: 14, padding: "13px 14px", background: T.card, border: `1px solid ${T.border}` }}>
+                <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 6 }}>
+                  Diapers
+                </div>
+                <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.headingText, lineHeight: 1 }}>
+                  {wetCount} <span style={{ color: T.muted, fontWeight: 400, fontSize: 16 }}>/</span> {dirtyCount}
+                </div>
+                <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 4 }}>Wet / Dirty</div>
+              </div>
+
+              <div style={{ borderRadius: 14, padding: "13px 14px", background: T.card, border: `1px solid ${T.border}`, position: "relative" }}>
+                <div style={{ position: "absolute", top: 10, right: 11, fontSize: 8, color: T.muted, fontFamily: font, letterSpacing: ".06em", textTransform: "uppercase" }}>
+                  {feedingMode === "combo" ? "Combo" : feedingMode === "breast" ? "Breast" : "Formula"}
+                </div>
+                <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 6 }}>
+                  Feed
+                </div>
+                <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.headingText, lineHeight: 1 }}>
+                  {feedCount}
+                </div>
+                {feedingMode === "breast" && (
+                  <>
+                    <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>{totalNursingMins} min today</div>
+                    {lastSide && <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>Last: {lastSide}</div>}
+                  </>
+                )}
+                {feedingMode === "formula" && (
+                  <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>{totalOz > 0 ? `${totalOz} oz today` : "—"}</div>
+                )}
+                {feedingMode === "combo" && (
+                  <>
+                    <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>
+                      {totalOz > 0 ? `${totalOz} oz` : ""}{totalOz > 0 && totalNursingMins > 0 ? " · " : ""}{totalNursingMins > 0 ? `${totalNursingMins} min` : ""}
+                    </div>
+                    {lastSide && <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>Last: {lastSide}</div>}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── SOS BUTTON ── */}
         <button onClick={onSOS} style={{
           width: "100%", marginBottom: 14,
