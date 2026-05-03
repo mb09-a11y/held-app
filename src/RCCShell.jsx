@@ -833,7 +833,7 @@ export default function RCCShell() {
 
           {/* ── INVITE PANELS (consultant / admin) ── */}
           {showInviteFamily && (
-            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: T.overlayBg, padding: 20, overflowY: "auto" }}>
+            <div style={{ position: "fixed", inset: 0, zIndex: 500, background: T.overlayBg, padding: 20, overflowY: "auto" }}>
               <InviteFamilyPanel
                 form={familyInviteForm} setForm={setFamilyInviteForm}
                 onSend={sendFamilyInvite} onClose={closeInvitePanels}
@@ -842,7 +842,7 @@ export default function RCCShell() {
             </div>
           )}
           {showInviteConsultant && (
-            <div style={{ position: "fixed", inset: 0, zIndex: 200, background: T.overlayBg, padding: 20, overflowY: "auto" }}>
+            <div style={{ position: "fixed", inset: 0, zIndex: 500, background: T.overlayBg, padding: 20, overflowY: "auto" }}>
               <InviteConsultantPanel
                 form={consultantInviteForm} setForm={setConsultantInviteForm}
                 onSend={sendConsultantInvite} onClose={closeInvitePanels}

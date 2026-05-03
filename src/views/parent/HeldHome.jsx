@@ -616,8 +616,10 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
 
         {/* ── DIAPER + FEED TILES (under-2 only) ── */}
         {(() => {
-          if (!activeChild?.dob) return null;
-          const ageMonths = Math.floor((Date.now() - new Date(activeChild.dob)) / (1000 * 60 * 60 * 24 * 30.44));
+          // Use any available dob source — activeChild, familyState, or cached profile
+          const dob = activeChild?.dob || familyState?.childProfile?.dob || null;
+          if (!dob) return null;
+          const ageMonths = Math.floor((Date.now() - new Date(dob)) / (1000 * 60 * 60 * 24 * 30.44));
           if (ageMonths >= 24) return null;
 
           const todayStr = new Date().toLocaleDateString("en-CA");
