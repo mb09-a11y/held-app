@@ -1123,7 +1123,7 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
   ).length;
 
   // ── Under-2 diaper + feed tiles ──────────────────────────────────────────
-  const isUnder2 = ageMonthsHome !== null && ageMonthsHome < 24;
+  const isUnder2 = true; // TEMP: force show to debug — will restore after confirming
   const todayLocalStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local tz
   const allTodayLogs = (familyState?.sleepData?.weekSessions || []).filter(l => {
     const logLocalStr = new Date(l.ts).toLocaleDateString("en-CA");
