@@ -600,6 +600,11 @@ export default function RCCShell() {
   async function sendFamilyInvite() {
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
+      // Get userId directly from session — never rely on currentUser which may be stale
+      const { data: { session } } = await supabase.auth.getSession();
+      const consultantUserId = session?.user?.id;
+      if (!consultantUserId) throw new Error("Not signed in. Please refresh and try again.");
+
       const token = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -610,7 +615,7 @@ export default function RCCShell() {
         invite_email: familyInviteForm.email.trim().toLowerCase(),
         invite_token: token,
         display_name: familyInviteForm.display_name || null,
-        consultant_id: currentUser?.id,
+        consultant_id: consultantUserId,
         require_intake: familyInviteForm.require_intake,
         intake_complete: false,
       });
@@ -622,20 +627,19 @@ export default function RCCShell() {
         token,
         email: familyInviteForm.email.trim().toLowerCase(),
         parent_name: familyInviteForm.display_name || null,
-        consultant_id: currentUser?.id,
+        consultant_id: consultantUserId,
         require_intake: familyInviteForm.require_intake,
         status: "pending",
         expires_at: expiresAt,
       });
 
-      // Get session token explicitly to ensure it's attached to the edge function call
       const { error } = await Promise.race([
         supabase.functions.invoke("send-invite", {
           body: {
             email: familyInviteForm.email.trim().toLowerCase(),
             inviteToken: token,
             requireIntake: familyInviteForm.require_intake,
-            consultantId: currentUser?.id,
+            consultantId: consultantUserId,
           },
         }),
         new Promise((_, reject) =>
