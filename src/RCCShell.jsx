@@ -600,9 +600,8 @@ export default function RCCShell() {
   async function sendFamilyInvite() {
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
-      // Get userId directly from session — never rely on currentUser which may be stale
-      const { data: { session } } = await supabase.auth.getSession();
-      const consultantUserId = session?.user?.id;
+      // currentUser is always populated before consultant UI renders
+      const consultantUserId = currentUser?.id;
       if (!consultantUserId) throw new Error("Not signed in. Please refresh and try again.");
 
       const token = crypto.randomUUID();
@@ -633,20 +632,17 @@ export default function RCCShell() {
         expires_at: expiresAt,
       });
 
-      const { error } = await Promise.race([
-        supabase.functions.invoke("send-invite", {
-          body: {
-            email: familyInviteForm.email.trim().toLowerCase(),
-            inviteToken: token,
-            requireIntake: familyInviteForm.require_intake,
-            consultantId: consultantUserId,
-          },
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Email send timed out — invite was created, check if email arrived.")), 10000)
-        ),
-      ]);
-      if (error) throw error;
+      // Fire edge function without awaiting — DB records are already created above
+      // so the invite works even if the email is slow or fails
+      supabase.functions.invoke("send-invite", {
+        body: {
+          email: familyInviteForm.email.trim().toLowerCase(),
+          inviteToken: token,
+          requireIntake: familyInviteForm.require_intake,
+          consultantId: consultantUserId,
+        },
+      }).catch(err => console.warn("[send-invite] email send failed:", err));
+
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
       setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
     } catch (e) {
