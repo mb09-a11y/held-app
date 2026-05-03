@@ -610,7 +610,7 @@ export default function RCCShell() {
 
       // Generate ID client-side so we don't need to read it back (avoids RLS SELECT issue)
       const familyId = crypto.randomUUID();
-      const { error: familyError } = await supabase.from("families").insert({
+      const { error: familyError, data: familyData } = await supabase.from("families").insert({
         id: familyId,
         invite_email: familyInviteForm.email.trim().toLowerCase(),
         invite_token: token,
@@ -618,7 +618,8 @@ export default function RCCShell() {
         consultant_id: consultantUserId,
         require_intake: familyInviteForm.require_intake,
         intake_complete: false,
-      });
+      }).select();
+      console.log("[sendFamilyInvite] families insert result:", { familyError, familyData, consultantUserId });
       if (familyError) throw familyError;
 
       // Also record in family_invites for tracking
