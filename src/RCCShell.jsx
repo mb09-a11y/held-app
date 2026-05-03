@@ -598,28 +598,22 @@ export default function RCCShell() {
   }
 
   async function sendFamilyInvite() {
-    console.log("[sendFamilyInvite] called", { email: familyInviteForm.email, userId: currentUser?.id });
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
-      // currentUser is always populated before consultant UI renders
-      const consultantUserId = currentUser?.id;
-      if (!consultantUserId) throw new Error("Not signed in. Please refresh and try again.");
-
       const token = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
       // Generate ID client-side so we don't need to read it back (avoids RLS SELECT issue)
       const familyId = crypto.randomUUID();
-      const { error: familyError, data: familyData } = await supabase.from("families").insert({
+      const { error: familyError } = await supabase.from("families").insert({
         id: familyId,
         invite_email: familyInviteForm.email.trim().toLowerCase(),
         invite_token: token,
         display_name: familyInviteForm.display_name || null,
-        consultant_id: consultantUserId,
+        consultant_id: currentUser?.id,
         require_intake: familyInviteForm.require_intake,
         intake_complete: false,
-      }).select();
-      console.log("[sendFamilyInvite] families insert result:", { familyError, familyData, consultantUserId });
+      });
       if (familyError) throw familyError;
 
       // Also record in family_invites for tracking
@@ -628,22 +622,21 @@ export default function RCCShell() {
         token,
         email: familyInviteForm.email.trim().toLowerCase(),
         parent_name: familyInviteForm.display_name || null,
-        consultant_id: consultantUserId,
+        consultant_id: currentUser?.id,
         require_intake: familyInviteForm.require_intake,
         status: "pending",
         expires_at: expiresAt,
       });
 
-      // Fire edge function without awaiting — DB records are already created above
-      // so the invite works even if the email is slow or fails
+      // Get session token explicitly to ensure it's attached to the edge function call
       supabase.functions.invoke("send-invite", {
         body: {
           email: familyInviteForm.email.trim().toLowerCase(),
           inviteToken: token,
           requireIntake: familyInviteForm.require_intake,
-          consultantId: consultantUserId,
+          consultantId: currentUser?.id,
         },
-      }).catch(err => console.warn("[send-invite] email send failed:", err));
+      }).catch(err => console.warn("[send-invite] email error:", err));
 
       setInviteSuccess(`Invitation sent to ${familyInviteForm.email}!`);
       setFamilyInviteForm({ email: "", display_name: "", require_intake: true });
