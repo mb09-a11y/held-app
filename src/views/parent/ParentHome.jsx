@@ -168,7 +168,7 @@ export function useFamilyState(familyId, childId, userId) {
       ] = await Promise.all([
         (() => {
           let q = supabase.from("sleep_logs").select("*").eq("family_id", familyId).gte("ts", since7);
-          if (childId) q = q.eq("child_id", childId);
+          if (childId) q = q.or(`child_id.eq.${childId},child_id.is.null`);
           return q.order("ts", { ascending: false });
         })(),
         supabase.from("regulation_checkins").select("*").eq("user_id", userId)
@@ -1124,8 +1124,10 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
 
   // ── Under-2 diaper + feed tiles ──────────────────────────────────────────
   const isUnder2 = ageMonthsHome !== null && ageMonthsHome < 24;
+  const todayLocalStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local tz
   const allTodayLogs = (familyState?.sleepData?.weekSessions || []).filter(l => {
-    const isToday = new Date(l.ts).toDateString() === new Date().toDateString();
+    const logLocalStr = new Date(l.ts).toLocaleDateString("en-CA");
+    const isToday = logLocalStr === todayLocalStr;
     const isThisChild = !activeChild?.id || !l.child_id || l.child_id === activeChild.id;
     return isToday && isThisChild;
   });
