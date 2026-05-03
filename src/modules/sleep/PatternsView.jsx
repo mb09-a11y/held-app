@@ -344,6 +344,68 @@ export function PatternsView({ logs, onPatch, onDelete }) {
               </div>
             ))}
           </div>
+
+          {/* ── Feeding & Diapers row — under-2 only ── */}
+          {ageMonths !== null && ageMonths < 24 && (() => {
+            const since = new Date(Date.now() - range * 86400000).toISOString();
+            const periodLogs = logs.filter(l => l.ts > since);
+            const daysInRange = range;
+
+            const wetPerDay  = parseFloat((periodLogs.filter(l => l.type === "diaper" && l.sub_type === "wet").length   / daysInRange).toFixed(1));
+            const dirtyPerDay = parseFloat((periodLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty").length / daysInRange).toFixed(1));
+            const feedLogs   = periodLogs.filter(l => l.type === "feed");
+            const feedsPerDay = parseFloat((feedLogs.length / daysInRange).toFixed(1));
+            const totalOz    = feedLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const ozPerDay   = parseFloat((totalOz / daysInRange).toFixed(1));
+            const hasBottle  = feedLogs.some(l => l.mode !== "nursing");
+            const hasNursing = feedLogs.some(l => l.mode === "nursing");
+
+            // AAP-based ranges by age
+            const wetRange   = ageMonths < 1.5 ? [6,8] : ageMonths < 6 ? [5,6] : [4,6];
+            const dirtyRange = [1, 2]; // 3+ days = flag; >5/day = flag; 0–2 normal for all types
+            const feedRange  = ageMonths < 3 ? [8,12] : ageMonths < 6 ? [6,8] : ageMonths < 12 ? [4,6] : [3,4];
+            const ozRange    = ageMonths < 3 ? [18,24] : ageMonths < 12 ? [24,32] : [16,24];
+
+            function dot(val, [lo, hi]) {
+              const color = val >= lo && val <= hi ? "#5C7A5E" : val < lo ? "#A85040" : "#B8924A";
+              return <div style={{ width: 7, height: 7, borderRadius: "50%", background: color, margin: "0 auto 3px" }} />;
+            }
+
+            return (
+              <>
+                <div style={{ height: 1, background: T.border, margin: "14px 0" }} />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  <div style={{ textAlign: "center" }}>
+                    {dot(wetPerDay, wetRange)}
+                    <div style={{ fontFamily: serif, fontSize: 17, fontWeight: 700, color: T.text, lineHeight: 1 }}>
+                      {wetPerDay} <span style={{ color: T.muted, fontWeight: 400, fontSize: 14 }}>/</span> {dirtyPerDay}
+                    </div>
+                    <div style={{ fontFamily: font, fontSize: 9, color: T.muted, margin: "4px 0 2px", textTransform: "uppercase", letterSpacing: ".07em" }}>Diapers/day</div>
+                    <div style={{ fontFamily: font, fontSize: 9, color: T.muted }}>Wet / Dirty</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    {dot(feedsPerDay, feedRange)}
+                    <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.text, lineHeight: 1 }}>{feedsPerDay}</div>
+                    <div style={{ fontFamily: font, fontSize: 9, color: T.muted, margin: "4px 0", textTransform: "uppercase", letterSpacing: ".07em" }}>Feeds/day</div>
+                  </div>
+                  {hasBottle && (
+                    <div style={{ textAlign: "center" }}>
+                      {dot(ozPerDay, ozRange)}
+                      <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.text, lineHeight: 1 }}>{ozPerDay}</div>
+                      <div style={{ fontFamily: font, fontSize: 9, color: T.muted, margin: "4px 0", textTransform: "uppercase", letterSpacing: ".07em" }}>Oz/day</div>
+                    </div>
+                  )}
+                  {!hasBottle && hasNursing && (
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: T.border, margin: "0 auto 3px" }} />
+                      <div style={{ fontFamily: serif, fontSize: 14, fontWeight: 700, color: T.muted, lineHeight: 1 }}>—</div>
+                      <div style={{ fontFamily: font, fontSize: 9, color: T.muted, margin: "4px 0", textTransform: "uppercase", letterSpacing: ".07em" }}>Oz/day</div>
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </Card>
 
         {/* MM banner — after stats, before chart */}

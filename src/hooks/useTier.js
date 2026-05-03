@@ -63,12 +63,21 @@ export function useTier({ currentUser, families, consultants }) {
       role === "consultant_internal" ||
       role === "admin";
     const isAdminRole = role === "admin";
+
     // Check both the family record AND the loaded consultants array
     // so VIP works even if consultant_id isn't set on the family row yet
     const hasConsultantAssigned = !!(
       families?.[0]?.consultant_id ||
       (consultants && consultants.length > 0)
     );
+
+    // ── Downgrade grace period check ─────────────────────────────────────────
+    // When a consultant ends a relationship, downgrade_scheduled_at is set to
+    // now + 3 days. The parent keeps VIP access until that timestamp passes.
+    const downgradeScheduledAt = families?.[0]?.downgrade_scheduled_at;
+    const isInGracePeriod = downgradeScheduledAt
+      ? new Date(downgradeScheduledAt) > new Date()
+      : false;
 
     // ── Resolve tier ──────────────────────────────────────────────────────────
     // VIP = consultant-assigned families get full access automatically.
@@ -80,6 +89,8 @@ export function useTier({ currentUser, families, consultants }) {
       tier = TIERS.VIP; // consultants/admins see everything
     } else if (hasConsultantAssigned) {
       tier = TIERS.VIP; // parent invited by a consultant → full VIP access
+    } else if (isInGracePeriod) {
+      tier = TIERS.VIP; // relationship ended but still within 3-day grace window
     }
 
     const isVIP = tier === TIERS.VIP;
@@ -153,6 +164,8 @@ export function useTier({ currentUser, families, consultants }) {
       isConsultantRole,
       isAdminRole,
       hasConsultantAssigned,
+      isInGracePeriod,
+      downgradeScheduledAt,
 
       // AI coach
       aiMessageLimit,

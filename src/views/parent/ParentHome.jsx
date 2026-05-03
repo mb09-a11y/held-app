@@ -223,7 +223,7 @@ export function useFamilyState(familyId, childId, userId) {
           nightWakesAvg: avgNightWakes,
           lastWakeUp,
           recentMoods,
-          weekSessions: allSessions.slice(0, 14), // includes open session if one exists
+          weekSessions: logs.slice(0, 200), // all log types — consumers filter by type themselves
           consistency: sessions.length >= 5 ? "building" : sessions.length >= 2 ? "starting" : "new",
         },
         planData: {
@@ -1121,6 +1121,32 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
     new Date(l.ts).toDateString() === new Date().toDateString() &&
     l.session_type !== "night"
   ).length;
+
+  // ── Under-2 diaper + feed tiles ──────────────────────────────────────────
+  const isUnder2 = ageMonthsHome !== null && ageMonthsHome < 24;
+  const allTodayLogs = (familyState?.sleepData?.weekSessions || []).filter(l => {
+    const isToday = new Date(l.ts).toDateString() === new Date().toDateString();
+    const isThisChild = !activeChild?.id || !l.child_id || l.child_id === activeChild.id;
+    return isToday && isThisChild;
+  });
+  const wetCount   = allTodayLogs.filter(l => l.type === "diaper" && l.sub_type === "wet").length;
+  const dirtyCount = allTodayLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty").length;
+  const feedLogs   = allTodayLogs.filter(l => l.type === "feed");
+  const feedCount  = feedLogs.length;
+  const totalOz    = feedLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+  const nursingLogs = feedLogs.filter(l => l.mode === "nursing");
+  const totalNursingMins = nursingLogs.reduce((s, l) => {
+    if (l.duration_mins) return s + l.duration_mins;
+    if (l.ts && l.end_ts) return s + Math.round((new Date(l.end_ts) - new Date(l.ts)) / 60000);
+    return s;
+  }, 0);
+  const lastNursingLog = [...nursingLogs].sort((a, b) => new Date(b.ts) - new Date(a.ts))[0];
+  const lastSide = lastNursingLog?.side || null;
+  const hasNursing = nursingLogs.length > 0;
+  const hasFormula = feedLogs.some(l => l.mode === "bottle" || l.mode === "formula" || (!l.mode && l.amount));
+  const feedingMode = hasNursing && hasFormula ? "combo" : hasNursing ? "breast" : "formula";
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Simple age-based wake window lookup (mirrors SleepLog logic)
   function homeWakeWindow(months, napIdx) {
     const ww = months === null ? [2.0, 3.0] :
@@ -1345,6 +1371,52 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
           </button>
         </div>
       </div>
+
+      {/* ── DIAPER + FEED TILES (under-2 only) ── */}
+      {isUnder2 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          {/* Diapers */}
+          <div style={{ borderRadius: 16, padding: "14px 14px", background: T.card, border: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 6 }}>
+              Diapers
+            </div>
+            <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 700, color: T.text, lineHeight: 1 }}>
+              {wetCount} <span style={{ color: T.muted, fontWeight: 400, fontSize: 18 }}>/</span> {dirtyCount}
+            </div>
+            <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 4 }}>Wet / Dirty</div>
+          </div>
+
+          {/* Feed */}
+          <div style={{ borderRadius: 16, padding: "14px 14px", background: T.card, border: `1px solid ${T.border}`, position: "relative" }}>
+            <div style={{ position: "absolute", top: 10, right: 12, fontSize: 8, color: T.muted, fontFamily: font, letterSpacing: ".06em", textTransform: "uppercase" }}>
+              {feedingMode === "combo" ? "Combo" : feedingMode === "breast" ? "Breast" : "Formula"}
+            </div>
+            <div style={{ fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 6 }}>
+              Feed
+            </div>
+            <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 700, color: T.text, lineHeight: 1 }}>
+              {feedCount}
+            </div>
+            {feedingMode === "breast" && (
+              <>
+                <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>{totalNursingMins} min today</div>
+                {lastSide && <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>Last: {lastSide}</div>}
+              </>
+            )}
+            {feedingMode === "formula" && (
+              <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>{totalOz > 0 ? `${totalOz} oz today` : "—"}</div>
+            )}
+            {feedingMode === "combo" && (
+              <>
+                <div style={{ fontFamily: font, fontSize: 12, fontWeight: 600, color: T.text, marginTop: 3 }}>
+                  {totalOz > 0 ? `${totalOz} oz` : ""}{totalOz > 0 && totalNursingMins > 0 ? " · " : ""}{totalNursingMins > 0 ? `${totalNursingMins} min` : ""}
+                </div>
+                {lastSide && <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 2 }}>Last: {lastSide}</div>}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── I NEED HELP RIGHT NOW (SOS card — prominent) ── */}
       <button onClick={() => setShowSOS(true)} style={{

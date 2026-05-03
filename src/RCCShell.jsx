@@ -3,7 +3,7 @@
 // All auth logic, invite flows, Stripe, and data loading are UNCHANGED.
 // Only the parent-facing UI imports are updated to use held-style components.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   THEMES, ThemeCtx, AppCtx, useT, useApp,
   useStorage, font, serif
@@ -213,25 +213,32 @@ export default function RCCShell() {
     asyncSupportCopy, zoomPhoneCopy,
   } = useTier({ currentUser, families, consultants });
 
-  // ── BOOT (UNCHANGED from original)
+  // ── BOOT
+  const bootInFlightRef = useRef(false);
   useEffect(() => {
     let mounted = true;
     async function boot() {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      const activeSession = data?.session || null;
-      setSession(activeSession);
-      if (activeSession?.user) {
-        const hasCachedUser = !!localStorage.getItem("rcc_user");
-        try {
-          await loadProfile(activeSession.user.id, activeSession.user.email, hasCachedUser);
-        } catch (err) {
-          console.error("[RCCShell] boot loadProfile error:", err);
+      if (bootInFlightRef.current) return;
+      bootInFlightRef.current = true;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!mounted) return;
+        const activeSession = data?.session || null;
+        setSession(activeSession);
+        if (activeSession?.user) {
+          const hasCachedUser = !!localStorage.getItem("rcc_user");
+          try {
+            await loadProfile(activeSession.user.id, activeSession.user.email, hasCachedUser);
+          } catch (err) {
+            console.error("[RCCShell] boot loadProfile error:", err);
+            setAuthLoading(false);
+          }
+        } else {
+          try { localStorage.removeItem("rcc_user"); } catch {}
           setAuthLoading(false);
         }
-      } else {
-        try { localStorage.removeItem("rcc_user"); } catch {}
-        setAuthLoading(false);
+      } finally {
+        bootInFlightRef.current = false;
       }
     }
     boot();

@@ -10,6 +10,7 @@ import PlanTab      from "./tabs/PlanTab.jsx";
 import IntakeTab    from "./tabs/IntakeTab.jsx";
 import NotesTab     from "./tabs/NotesTab.jsx";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
+import { supabase } from "../../lib/supabase.js";
 
 const TABS = ["Insights", "Sleep Data", "Plan", "Intake", "Notes", "Messages"];
 
@@ -106,9 +107,88 @@ function FamilyMessagesTab({ family, triggerCoPilot, onNavigate }) {
   );
 }
 
+// ── End Relationship confirm dialog ───────────────────────────────────────────
+function EndRelationshipDialog({ family, onConfirm, onCancel, loading }) {
+  const T = useT();
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 999,
+      background: "rgba(0,0,0,0.45)", display: "flex",
+      alignItems: "flex-end", justifyContent: "center",
+    }}>
+      <div style={{
+        background: T.card, borderRadius: "20px 20px 0 0",
+        padding: "28px 24px 40px", width: "100%", maxWidth: 480,
+        boxShadow: "0 -8px 40px rgba(0,0,0,0.18)",
+      }}>
+        {/* Handle */}
+        <div style={{
+          width: 36, height: 4, borderRadius: 2,
+          background: T.border, margin: "0 auto 24px",
+        }} />
+
+        <div style={{ fontSize: 28, textAlign: "center", marginBottom: 12 }}>🌿</div>
+
+        <div style={{
+          fontFamily: serif, fontSize: 20, fontWeight: 500,
+          color: T.text, textAlign: "center", marginBottom: 10,
+        }}>
+          End relationship with {family.name}?
+        </div>
+
+        <div style={{
+          fontFamily: font, fontSize: 14, color: T.muted,
+          lineHeight: 1.6, textAlign: "center", marginBottom: 8,
+        }}>
+          This family will be removed from your caseload.
+        </div>
+
+        <div style={{
+          background: "rgba(184,146,74,0.1)", border: "1px solid rgba(184,146,74,0.25)",
+          borderRadius: 12, padding: "12px 16px", marginBottom: 28,
+        }}>
+          <div style={{ fontFamily: font, fontSize: 13, color: "#7A6040", lineHeight: 1.6 }}>
+            Their access will remain active for <strong>3 days</strong> to give them time to transition,
+            then automatically return to the free plan.
+          </div>
+        </div>
+
+        <button
+          onClick={onConfirm}
+          disabled={loading}
+          style={{
+            width: "100%", padding: "14px 0",
+            background: loading ? T.faint : "#8B2E2E",
+            color: loading ? T.muted : "#fff",
+            border: "none", borderRadius: 12,
+            fontFamily: font, fontSize: 15, fontWeight: 600,
+            cursor: loading ? "default" : "pointer",
+            marginBottom: 10, transition: "background 0.2s",
+          }}
+        >
+          {loading ? "Ending relationship…" : "Yes, end relationship"}
+        </button>
+
+        <button
+          onClick={onCancel}
+          disabled={loading}
+          style={{
+            width: "100%", padding: "13px 0",
+            background: "transparent", color: T.muted,
+            border: `1px solid ${T.border}`, borderRadius: 12,
+            fontFamily: font, fontSize: 15, cursor: loading ? "default" : "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function FamilyDetail({ familyId, family: familyProp, params, onNavigate, onBack }) {
   const T = useT();
-  const { families, loading } = useFamilies();
+  const { families, loading, reload } = useFamilies();
   const { nsLog } = useNSLog(familyId);
 
   const family = familyProp || families.find(f => f.id === familyId);
@@ -117,6 +197,11 @@ export default function FamilyDetail({ familyId, family: familyProp, params, onN
   );
   const [activeTab, setActiveTab] = useState(params?.defaultTab || "Insights");
   const [viewingIntake, setViewingIntake] = useState(false);
+
+  // End relationship state
+  const [showEndDialog, setShowEndDialog] = useState(false);
+  const [endingRelationship, setEndingRelationship] = useState(false);
+  const [endError, setEndError] = useState(null);
 
   if (!family && loading) return (
     <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>Loading…</div>
@@ -142,8 +227,46 @@ export default function FamilyDetail({ familyId, family: familyProp, params, onN
     onNavigate(destination, { familyId, activeChildId });
   };
 
+  // End relationship handler
+  const handleEndRelationship = async () => {
+    setEndingRelationship(true);
+    setEndError(null);
+    try {
+      const downgradeAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { error } = await supabase
+        .from("families")
+        .update({
+          consultant_id: null,
+          relationship_status: "ended",
+          downgrade_scheduled_at: downgradeAt,
+        })
+        .eq("id", family.id);
+
+      if (error) throw error;
+
+      setShowEndDialog(false);
+      if (reload) reload();
+      if (onBack) onBack();
+    } catch (err) {
+      setEndError(err.message || "Something went wrong. Please try again.");
+      setEndingRelationship(false);
+    }
+  };
+
   return (
     <div style={{ background: T.gradientBg, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+      {/* End relationship confirm dialog */}
+      {showEndDialog && (
+        <EndRelationshipDialog
+          family={family}
+          onConfirm={handleEndRelationship}
+          onCancel={() => { setShowEndDialog(false); setEndError(null); }}
+          loading={endingRelationship}
+        />
+      )}
+
       {/* Family hero */}
       <div style={{
         background: "linear-gradient(160deg, #2D4A35 0%, #3A3018 100%)",
@@ -210,6 +333,37 @@ export default function FamilyDetail({ familyId, family: familyProp, params, onN
         {activeTab === "Intake"     && <IntakeTab    family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
         {activeTab === "Notes"      && <NotesTab     family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
         {activeTab === "Messages"   && <FamilyMessagesTab family={family} triggerCoPilot={params?.triggerCoPilot} onNavigate={onNavigate} />}
+      </div>
+
+      {/* ── End Relationship button — always at the bottom ── */}
+      <div style={{
+        flexShrink: 0, padding: "16px 18px 28px",
+        borderTop: `1px solid ${T.border}`,
+        background: T.bg,
+      }}>
+        {endError && (
+          <div style={{
+            fontFamily: font, fontSize: 13, color: "#8B2E2E",
+            textAlign: "center", marginBottom: 10,
+          }}>
+            {endError}
+          </div>
+        )}
+        <button
+          onClick={() => setShowEndDialog(true)}
+          style={{
+            width: "100%", padding: "12px 0",
+            background: "transparent",
+            color: "#8B2E2E",
+            border: "1px solid rgba(139,46,46,0.3)",
+            borderRadius: 12,
+            fontFamily: font, fontSize: 14, fontWeight: 500,
+            cursor: "pointer", letterSpacing: "0.01em",
+            transition: "all 0.2s",
+          }}
+        >
+          End relationship with this family
+        </button>
       </div>
     </div>
   );
