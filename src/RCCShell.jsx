@@ -598,6 +598,7 @@ export default function RCCShell() {
   }
 
   async function sendFamilyInvite() {
+    console.log("[sendFamilyInvite] called", { email: familyInviteForm.email, userId: currentUser?.id });
     setInviteBusy(true); setInviteError(""); setInviteSuccess("");
     try {
       // currentUser is always populated before consultant UI renders
