@@ -22,3 +22,21 @@ export const supabase = createClient(url || "", anonKey || "", {
     flowType: "pkce",
   },
 });
+
+/**
+ * Clears all stale Supabase auth tokens and locks from localStorage.
+ * Call this when you get an Invalid Refresh Token error so the user
+ * gets a clean sign-in prompt instead of a broken/hanging app.
+ */
+export function clearStaleAuthTokens() {
+  try {
+    // Remove the main session token
+    localStorage.removeItem("rcc-auth");
+    // Remove any gotrue lock keys that may be orphaned
+    Object.keys(localStorage)
+      .filter(k => k.startsWith("lock:") || k.startsWith("supabase.auth") || k === "rcc_user")
+      .forEach(k => localStorage.removeItem(k));
+  } catch {
+    // localStorage not available — ignore
+  }
+}

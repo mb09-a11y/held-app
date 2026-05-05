@@ -1,20 +1,23 @@
-const CACHE_NAME = 'rcc-app-v2';
+const CACHE_NAME = 'rcc-app-v4';
+const STATIC_ASSETS = ['/', '/index.html'];
 
-// Assets to cache on install
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-];
+// ── DEV MODE BYPASS ───────────────────────────────────────────────────────────
+// On localhost, skip ALL caching so file changes appear immediately.
+// This prevents the white screen / stale bundle issues during development.
+const IS_DEV = self.location.hostname === 'localhost' ||
+               self.location.hostname === '127.0.0.1' ||
+               self.location.hostname.startsWith('192.168.');
 
+// ── INSTALL ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
+  if (IS_DEV) { self.skipWaiting(); return; }
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
+// ── ACTIVATE ─────────────────────────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -26,25 +29,79 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Network first, fall back to cache
+// ── FETCH ─────────────────────────────────────────────────────────────────────
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET and Supabase/API requests — always go to network for those
+  const { request } = event;
+  const url = request.url;
+
+  // Always skip non-GET and API requests
   if (
-    event.request.method !== 'GET' ||
-    event.request.url.includes('supabase.co') ||
-    event.request.url.includes('anthropic.com') ||
-    event.request.url.includes('cloudinary.com')
+    request.method !== 'GET' ||
+    url.includes('supabase.co') ||
+    url.includes('anthropic.com') ||
+    url.includes('cloudinary.com')
   ) {
     return;
   }
 
+  // In dev — never cache, always go to network
+  if (IS_DEV) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // JS and CSS bundles — NETWORK FIRST
+  // If network fails (offline), fall back to cache.
+  // This means updated code always loads when online.
+  if (
+    url.includes('/assets/') ||
+    url.endsWith('.js') ||
+    url.endsWith('.jsx') ||
+    url.endsWith('.css')
+  ) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Fonts and images — CACHE FIRST (these never change)
+  if (
+    url.endsWith('.woff2') ||
+    url.endsWith('.woff') ||
+    url.endsWith('.ttf') ||
+    url.endsWith('.png') ||
+    url.endsWith('.jpg') ||
+    url.endsWith('.svg') ||
+    url.endsWith('.ico') ||
+    url.endsWith('.webp')
+  ) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) => cached || fetch(request).then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        })
+      )
+    );
+    return;
+  }
+
+  // Everything else (HTML, manifests) — NETWORK FIRST
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).then((response) => {
+    fetch(request)
+      .then((response) => {
         const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });

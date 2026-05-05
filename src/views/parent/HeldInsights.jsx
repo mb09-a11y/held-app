@@ -499,9 +499,13 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
   const total = profile?.total_ns_logs ?? 0;
   const ventral = ventralCount ?? 0;
   const leaves = profile?.leaves ?? 0;
+  const milestones = profile?.streak_milestones || {};
   const resilience = Math.min(Math.round((total / 120) * 100), 100);
   const visualProgress = Math.min(Math.round((weekCount / 22) * 100), 100);
-  const rootDepth = Math.round(resilience * 0.35);
+
+  // Base root depth + permanent milestone bonuses (earned once, kept forever)
+  const milestoneBonus = (milestones[10] ? 5 : 0) + (milestones[20] ? 8 : 0) + (milestones[30] ? 15 : 0);
+  const rootDepth = Math.min(Math.round(resilience * 0.35) + milestoneBonus, 100);
   const isSecure = streak >= 7;
   const capacityLabel = resilience >= 75 ? "Deeply anchored" : resilience >= 45 ? "Structure stabilizing" : "Foundation building";
   const anchorStrength = streak >= 7 ? "Level 2" : streak >= 5 ? "Level 1" : "Building";
@@ -564,6 +568,52 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
           </div>
         ))}
       </div>
+
+      {/* ── STREAK MILESTONES ── */}
+      {(milestones[10] || milestones[20] || milestones[30]) && (
+        <>
+          <SectionLabel text="Streak milestones" />
+          <div style={{ borderRadius: 16, padding: "16px 18px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
+            <p style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.6, margin: "0 0 14px" }}>
+              These are permanent. Breaking a streak doesn't take them away.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                { key: 10, label: "10 days in a row",  reward: "+5% root depth",  desc: "A pattern is forming." },
+                { key: 20, label: "20 days in a row",  reward: "+8% root depth",  desc: "Your system is learning to trust the practice." },
+                { key: 30, label: "30 days in a row",  reward: "+15% root depth", desc: "This is what a regulated parent looks like." },
+              ].map(m => {
+                const unlocked = !!milestones[m.key];
+                return (
+                  <div key={m.key} style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    opacity: unlocked ? 1 : 0.38,
+                  }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                      background: unlocked ? "#5C7A5E" : T.border,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {unlocked && (
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: "white" }} />
+                      )}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: font, fontSize: 13.5, fontWeight: 600, color: T.headingText, marginBottom: 1 }}>
+                        {m.label}
+                        <span style={{ fontFamily: font, fontSize: 11, fontWeight: 400, color: "#5C7A5E", marginLeft: 8 }}>
+                          {m.reward}
+                        </span>
+                      </div>
+                      <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>{m.desc}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── GROWTH RINGS ── */}
       <SectionLabel text="Growth rings" />
@@ -698,7 +748,7 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
     if (!currentUser?.id) return;
     supabase
       .from("profiles")
-      .select("created_at, total_ns_logs, ventral_points, latest_ns_state, leaves")
+      .select("created_at, total_ns_logs, ventral_points, latest_ns_state, leaves, streak_milestones")
       .eq("id", currentUser.id)
       .single()
       .then(({ data }) => setProfile(data));

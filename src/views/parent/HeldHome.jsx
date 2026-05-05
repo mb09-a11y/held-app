@@ -3,7 +3,7 @@
 // Reads from AppCtx (currentUser, activeChild, activeFamily, consultants).
 // Props: onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onOpenDrawer
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { HeldCheckin, useFamilyState, useCheckinHistory } from "./ParentHome.jsx";
 import { supabase } from "../../lib/supabase.js";
@@ -86,7 +86,7 @@ const RETURN_LOOPS = [
 // ─── RECENT NS PULSE ─────────────────────────────────────────────────────────
 function useRecentRegulationCheckins(userId, refreshKey = 0) {
   const [checkins, setCheckins] = useState([]);
-  useEffect(() => {
+  const fetch = useCallback(() => {
     if (!userId) return;
     const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
     supabase
@@ -97,13 +97,162 @@ function useRecentRegulationCheckins(userId, refreshKey = 0) {
       .order("checked_in_at", { ascending: false })
       .limit(60)
       .then(({ data }) => setCheckins(data || []));
-  }, [userId, refreshKey]);
+  }, [userId]);
+
+  useEffect(() => { fetch(); }, [fetch, refreshKey]);
+
+  // Re-fetch when user returns to the app (fixes NS state not updating)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetch(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetch]);
+
   return checkins;
+}
+
+// ─── NS CHECK-IN COUNT (for jar/leaves card) ──────────────────────────────────
+function useNSCheckinCount(userId) {
+  const [count, setCount] = useState(null);
+  const fetch = useCallback(() => {
+    if (!userId) return;
+    supabase
+      .from("regulation_checkins")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then(({ count: c }) => setCount(c ?? 0));
+  }, [userId]);
+  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetch(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetch]);
+  return count;
+}
+
+// ─── STREAK MESSAGES per tier ─────────────────────────────────────────────────
+const STREAK_MESSAGES = {
+  zero:  ["Log your first check-in to start your streak."],
+  low:   [                                           // 1–6 days
+    "X days of checking in. Every one counts.",
+    "X days in. You're building something.",
+    "X days of showing up for yourself.",
+  ],
+  week:  [                                           // 7–13 days
+    "X days of noticing your system. That's a pattern forming.",
+    "X days in a row. Your nervous system is getting used to being seen.",
+    "X days of checking in. The data is starting to tell a story.",
+  ],
+  mid:   [                                           // 14–29 days
+    "X days. Your nervous system is starting to trust the practice.",
+    "X days of consistent noticing. That's not routine — that's regulation.",
+    "X days in. You're building real capacity here.",
+  ],
+  high:  [                                           // 30+ days
+    "X days. This is what a regulated parent looks like.",
+    "X days in a row. Your roots are deep.",
+    "X days. Thirty days of showing up — that's your foundation.",
+  ],
+};
+
+function getStreakMessage(streak) {
+  if (streak === 0) return STREAK_MESSAGES.zero[0];
+  const pool = streak >= 30 ? STREAK_MESSAGES.high
+    : streak >= 14 ? STREAK_MESSAGES.mid
+    : streak >= 7  ? STREAK_MESSAGES.week
+    : STREAK_MESSAGES.low;
+  const msg = pool[streak % pool.length];
+  return msg.replace("X", streak);
+}
+
+// ─── ALL-TIME STREAK HOOK ─────────────────────────────────────────────────────
+// Fetches enough history to calculate the current consecutive streak
+// and determine which milestones (10/20/30) have ever been reached.
+function useCheckinStreak(userId) {
+  const [streakData, setStreakData] = useState({
+    currentStreak: 0,
+    milestonesEver: { 10: false, 20: false, 30: false },
+    loading: true,
+  });
+
+  const compute = useCallback(() => {
+    if (!userId) { setStreakData(d => ({ ...d, loading: false })); return; }
+    // Fetch last 90 days — enough to find a 30-day streak plus buffer
+    const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+    supabase
+      .from("regulation_checkins")
+      .select("checked_in_at")
+      .eq("user_id", userId)
+      .gte("checked_in_at", since90)
+      .order("checked_in_at", { ascending: false })
+      .then(({ data }) => {
+        const logs = data || [];
+        // Build set of unique days (local date string)
+        const daySet = new Set(logs.map(l => new Date(l.checked_in_at).toDateString()));
+
+        // Current consecutive streak — walk back from today
+        let streak = 0;
+        for (let i = 0; i < 90; i++) {
+          const d = new Date(Date.now() - i * 86400000).toDateString();
+          if (daySet.has(d)) streak++;
+          else break;
+        }
+
+        // Best ever streak in the 90-day window (to detect milestone unlocks)
+        // Walk all unique days sorted descending and find longest run
+        const sortedDays = Array.from(daySet)
+          .map(d => new Date(d).getTime())
+          .sort((a, b) => b - a);
+
+        let bestStreak = 0;
+        let run = 0;
+        for (let i = 0; i < sortedDays.length; i++) {
+          if (i === 0) { run = 1; continue; }
+          const prev = sortedDays[i - 1];
+          const curr = sortedDays[i];
+          const diffDays = Math.round((prev - curr) / 86400000);
+          if (diffDays === 1) { run++; }
+          else { bestStreak = Math.max(bestStreak, run); run = 1; }
+        }
+        bestStreak = Math.max(bestStreak, run, streak);
+
+        setStreakData({
+          currentStreak: streak,
+          milestonesEver: {
+            10: bestStreak >= 10,
+            20: bestStreak >= 20,
+            30: bestStreak >= 30,
+          },
+          loading: false,
+        });
+      });
+  }, [userId]);
+
+  useEffect(() => { compute(); }, [compute]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") compute(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [compute]);
+
+  return streakData;
+}
+
+// ─── MILESTONE UNLOCK WRITER ──────────────────────────────────────────────────
+// Called once per session when a new milestone is detected — writes to profiles
+async function unlockStreakMilestone(userId, milestoneKey, currentMilestones) {
+  if (!userId || currentMilestones?.[milestoneKey]) return; // already unlocked
+  const updated = { ...currentMilestones, [milestoneKey]: true };
+  await supabase
+    .from("profiles")
+    .update({ streak_milestones: updated })
+    .eq("id", userId);
 }
 
 function useRecentCheckin(userId, refreshKey = 0) {
   const [checkin, setCheckin] = useState(null);
-  useEffect(() => {
+  const fetch = useCallback(() => {
     if (!userId) return;
     supabase
       .from("regulation_checkins")
@@ -113,7 +262,13 @@ function useRecentCheckin(userId, refreshKey = 0) {
       .limit(1)
       .maybeSingle()
       .then(({ data }) => setCheckin(data));
-  }, [userId, refreshKey]);
+  }, [userId]);
+  useEffect(() => { fetch(); }, [fetch, refreshKey]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") fetch(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetch]);
   return checkin;
 }
 
@@ -206,11 +361,32 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
 
   const checkin = useRecentCheckin(currentUser?.id, checkinRefreshKey);
   const recentRegCheckins = useRecentRegulationCheckins(currentUser?.id, checkinRefreshKey);
+  const nsCheckinCount = useNSCheckinCount(currentUser?.id);
+  const { currentStreak, milestonesEver } = useCheckinStreak(currentUser?.id);
   const { nextSleepStr, minsUntil: minsUntilSleep, isSleeping } = useNextSleep(
     activeFamily?.id, activeChild?.id, activeChild?.dob
   );
 
   const greeting = getGreeting(currentUser?.name);
+
+  // Unlock streak milestones into profiles when newly reached — one-time, permanent
+  useEffect(() => {
+    if (!currentUser?.id || !milestonesEver) return;
+    // We need the stored milestones to avoid double-writing — fetch inline
+    supabase
+      .from("profiles")
+      .select("streak_milestones")
+      .eq("id", currentUser.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        const stored = data?.streak_milestones || {};
+        [10, 20, 30].forEach(m => {
+          if (milestonesEver[m] && !stored[m]) {
+            unlockStreakMilestone(currentUser.id, m, stored);
+          }
+        });
+      });
+  }, [currentUser?.id, milestonesEver?.[10], milestonesEver?.[20], milestonesEver?.[30]]); // eslint-disable-line
   const childName = activeChild?.name || "your little one";
   const childAge = activeChild?.dob ? ageLabel(activeChild.dob) : null;
 
@@ -618,7 +794,22 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
         {(() => {
           // Use any available dob source — activeChild, familyState, or cached profile
           const dob = activeChild?.dob || familyState?.childProfile?.dob || null;
-          if (!dob) return null;
+          // If no dob from any source yet, show placeholder tiles so they don't flash in late
+          // (hides completely only if we're certain child is 2+ or no child is set at all)
+          if (!dob && !activeChild) return null;
+          if (!dob) {
+            // dob not loaded yet — show skeleton tiles so layout doesn't shift
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                {["Diapers", "Feed"].map(label => (
+                  <div key={label} style={{ borderRadius: 14, padding: "13px 14px", background: T.card, border: `1px solid ${T.border}` }}>
+                    <div style={{ fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 6 }}>{label}</div>
+                    <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.muted, lineHeight: 1 }}>—</div>
+                  </div>
+                ))}
+              </div>
+            );
+          }
           const ageMonths = Math.floor((Date.now() - new Date(dob)) / (1000 * 60 * 60 * 24 * 30.44));
           if (ageMonths >= 24) return null;
 
@@ -854,109 +1045,97 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           Held is thinking about you
         </div>
 
-        {/* Card 1: Time-of-day check-in prompt — swaps after check-in */}
+        {/* Card 1: NS check-in streak — consecutive days */}
         {(() => {
-          const hr = new Date().getHours();
+          const streak = currentStreak;
+          const streakMsg = getStreakMessage(streak);
 
-          // After morning check-in
-          if (doneMorningToday) {
-            return (
-              <div style={{
-                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
-                background: T.card, border: `1px solid ${T.border}`,
-                borderLeft: `3px solid ${T.teal}`,
-              }}>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                  <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>🌱</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                      color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
-                    }}>
-                      You checked in
-                    </div>
-                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
-                      {uniqueDaysCheckedIn} of the last 14 days have had a check-in.{" "}
-                      {uniqueDaysCheckedIn >= 10
-                        ? "You're building something real."
-                        : uniqueDaysCheckedIn >= 5
-                        ? "Your nervous system is getting seen."
-                        : "Every day you show up counts."}
-                    </p>
-                  </div>
-                </div>
-              </div>
+          // Last 7 days dot calendar
+          const todayStr = new Date().toDateString();
+          const last7 = Array.from({ length: 7 }).map((_, i) => {
+            const d = new Date(Date.now() - (6 - i) * 86400000);
+            const label = d.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
+            const dateStr = d.toDateString();
+            const filled = recentRegCheckins.some(c =>
+              new Date(c.checked_in_at).toDateString() === dateStr
             );
-          }
+            const isToday = dateStr === todayStr;
+            return { label, filled, isToday };
+          });
 
-          // After evening check-in
-          if (doneEveningToday) {
-            return (
-              <div style={{
-                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
-                background: T.card, border: `1px solid ${T.border}`,
-                borderLeft: `3px solid ${T.teal}`,
-              }}>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                  <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>🌙</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                      color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
-                    }}>
-                      Day closed
-                    </div>
-                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
-                      You closed out {uniqueDaysCheckedIn} of the last 14 days.{" "}
-                      {uniqueDaysCheckedIn >= 10
-                        ? "That consistency is your foundation."
-                        : uniqueDaysCheckedIn >= 5
-                        ? "Your nervous system is getting seen."
-                        : "Showing up at the end of the day matters."}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          // Default — not yet checked in
-          const card = hr < 10
-            ? { emoji: "🌅", label: "Morning reset", text: "Before the day picks up — one breath. What do you need right now?", cta: "Morning moment →", action: onMorningMoment }
-            : hr < 14
-            ? { emoji: "☀️", label: "Midday check-in", text: "How's your window of tolerance holding up? A quick check-in goes a long way.", cta: "Check in →", action: onNSCheckin }
-            : hr < 17
-            ? { emoji: "🍃", label: "Afternoon reset", text: "The afternoon stretch is real. Even 60 seconds of regulation changes what's available for the evening.", cta: "Regulation tools →", action: () => setTab("library") }
-            : hr < 19
-            ? { emoji: "🌿", label: "Evening reset", text: "Before the bedtime push — a moment to resource yourself. Even 60 seconds shifts what's available.", cta: "Regulation tools →", action: () => setTab("library") }
-            : { emoji: "🌙", label: "Close the day", text: "You showed up today. Take a moment — just for you — before everything starts again tomorrow.", cta: "Evening close →", action: onEveningClose };
+          // Milestone badge — show the highest unlocked one
+          const milestoneBadge = milestonesEver?.[30] ? "30-day milestone ✦"
+            : milestonesEver?.[20] ? "20-day milestone ✦"
+            : milestonesEver?.[10] ? "10-day milestone ✦"
+            : null;
 
           return (
             <div style={{
-              borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+              borderRadius: 16, padding: "16px 18px", marginBottom: 10,
               background: T.card, border: `1px solid ${T.border}`,
-              borderLeft: `3px solid ${T.teal}`,
+              borderLeft: "3px solid #5C7A5E",
             }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{card.emoji}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                    color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
-                  }}>
-                    {card.label}
-                  </div>
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, marginBottom: 8 }}>
-                    {card.text}
-                  </p>
-                  <button onClick={card.action} style={{
-                    background: "none", border: "none", padding: 0,
-                    fontFamily: font, fontSize: 12.5, color: T.teal,
-                    fontWeight: 600, cursor: "pointer",
-                  }}>
-                    {card.cta}
-                  </button>
+              {/* Streak number + message */}
+              <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+                <div style={{
+                  display: "flex", flexDirection: "column", alignItems: "center",
+                  background: "#5C7A5E14", borderRadius: 12, padding: "10px 14px", flexShrink: 0,
+                }}>
+                  <span style={{ fontSize: 28, fontWeight: 600, color: "#5C7A5E", lineHeight: 1, fontFamily: serif }}>
+                    {streak}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#5C7A5E", letterSpacing: ".05em", marginTop: 2, fontFamily: font }}>
+                    {streak === 1 ? "day" : "days"}
+                  </span>
                 </div>
+                <div style={{ flex: 1 }}>
+                  {milestoneBadge && (
+                    <div style={{
+                      fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase",
+                      color: "#B8924A", fontFamily: font, fontWeight: 600, marginBottom: 5,
+                    }}>
+                      {milestoneBadge}
+                    </div>
+                  )}
+                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.55, margin: 0 }}>
+                    {streakMsg}
+                  </p>
+                  {streak > 0 && (
+                    <p style={{ fontFamily: font, fontSize: 12, color: T.muted, margin: "4px 0 0" }}>
+                      {(nsCheckinCount ?? 0)} check-ins total
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* 7-day dot calendar */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {last7.map((day, i) => (
+                  <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: day.filled ? "#5C7A5E" : T.faint,
+                      border: day.isToday && !day.filled ? `2px dashed #5C7A5E60` : "none",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      transition: "background 0.3s",
+                    }}>
+                      {day.filled && (
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "white" }} />
+                      )}
+                    </div>
+                    <span style={{ fontSize: 10, color: T.muted, fontFamily: font }}>{day.label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+                <button onClick={onNSCheckin} style={{
+                  background: "none", border: "none", padding: 0,
+                  fontFamily: font, fontSize: 12.5, color: "#5C7A5E",
+                  fontWeight: 600, cursor: "pointer",
+                }}>
+                  {streak === 0 ? "Start your streak →" : "Check in now →"}
+                </button>
               </div>
             </div>
           );

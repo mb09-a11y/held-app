@@ -152,6 +152,13 @@ export function useFamilyState(familyId, childId, userId) {
   const [refreshCounter, setRefreshCounter] = useState(0);
   const refresh = useCallback(() => setRefreshCounter(c => c + 1), []);
 
+  // Re-fetch when user returns to the app (fixes stale NS/sleep state after backgrounding)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+
   useEffect(() => {
     if (!familyId) { setLoading(false); return; }
 

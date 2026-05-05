@@ -8,7 +8,7 @@ import {
   THEMES, ThemeCtx, AppCtx, useT, useApp,
   useStorage, font, serif
 } from "./core/shared.jsx";
-import { supabase } from "./lib/supabase.js";
+import { supabase, clearStaleAuthTokens } from "./lib/supabase.js";
 import { warmAI } from "./lib/ai.js";
 
 // ── Layout (held nav + SOS FAB)
@@ -112,6 +112,7 @@ export default function RCCShell() {
   }, [T.bg]);
 
   const [session, setSession] = useState(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => {
     try { const c = localStorage.getItem("rcc_user"); return c ? JSON.parse(c) : null; } catch { return null; }
   });
@@ -221,8 +222,19 @@ export default function RCCShell() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
+
+        // If Supabase returns an auth error on boot (stale/invalid token)
+        if (error) {
+          clearStaleAuthTokens();
+          setSession(null);
+          setCurrentUser(null);
+          setSessionExpired(true);
+          setAuthLoading(false);
+          return;
+        }
+
         const activeSession = data?.session || null;
         setSession(activeSession);
         if (activeSession?.user) {
@@ -234,7 +246,10 @@ export default function RCCShell() {
             setAuthLoading(false);
           }
         } else {
-          try { localStorage.removeItem("rcc_user"); } catch {}
+          // Had a cached user but session is gone — token expired
+          const hadCachedUser = !!localStorage.getItem("rcc_user");
+          clearStaleAuthTokens();
+          if (hadCachedUser) setSessionExpired(true);
           setAuthLoading(false);
         }
       } finally {
@@ -244,11 +259,34 @@ export default function RCCShell() {
     boot();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (event === "INITIAL_SESSION") return;
+
+      // ── Token refresh failed — stale session, need clean re-login ──
+      if (event === "TOKEN_REFRESHED" && !newSession) {
+        clearStaleAuthTokens();
+        setSession(null);
+        setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
+        setSessionExpired(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // ── Signed out (manual or forced by Supabase) ──
+      if (event === "SIGNED_OUT") {
+        clearStaleAuthTokens();
+        setSession(null);
+        setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
+        setSessionExpired(false);
+        setOnboardingStep(inviteToken || consultantInviteToken || coInviteToken ? "register" : null);
+        setAuthLoading(false);
+        return;
+      }
+
       setSession(newSession);
       if (newSession?.user) {
         // Always load profile on SIGNED_IN so authLoading clears and the app renders.
         // On other events (TOKEN_REFRESHED etc.) skip if we already have the user loaded.
         if (event === "SIGNED_IN" || !currentUser) {
+          setSessionExpired(false);
           await loadProfile(newSession.user.id, newSession.user.email);
         } else {
           setAuthLoading(false);
@@ -330,6 +368,50 @@ export default function RCCShell() {
     }, 2000);
     return () => clearTimeout(timer);
   }, [upgradeSuccess, session]);
+
+  // ── PROACTIVE SESSION REFRESH ON APP RESUME ───────────────────────────────
+  // Debounced + guarded to prevent concurrent refreshSession() calls which
+  // cause lock:rcc-auth contention (especially in React Strict Mode dev).
+  useEffect(() => {
+    let refreshing = false;
+    let timer = null;
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (refreshing) return; // already in flight — skip
+
+      // Debounce: wait 300ms in case multiple visibility events fire at once
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (refreshing) return;
+        refreshing = true;
+        try {
+          const { data, error } = await supabase.auth.refreshSession();
+          if (error || !data?.session) {
+            clearStaleAuthTokens();
+            setSession(null);
+            setCurrentUser(null);
+            setFamilies([]); setConsultants([]); setChildren([]);
+            setSessionExpired(true);
+            setAuthLoading(false);
+          } else {
+            // Token refreshed — tell HeldHome hooks to re-fetch with fresh token
+            setCheckinRefreshKey(k => k + 1);
+          }
+        } catch {
+          // Network offline — don't clear session
+        } finally {
+          refreshing = false;
+        }
+      }, 300);
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearTimeout(timer);
+    };
+  }, []);
 
   // ── LOAD PROFILE (UNCHANGED logic)
   async function loadProfile(userId, authEmail = null, fromCache = false) {
@@ -755,18 +837,31 @@ export default function RCCShell() {
     const coEmail = coInviteToken ? decodeURIComponent(coInviteToken) : null;
     return (
       <ThemeCtx.Provider value={T}>
-        {authScreen === "login" ? (
-          <LoginScreen onLogin={handleLogin} onGoRegister={() => setAuthScreen("register")} />
-        ) : (
-          <RegisterScreen
-            onBack={() => setAuthScreen("login")}
-            onRegistered={handleRegister}
-            inviteToken={inviteToken}
-            consultantInviteToken={consultantInviteToken}
-            coInviteEmail={inviteRecord?.invite_email || coEmail}
-            inviteRecord={inviteRecord}
-          />
+        {/* Session-expired banner — shown when token expired, not first-time login */}
+        {sessionExpired && (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, zIndex: 999,
+            background: "#B8924A", color: "white",
+            padding: "12px 20px", textAlign: "center",
+            fontFamily: "system-ui, sans-serif", fontSize: 13.5, lineHeight: 1.5,
+          }}>
+            Your session expired — please sign in again to continue. Your data is safe. 🌿
+          </div>
         )}
+        <div style={sessionExpired ? { paddingTop: 48 } : {}}>
+          {authScreen === "login" ? (
+            <LoginScreen onLogin={handleLogin} onGoRegister={() => setAuthScreen("register")} />
+          ) : (
+            <RegisterScreen
+              onBack={() => setAuthScreen("login")}
+              onRegistered={handleRegister}
+              inviteToken={inviteToken}
+              consultantInviteToken={consultantInviteToken}
+              coInviteEmail={inviteRecord?.invite_email || coEmail}
+              inviteRecord={inviteRecord}
+            />
+          )}
+        </div>
       </ThemeCtx.Provider>
     );
   }

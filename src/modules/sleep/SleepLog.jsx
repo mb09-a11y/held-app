@@ -942,6 +942,24 @@ export function SleepLog({ user, activeFamily, initialTab }) {
     return () => { cancelled = true; };
   }, [familyId]);
 
+  // Re-fetch logs only (not full reload) when user returns to the app.
+  // Uses refreshLogs instead of re-running the main effect so the
+  // cancelled flag never traps the loading state.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && familyId) {
+        // Small delay to let RCCShell's token refresh complete first
+        setTimeout(() => {
+          fetchLogs(familyId).then(logData => {
+            setLogs(logData);
+          }).catch(() => {});
+        }, 600);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [familyId]);
+
   const childLogs = activeChild ? logs.filter(l => !l.child_id || l.child_id === activeChild.id) : logs;
 
   useEffect(() => {

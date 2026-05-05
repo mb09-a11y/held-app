@@ -353,11 +353,13 @@ export function NSCheckinFlow({ onClose, onCheckinSaved }) {
       return;
     }
     try {
+      // "Steady" is the parent-facing label — map to "Regulated" for the db enum
+      const dbState = state === "Steady" ? "Regulated" : state;
       const { error } = await supabase.from("regulation_checkins").insert({
         user_id: currentUser.id,
         family_id: activeFamily.id,
         type: new Date().getHours() < 12 ? "am" : "pm",
-        state,
+        state: dbState,
         source: "ns_checkin",
         checked_in_at: new Date().toISOString(),
       });
