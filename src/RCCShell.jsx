@@ -378,64 +378,38 @@ export default function RCCShell() {
     return () => clearTimeout(timer);
   }, [upgradeSuccess, session]);
 
-  // ── PROACTIVE SESSION REFRESH ON APP RESUME ───────────────────────────────
-  // Debounced + guarded to prevent concurrent refreshSession() calls which
-  // cause lock:rcc-auth contention (especially in React Strict Mode dev).
+  // ── DATA REFRESH ON APP RESUME ────────────────────────────────────────────
+  // When user returns to the app, check session is valid then tell all hooks
+  // to re-fetch. We do NOT call refreshSession() manually — that fights with
+  // Supabase's own autoRefreshToken and causes lock contention.
+  // Guard: never fire during active auth flows (boot, recovery, login).
   useEffect(() => {
-    let refreshing = false;
     let timer = null;
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      if (refreshing) return;
-
+      // Don't interfere during auth flows
+      if (authLoading || isRecovery || !session) return;
       clearTimeout(timer);
       timer = setTimeout(async () => {
-        if (refreshing) return;
-        refreshing = true;
+        // Re-check guards after debounce delay
+        if (authLoading || isRecovery || !session) return;
         try {
-          // First check if current session is still valid
-          const { data: current } = await supabase.auth.getSession();
-          const session = current?.session;
-
-          if (!session) {
-            // No session at all — clear and show login
+          const { data, error } = await supabase.auth.getSession();
+          if (error || !data?.session) {
             clearStaleAuthTokens();
             setSession(null);
             setCurrentUser(null);
             setFamilies([]); setConsultants([]); setChildren([]);
             setSessionExpired(true);
             setAuthLoading(false);
-            return;
+          } else {
+            setCheckinRefreshKey(k => k + 1);
           }
-
-          // Check if token expires within the next 10 minutes
-          const expiresAt = session.expires_at; // Unix timestamp
-          const tenMinsFromNow = Math.floor(Date.now() / 1000) + 600;
-          
-          if (expiresAt && expiresAt < tenMinsFromNow) {
-            // Token is about to expire or already expired — refresh it
-            const { data, error } = await supabase.auth.refreshSession();
-            if (error || !data?.session) {
-              clearStaleAuthTokens();
-              setSession(null);
-              setCurrentUser(null);
-              setFamilies([]); setConsultants([]); setChildren([]);
-              setSessionExpired(true);
-              setAuthLoading(false);
-              return;
-            }
-          }
-
-          // Session is valid — tell HeldHome hooks to re-fetch with fresh token
-          setCheckinRefreshKey(k => k + 1);
-
         } catch {
           // Network offline — don't clear session
-        } finally {
-          refreshing = false;
         }
-      }, 300);
+      }, 500);
     };
 
     document.addEventListener("visibilitychange", onVisible);
@@ -443,7 +417,7 @@ export default function RCCShell() {
       document.removeEventListener("visibilitychange", onVisible);
       clearTimeout(timer);
     };
-  }, []);
+  }, [authLoading, isRecovery, session]);
 
   // ── LOAD PROFILE (UNCHANGED logic)
   async function loadProfile(userId, authEmail = null, fromCache = false) {
