@@ -15,7 +15,7 @@ import { warmAI } from "./lib/ai.js";
 import { SideNav, BottomNav, SOSFab } from "./layout/Layout.jsx";
 
 // ── Auth (UNCHANGED)
-import { LoadingScreen, LoginScreen, PaymentPendingScreen, RegisterScreen, ChildInfoStep } from "./auth/AuthScreens.jsx";
+import { LoadingScreen, LoginScreen, PaymentPendingScreen, RegisterScreen, ChildInfoStep, ResetPasswordScreen } from "./auth/AuthScreens.jsx";
 
 // ── Shared panels (UNCHANGED)
 import { InviteFamilyPanel, InviteConsultantPanel, CoCaregiversModal } from "./views/shared/InvitePanels.jsx";
@@ -113,6 +113,7 @@ export default function RCCShell() {
 
   const [session, setSession] = useState(null);
   const [sessionExpired, setSessionExpired] = useState(false);
+  const [isRecovery, setIsRecovery] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => {
     try { const c = localStorage.getItem("rcc_user"); return c ? JSON.parse(c) : null; } catch { return null; }
   });
@@ -260,6 +261,14 @@ export default function RCCShell() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (event === "INITIAL_SESSION") return;
 
+      // ── Password reset flow ──
+      if (event === "PASSWORD_RECOVERY") {
+        setIsRecovery(true);
+        setSession(newSession);
+        setAuthLoading(false);
+        return;
+      }
+
       // ── Token refresh failed — stale session, need clean re-login ──
       if (event === "TOKEN_REFRESHED" && !newSession) {
         clearStaleAuthTokens();
@@ -378,26 +387,49 @@ export default function RCCShell() {
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      if (refreshing) return; // already in flight — skip
+      if (refreshing) return;
 
-      // Debounce: wait 300ms in case multiple visibility events fire at once
       clearTimeout(timer);
       timer = setTimeout(async () => {
         if (refreshing) return;
         refreshing = true;
         try {
-          const { data, error } = await supabase.auth.refreshSession();
-          if (error || !data?.session) {
+          // First check if current session is still valid
+          const { data: current } = await supabase.auth.getSession();
+          const session = current?.session;
+
+          if (!session) {
+            // No session at all — clear and show login
             clearStaleAuthTokens();
             setSession(null);
             setCurrentUser(null);
             setFamilies([]); setConsultants([]); setChildren([]);
             setSessionExpired(true);
             setAuthLoading(false);
-          } else {
-            // Token refreshed — tell HeldHome hooks to re-fetch with fresh token
-            setCheckinRefreshKey(k => k + 1);
+            return;
           }
+
+          // Check if token expires within the next 10 minutes
+          const expiresAt = session.expires_at; // Unix timestamp
+          const tenMinsFromNow = Math.floor(Date.now() / 1000) + 600;
+          
+          if (expiresAt && expiresAt < tenMinsFromNow) {
+            // Token is about to expire or already expired — refresh it
+            const { data, error } = await supabase.auth.refreshSession();
+            if (error || !data?.session) {
+              clearStaleAuthTokens();
+              setSession(null);
+              setCurrentUser(null);
+              setFamilies([]); setConsultants([]); setChildren([]);
+              setSessionExpired(true);
+              setAuthLoading(false);
+              return;
+            }
+          }
+
+          // Session is valid — tell HeldHome hooks to re-fetch with fresh token
+          setCheckinRefreshKey(k => k + 1);
+
         } catch {
           // Network offline — don't clear session
         } finally {
@@ -831,6 +863,18 @@ export default function RCCShell() {
   // Loading states
   if (inviteLoading) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading your invitation…" /></ThemeCtx.Provider>;
   if (authLoading && !profileReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
+
+  // ── Password reset flow ──
+  if (isRecovery) {
+    return (
+      <ThemeCtx.Provider value={T}>
+        <ResetPasswordScreen onDone={() => {
+          setIsRecovery(false);
+          // onAuthStateChange will fire SIGNED_IN after password update
+        }} />
+      </ThemeCtx.Provider>
+    );
+  }
 
   // Auth screens
   if (!session || !currentUser) {

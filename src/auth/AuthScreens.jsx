@@ -411,6 +411,93 @@ function ChildInfoStep({ onSave, loading }) {
   );
 }
 
+// ─── RESET PASSWORD SCREEN ───────────────────────────────────────────────────
+// Shown when user lands on the app with type=recovery in the URL hash
+function ResetPasswordScreen({ onDone }) {
+  const T = useT();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function handleReset() {
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords don't match.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    const { error } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (error) {
+      setError(error.message);
+    } else {
+      setDone(true);
+      setTimeout(() => onDone?.(), 2000);
+    }
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      justifyContent: "center", alignItems: "center",
+      padding: "0 24px", background: "#FDFAF6",
+    }}>
+      <div style={{ maxWidth: 400, width: "100%" }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 36, marginBottom: 6 }}>🌿</div>
+          <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 34, color: "#2D4A35", lineHeight: 1.1, marginBottom: 4 }}>
+            Set new password
+          </h1>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#9A8878", margin: 0 }}>
+            Choose a new password for your account.
+          </p>
+        </div>
+        <div style={{ background: "#FFFFFF", borderRadius: 20, padding: "20px 18px", boxShadow: "0 4px 28px rgba(45,74,53,0.10)", border: "1px solid #E8DDD0" }}>
+          {done ? (
+            <div style={{ textAlign: "center", padding: "20px 0" }}>
+              <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: "#5C7A5E", margin: 0 }}>
+                Password updated! Signing you in…
+              </p>
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>New Password *</div>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Confirm Password *</div>
+                <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+                  style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                  onKeyDown={e => e.key === "Enter" && handleReset()}
+                />
+              </div>
+              {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{error}</div>}
+              <button onClick={handleReset} disabled={loading} style={{
+                width: "100%", padding: "13px", borderRadius: 12, border: "none",
+                background: "#5C7A5E", color: "white", fontFamily: "'DM Sans', sans-serif",
+                fontSize: 14, fontWeight: 600, cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.7 : 1,
+              }}>
+                {loading ? "Updating…" : "Set new password →"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PARENT HOME ─────────────────────────────────────────────────────────────
 
-export { LoadingScreen, LoginScreen, PaymentPendingScreen, RegisterScreen, ChildInfoStep };
+export { LoadingScreen, LoginScreen, PaymentPendingScreen, RegisterScreen, ChildInfoStep, ResetPasswordScreen };
