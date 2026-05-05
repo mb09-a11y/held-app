@@ -217,27 +217,12 @@ export default function RCCShell() {
 
   // ── BOOT
   const bootInFlightRef = useRef(false);
-
-  // ── DETECT PASSWORD RECOVERY FROM URL HASH ON BOOT ───────────────────────
-  // Reset links contain #access_token=...&type=recovery in the URL.
-  // We detect this immediately so the app shows the reset form, not the login.
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash && hash.includes("type=recovery")) {
-      setIsRecovery(true);
-      setAuthLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     let mounted = true;
     async function boot() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
-        // Skip normal boot if we're in recovery mode — Supabase handles the token
-        if (window.location.hash?.includes("type=recovery")) return;
-
         const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
 
@@ -393,38 +378,64 @@ export default function RCCShell() {
     return () => clearTimeout(timer);
   }, [upgradeSuccess, session]);
 
-  // ── DATA REFRESH ON APP RESUME ────────────────────────────────────────────
-  // When user returns to the app, check session is valid then tell all hooks
-  // to re-fetch. We do NOT call refreshSession() manually — that fights with
-  // Supabase's own autoRefreshToken and causes lock contention.
-  // Guard: never fire during active auth flows (boot, recovery, login).
+  // ── PROACTIVE SESSION REFRESH ON APP RESUME ───────────────────────────────
+  // Debounced + guarded to prevent concurrent refreshSession() calls which
+  // cause lock:rcc-auth contention (especially in React Strict Mode dev).
   useEffect(() => {
+    let refreshing = false;
     let timer = null;
 
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
-      // Don't interfere during auth flows
-      if (authLoading || isRecovery || !session) return;
+      if (refreshing) return;
+
       clearTimeout(timer);
       timer = setTimeout(async () => {
-        // Re-check guards after debounce delay
-        if (authLoading || isRecovery || !session) return;
+        if (refreshing) return;
+        refreshing = true;
         try {
-          const { data, error } = await supabase.auth.getSession();
-          if (error || !data?.session) {
+          // First check if current session is still valid
+          const { data: current } = await supabase.auth.getSession();
+          const session = current?.session;
+
+          if (!session) {
+            // No session at all — clear and show login
             clearStaleAuthTokens();
             setSession(null);
             setCurrentUser(null);
             setFamilies([]); setConsultants([]); setChildren([]);
             setSessionExpired(true);
             setAuthLoading(false);
-          } else {
-            setCheckinRefreshKey(k => k + 1);
+            return;
           }
+
+          // Check if token expires within the next 10 minutes
+          const expiresAt = session.expires_at; // Unix timestamp
+          const tenMinsFromNow = Math.floor(Date.now() / 1000) + 600;
+          
+          if (expiresAt && expiresAt < tenMinsFromNow) {
+            // Token is about to expire or already expired — refresh it
+            const { data, error } = await supabase.auth.refreshSession();
+            if (error || !data?.session) {
+              clearStaleAuthTokens();
+              setSession(null);
+              setCurrentUser(null);
+              setFamilies([]); setConsultants([]); setChildren([]);
+              setSessionExpired(true);
+              setAuthLoading(false);
+              return;
+            }
+          }
+
+          // Session is valid — tell HeldHome hooks to re-fetch with fresh token
+          setCheckinRefreshKey(k => k + 1);
+
         } catch {
           // Network offline — don't clear session
+        } finally {
+          refreshing = false;
         }
-      }, 500);
+      }, 300);
     };
 
     document.addEventListener("visibilitychange", onVisible);
@@ -432,7 +443,7 @@ export default function RCCShell() {
       document.removeEventListener("visibilitychange", onVisible);
       clearTimeout(timer);
     };
-  }, [authLoading, isRecovery, session]);
+  }, []);
 
   // ── LOAD PROFILE (UNCHANGED logic)
   async function loadProfile(userId, authEmail = null, fromCache = false) {

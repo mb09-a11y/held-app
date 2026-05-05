@@ -437,8 +437,6 @@ function ResetPasswordScreen({ onDone }) {
     if (error) {
       setError(error.message);
     } else {
-      // Clear the recovery token from the URL
-      window.history.replaceState({}, document.title, window.location.pathname);
       setDone(true);
       setTimeout(() => onDone?.(), 2000);
     }
