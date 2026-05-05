@@ -217,12 +217,27 @@ export default function RCCShell() {
 
   // ── BOOT
   const bootInFlightRef = useRef(false);
+
+  // ── DETECT PASSWORD RECOVERY FROM URL HASH ON BOOT ───────────────────────
+  // Reset links contain #access_token=...&type=recovery in the URL.
+  // We detect this immediately so the app shows the reset form, not the login.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && hash.includes("type=recovery")) {
+      setIsRecovery(true);
+      setAuthLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     async function boot() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
+        // Skip normal boot if we're in recovery mode — Supabase handles the token
+        if (window.location.hash?.includes("type=recovery")) return;
+
         const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
 
