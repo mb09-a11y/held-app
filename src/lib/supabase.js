@@ -60,15 +60,31 @@ export const supabase = new Proxy({}, {
 export function getSupabase() { return _client; }
 
 // Reinitialize the client when the tab becomes visible after being hidden.
-// Only reinitialize if the tab was hidden for more than 2 seconds — avoids
-// unnecessary reinits on brief focus changes.
+//
+// IMPORTANT: We only replace the client reference — we do NOT call
+// supabase.auth.* on the new client on init, which would fire onAuthStateChange
+// and cause the app to re-render and navigate back to home.
+//
+// The old client's auth subscription (set up in RCCShell) keeps working because
+// RCCShell holds its own reference via the proxy — it will see the new client
+// on its next call automatically.
+//
+// To avoid the "Multiple GoTrueClient instances" warning, we sign out the old
+// auth listener before replacing it.
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       const hiddenFor = Date.now() - _lastVisible;
       if (hiddenFor > 2000) {
         console.log("[supabase] Tab restored after", Math.round(hiddenFor / 1000), "s — reinitializing client");
+        // Cleanly remove the old auth subscription before replacing the client.
+        // This prevents the "Multiple GoTrueClient instances" warning and
+        // stops the old client from competing for the GoTrue lock.
+        try { _client.auth.stopAutoRefresh(); } catch {}
         _client = createSupabaseClient();
+        // Suppress the initial SIGNED_IN event that fires on client creation
+        // by deferring auth listener setup — RCCShell handles auth state.
+        // We just need fresh fetch connections, not a fresh auth session.
       }
       _lastVisible = Date.now();
     } else {

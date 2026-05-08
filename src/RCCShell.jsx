@@ -301,44 +301,9 @@ export default function RCCShell() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
-        // ── FAST PATH: skip getSession() if we already have a valid cached session ──
-        // getSession() acquires the GoTrue lock every time — even just to read.
-        // If the resume handler holds the lock, this queues for 8+ seconds,
-        // fires the boot timeout warning, and loadProfile never runs.
-        //
-        // If we have a cached session + cached user, we already set both above
-        // synchronously. Just call loadProfile with the cached session — no lock needed.
-        // onAuthStateChange handles any real auth state changes (token expiry, signout).
-        if (cachedSession && hasCachedUser) {
-          try {
-            await loadProfile(cachedSession.user?.id || cachedSession.sub, cachedSession.user?.email || cachedSession.email, true);
-          } catch (err) {
-            console.error("[RCCShell] boot loadProfile (fast path) error:", err);
-          }
-          // Background-validate the session without blocking — fire and forget.
-          // If it comes back invalid, onAuthStateChange will handle signout.
-          supabase.auth.getSession().then(({ data, error }) => {
-            if (!mounted) return;
-            if (error) {
-              const msg = error.message || "";
-              const isBadToken = msg.includes("Invalid Refresh Token") ||
-                msg.includes("Refresh Token Not Found") ||
-                msg.includes("refresh_token_not_found");
-              if (isBadToken) {
-                clearStaleAuthTokens();
-                setSession(null); setCurrentUser(null);
-                setSessionExpired(true); setAuthLoading(false);
-              } else {
-                clearStaleLocks();
-              }
-            } else if (data?.session) {
-              setSession(data.session);
-            }
-          }).catch(() => {});
-          return;
-        }
-
-        // ── COLD PATH: no cached session — must call getSession() ──
+        // getSession() may queue behind the resume handler lock — that's fine
+        // now because the app is already rendered from cache above.
+        // This just background-validates the session is still good.
         const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
 
@@ -417,9 +382,21 @@ export default function RCCShell() {
 
       setSession(newSession);
       if (newSession?.user) {
-        // Always load profile on SIGNED_IN so authLoading clears and the app renders.
-        // On other events (TOKEN_REFRESHED etc.) skip if we already have the user loaded.
-        if (event === "SIGNED_IN" || !currentUser) {
+        // SIGNED_IN fires both on real logins AND when the Supabase client is
+        // reinitialized (e.g. Safari tab restore). Distinguish between them:
+        // - Real sign-in: currentUser is null (user was logged out)
+        // - Client reinit: currentUser already exists with the same user ID
+        // For reinits, skip loadProfile entirely — it would reset the active
+        // tab to "home" and cause an unnecessary full re-render.
+        const isReinit = event === "SIGNED_IN" &&
+          currentUser &&
+          currentUser.id === newSession.user.id;
+
+        if (isReinit) {
+          // Client was reinitialized (Safari network recovery) — don't touch tab or profile
+          console.log("[RCCShell] SIGNED_IN from client reinit — skipping loadProfile");
+          setAuthLoading(false);
+        } else if (event === "SIGNED_IN" || !currentUser) {
           setSessionExpired(false);
           await loadProfile(newSession.user.id, newSession.user.email);
         } else {
