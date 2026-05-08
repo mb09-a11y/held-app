@@ -995,7 +995,7 @@ export function SleepPlanTracker({ user, activeFamily }) {
         </div>
 
         {/* Consultant note */}
-        {profile.consultantNotes && (
+        {typeof profile.consultantNotes === "string" && profile.consultantNotes.trim() && (
           <div style={{ marginTop:14, padding:"12px 15px", borderRadius:12, background:`${mc}0f`, border:`1px solid ${mc}28` }}>
             <div style={{ fontSize:9.5, fontWeight:700, letterSpacing:".1em", textTransform:"uppercase", color:mc, marginBottom:5, fontFamily:font }}>Note from your consultant</div>
             <p style={{ fontSize:13, color:T.muted, lineHeight:1.7, fontStyle:"italic", fontFamily:font }}>{profile.consultantNotes}</p>
