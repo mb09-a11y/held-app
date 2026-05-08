@@ -151,7 +151,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
       .then(({ data }) => {
         if (cancelled) return;
         const profile = data?.sleep_plan_profile;
-        setPlanExists(!!(profile && profile.method && profile.childName));
+        setPlanExists(!!(profile && profile.method));
       })
       .catch(() => { if (!cancelled) setPlanExists(false); });
     return () => { cancelled = true; };
