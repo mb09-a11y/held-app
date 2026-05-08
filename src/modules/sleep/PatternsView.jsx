@@ -706,32 +706,50 @@ export function PatternsView({ logs, onPatch, onDelete }) {
           </div>
         </div>
 
-        {/* Recent sessions */}
-        <Card>
-          <SectionLabel>Recent Sessions</SectionLabel>
-          {logs.filter(l => l.type === "sleep_session").slice(0,10).map((s,i,arr) => {
-            const durH = s.end_ts ? Math.max(0,(new Date(s.end_ts)-new Date(s.ts))/3600000) : null;
-            const settle = s.fall_asleep_secs != null ? Math.round(s.fall_asleep_secs/60) : null;
-            const fmtHm2 = h => { if (!h||h<=0) return "—"; const hrs=Math.floor(h),mins=Math.round((h-hrs)*60); return mins>0?`${hrs}h ${mins}m`:`${hrs}h`; };
-            return (
-              <div key={s.id} style={{ padding:"12px 0", borderBottom: i<arr.length-1?`1px solid ${T.border}`:"none", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                <div>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                    <span style={{ fontSize:13 }}>{s.session_type==="night"?"🌙":"☀️"}</span>
-                    <span style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{fmtDateTime(s.ts)}</span>
+        {/* Recent sessions — sleep + diapers interleaved */}
+        {(() => {
+          const fmtHm2 = h => { if (!h||h<=0) return "—"; const hrs=Math.floor(h),mins=Math.round((h-hrs)*60); return mins>0?`${hrs}h ${mins}m`:`${hrs}h`; };
+          const recentEntries = logs
+            .filter(l => l.type === "sleep_session" || l.type === "diaper")
+            .sort((a, b) => new Date(b.ts) - new Date(a.ts))
+            .slice(0, 15);
+          return (
+            <Card>
+              <SectionLabel>Recent Sessions</SectionLabel>
+              {recentEntries.length === 0 && (
+                <p style={{ fontSize:13, color:T.muted, textAlign:"center", padding:"12px 0", fontFamily:font }}>No sessions logged yet</p>
+              )}
+              {recentEntries.map((s, i, arr) => {
+                const isSleep = s.type === "sleep_session";
+                const isDiaper = s.type === "diaper";
+                const durH = isSleep && s.end_ts ? Math.max(0,(new Date(s.end_ts)-new Date(s.ts))/3600000) : null;
+                const settle = isSleep && s.fall_asleep_secs != null ? Math.round(s.fall_asleep_secs/60) : null;
+                const icon = isSleep
+                  ? (s.session_type === "night" ? "🌙" : "☀️")
+                  : (s.sub_type === "dirty" ? "💩" : "💦");
+                const label = isSleep
+                  ? fmtDateTime(s.ts)
+                  : `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper · ${fmtDateTime(s.ts)}`;
+                const sub = isSleep
+                  ? [durH != null ? fmtHm2(durH) : "in progress", settle != null ? `settled in ${settle}m` : null, s.mood ? MOODS.find(m=>m.id===s.mood)?.emoji ?? "" : null].filter(Boolean).join(" · ")
+                  : s.description || "";
+                return (
+                  <div key={s.id} style={{ padding:"12px 0", borderBottom: i<arr.length-1?`1px solid ${T.border}`:"none", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+                        <span style={{ fontSize:13 }}>{icon}</span>
+                        <span style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{isSleep ? fmtDateTime(s.ts) : `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper`}</span>
+                        {isDiaper && <span style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{fmtDateTime(s.ts)}</span>}
+                      </div>
+                      {sub ? <div style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{sub}</div> : null}
+                    </div>
+                    {onPatch && <button onClick={() => setEditingLog(s)} style={{ background:T.faint, border:`1px solid ${T.border}`, color:T.muted, fontSize:11.5, cursor:"pointer", padding:"5px 10px", borderRadius:8, fontFamily:font, flexShrink:0, marginLeft:8 }}>Edit</button>}
                   </div>
-                  <div style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>
-                    {durH!=null ? fmtHm2(durH) : "in progress"}
-                    {settle!=null ? ` · settled in ${settle}m` : ""}
-                    {s.mood ? ` · ${MOODS.find(m=>m.id===s.mood)?.emoji??""}` : ""}
-                  </div>
-                </div>
-                {onPatch && <button onClick={() => setEditingLog(s)} style={{ background:T.faint, border:`1px solid ${T.border}`, color:T.muted, fontSize:11.5, cursor:"pointer", padding:"5px 10px", borderRadius:8, fontFamily:font, flexShrink:0, marginLeft:8 }}>Edit</button>}
-              </div>
-            );
-          })}
-          {logs.filter(l=>l.type==="sleep_session").length===0 && <p style={{ fontSize:13, color:T.muted, textAlign:"center", padding:"12px 0", fontFamily:font }}>No sessions logged yet</p>}
-        </Card>
+                );
+              })}
+            </Card>
+          );
+        })()}
 
       </>)}
       {editingLog && <EditLogModal log={editingLog} onSave={onPatch} onDelete={onDelete} onClose={() => setEditingLog(null)} />}

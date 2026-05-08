@@ -637,6 +637,76 @@ function WellnessView({ logs, activeFamily }) {
         )}
       </Card>
 
+      {/* ── DIAPER LOG ── under-2 only ── */}
+      {(() => {
+        const ageMonths = activeChild?.dob
+          ? Math.floor((Date.now() - new Date(activeChild.dob)) / (1000*60*60*24*30.44))
+          : null;
+        if (ageMonths === null || ageMonths >= 24) return null;
+
+        const since = new Date(Date.now() - 14*86400000).toISOString();
+        const recentDiapers = logs
+          .filter(l => l.type === "diaper" && l.ts > since)
+          .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+        if (recentDiapers.length === 0) return null;
+
+        const wetCount  = recentDiapers.filter(l => l.sub_type === "wet").length;
+        const dirtyCount = recentDiapers.filter(l => l.sub_type === "dirty").length;
+        const bothCount = recentDiapers.filter(l => l.sub_type === "both").length;
+        const totalDays = 14;
+        const wetPerDay  = parseFloat(((wetCount + bothCount) / totalDays).toFixed(1));
+        const dirtyPerDay = parseFloat(((dirtyCount + bothCount) / totalDays).toFixed(1));
+
+        // AAP-based normal ranges by age
+        const wetRange   = ageMonths < 1.5 ? [6,8] : ageMonths < 6 ? [5,6] : [4,6];
+        const dirtyRange = [1,3];
+        function dotColor(val, [lo, hi]) {
+          if (val >= lo && val <= hi) return C.sage;
+          if (val < lo) return C.rose;
+          return C.amber;
+        }
+
+        return (
+          <Card>
+            <SectionLabel>Diaper Log · Last 14 Days</SectionLabel>
+
+            {/* Summary stat row */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+              {[
+                { label:"Wet/day", value:wetPerDay, range:wetRange, icon:"💦" },
+                { label:"Dirty/day", value:dirtyPerDay, range:dirtyRange, icon:"💩" },
+              ].map(s => (
+                <div key={s.label} style={{ textAlign:"center", padding:"10px 0", borderRadius:12, background:T.faint }}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", background:dotColor(s.value, s.range), margin:"0 auto 6px" }} />
+                  <div style={{ fontFamily:serif, fontSize:22, fontWeight:700, color:T.text, lineHeight:1 }}>{s.value}</div>
+                  <div style={{ fontFamily:font, fontSize:10, color:T.muted, marginTop:4, textTransform:"uppercase", letterSpacing:".07em" }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent entries */}
+            <div style={{ display:"flex", flexDirection:"column" }}>
+              {recentDiapers.slice(0, 10).map((log, i, arr) => (
+                <div key={log.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:i<Math.min(arr.length,10)-1?`1px solid ${T.border}`:"none" }}>
+                  <span style={{ fontSize:18 }}>{log.sub_type === "dirty" ? "💩" : log.sub_type === "both" ? "💦💩" : "💦"}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>
+                      {log.sub_type === "dirty" ? "Dirty" : log.sub_type === "both" ? "Wet + Dirty" : "Wet"}
+                    </div>
+                    {log.description ? <div style={{ fontFamily:font, fontSize:11, color:T.muted }}>{log.description}</div> : null}
+                  </div>
+                  <div style={{ fontFamily:font, fontSize:11, color:T.muted, textAlign:"right" }}>
+                    <div>{fmtShortDate(log.ts)}</div>
+                    <div>{(() => { const diff = Math.floor((Date.now()-new Date(log.ts))/86400000); return diff===0?"Today":diff===1?"Yesterday":`${diff}d ago`; })()}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        );
+      })()}
+
       {/* ── ILLNESS & WELLNESS HISTORY ── */}
       {illnessGroups.length > 0 && (
         <Card>
@@ -842,7 +912,10 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
   const [time, setTime] = useState(fmtTime(log.ts).replace(" AM","").replace(" PM","").replace(/(\d):(\d\d)/, (_,h,m)=>`${h.padStart(2,"0")}:${m}`));
   const [endTime, setEndTime] = useState(log.end_ts ? fmtTime(log.end_ts).replace(" AM","").replace(" PM","").replace(/(\d):(\d\d)/,(_,h,m)=>`${h.padStart(2,"0")}:${m}`) : "");
   const [mood, setMood] = useState(log.mood || "");
+  const [diaperType, setDiaperType] = useState(log.sub_type || "wet");
   const [saving, setSaving] = useState(false);
+
+  const isDiaper = log.type === "diaper";
 
   async function handleSave() {
     setSaving(true);
@@ -859,6 +932,9 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
       if (endTime) { const newEnd = toISO(date, endTime, newTs); changes.end_ts = newEnd; changes.total_sleep_ms = Math.max(0, new Date(newEnd)-new Date(log.fell_asleep_ts||newTs)); }
       if (mood) changes.mood = mood;
     }
+    if (isDiaper) {
+      changes.sub_type = diaperType;
+    }
     await onSave(log.id, changes);
     setSaving(false); onClose();
   }
@@ -870,11 +946,13 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:500, display:"flex", alignItems:"flex-end" }}>
       <div style={{ background:T.bg2||T.bg, borderRadius:"20px 20px 0 0", width:"100%", padding:"24px 20px 48px", maxHeight:"85vh", overflowY:"auto" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
-          <h3 style={{ fontFamily:serif, fontSize:18, color:T.headingText, margin:0 }}>Edit Log</h3>
+          <h3 style={{ fontFamily:serif, fontSize:18, color:T.headingText, margin:0 }}>
+            {isDiaper ? "Edit Diaper Log" : "Edit Log"}
+          </h3>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:T.muted }}>✕</button>
         </div>
         <div style={{ marginBottom:14 }}><label style={labelStyle}>Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={inputStyle} /></div>
-        <div style={{ marginBottom:14 }}><label style={labelStyle}>Start time</label><input type="time" value={time} onChange={e=>setTime(e.target.value)} style={inputStyle} /></div>
+        <div style={{ marginBottom:14 }}><label style={labelStyle}>Time</label><input type="time" value={time} onChange={e=>setTime(e.target.value)} style={inputStyle} /></div>
         {log.type==="sleep_session"&&log.end_ts&&<div style={{ marginBottom:14 }}><label style={labelStyle}>End time</label><input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)} style={inputStyle} /></div>}
         {log.type==="sleep_session"&&(
           <div style={{ marginBottom:20 }}>
@@ -882,6 +960,16 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               {[{id:"",label:"None"},{id:"happy",label:"😊"},{id:"neutral",label:"😐"},{id:"fussy",label:"😢"},{id:"sleepy",label:"😴"},{id:"upset",label:"😤"}].map(m=>(
                 <button key={m.id} onClick={()=>setMood(m.id)} style={{ padding:"8px 14px", borderRadius:10, border:`1.5px solid ${mood===m.id?C.teal:T.border}`, background:mood===m.id?`${C.teal}18`:"transparent", cursor:"pointer", fontFamily:font, fontSize:13, color:mood===m.id?C.teal:T.text }}>{m.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        {isDiaper && (
+          <div style={{ marginBottom:20 }}>
+            <label style={labelStyle}>Diaper type</label>
+            <div style={{ display:"flex", gap:8 }}>
+              {[{id:"wet",label:"💦 Wet"},{id:"dirty",label:"💩 Dirty"},{id:"both",label:"💦💩 Both"}].map(opt=>(
+                <button key={opt.id} onClick={()=>setDiaperType(opt.id)} style={{ flex:1, padding:"10px 8px", borderRadius:10, border:`1.5px solid ${diaperType===opt.id?C.teal:T.border}`, background:diaperType===opt.id?`${C.teal}18`:"transparent", cursor:"pointer", fontFamily:font, fontSize:13, color:diaperType===opt.id?C.teal:T.text }}>{opt.label}</button>
               ))}
             </div>
           </div>
