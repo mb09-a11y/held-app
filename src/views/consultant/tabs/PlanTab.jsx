@@ -170,12 +170,14 @@ function SetupPanel({ plan, onSave, onClose }) {
   const handleSave = () => {
     const methodInfo = METHODS[f.method];
     // Auto-generate fresh phases when method changes, preserve existing if same
-    const freshPhases = f.method !== plan?.method
+    const existingPhases = plan?.phases || [];
+    const methodChanged = f.method !== plan?.method;
+    const freshPhases = (methodChanged || existingPhases.length === 0)
       ? (methodInfo?.phases || []).map(ph => ({
           ...ph,
           items: ph.items.map(it => ({ ...it, done: false })),
         }))
-      : plan?.phases || [];
+      : existingPhases;
     onSave({
       ...plan,
       method: f.method,
