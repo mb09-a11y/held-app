@@ -1046,7 +1046,7 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
                     sender_id: senderId,
                     sender_role: senderRole,
                     content: `Your sleep plan is ready! I've assigned the ${plan.methodLabel} to your family. Open the Plans tab in your Held app to view your personalized checklist and get started.`,
-                    type: "plan_notification",
+                    type: "text",
                   });
                   await supabase.from("families")
                     .update({ sleep_plan_sent_at: new Date().toISOString() })

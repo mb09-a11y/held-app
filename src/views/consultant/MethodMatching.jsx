@@ -271,7 +271,7 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
                     sender_id: senderId,
                     sender_role: senderRole,
                     content: msgText,
-                    type: "plan_notification",
+                    type: "text",
                   });
                   if (error) console.error("[MethodMatching] message insert error:", error);
                 } else {
