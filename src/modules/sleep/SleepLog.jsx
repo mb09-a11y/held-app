@@ -896,7 +896,7 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
 }
 
 // ─── ROOT MODULE ──────────────────────────────────────────────────────────────
-export function SleepLog({ user, activeFamily, initialTab }) {
+export function SleepLog({ user, activeFamily, initialTab, checkinRefreshKey = 0 }) {
   const T = useT();
   const { activeChild } = useApp();
 
@@ -940,25 +940,14 @@ export function SleepLog({ user, activeFamily, initialTab }) {
       setLoadingLogs(false);
     });
     return () => { cancelled = true; };
-  }, [familyId]);
+  }, [familyId, checkinRefreshKey]);
 
   // Re-fetch logs only (not full reload) when user returns to the app.
   // Uses refreshLogs instead of re-running the main effect so the
   // cancelled flag never traps the loading state.
-  useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible" && familyId) {
-        // Small delay to let RCCShell's token refresh complete first
-        setTimeout(() => {
-          fetchLogs(familyId).then(logData => {
-            setLogs(logData);
-          }).catch(() => {});
-        }, 600);
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [familyId]);
+  // visibilitychange listener removed — SleepLog re-fetches via checkinRefreshKey
+  // (see useEffect at line ~943). RCCShell increments the key only after activeFamily
+  // and auth are fully settled, eliminating the race that caused empty log state.
 
   const childLogs = activeChild ? logs.filter(l => !l.child_id || l.child_id === activeChild.id) : logs;
 

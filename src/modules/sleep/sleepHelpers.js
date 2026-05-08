@@ -3,6 +3,7 @@
 // Imported by SleepLog.jsx and all sub-view files.
 
 import { supabase } from "../../lib/supabase.js";
+import { SleepLogsCache, FamilyStateCache, NextSleepCache } from "../../lib/heldCache.js";
 import { font, serif } from "../../core/shared.jsx";
 
 export { font, serif };
@@ -40,7 +41,14 @@ export async function insertLog(familyId, entry) {
   const safeEntry = { ...rest, family_id: familyId, ts: rest.ts || new Date().toISOString() };
   for (let attempt = 1; attempt <= 3; attempt++) {
     const { data, error } = await supabase.from("sleep_logs").insert(safeEntry).select().single();
-    if (!error) return data;
+    if (!error) {
+      // Invalidate sleep caches so next render fetches fresh data
+      SleepLogsCache.invalidateFamily(familyId);
+      FamilyStateCache.invalidateCachePrefix?.(`familyState:${familyId}`) ||
+        (() => { try { Object.keys(localStorage).filter(k => k.startsWith(`held:familyState:${familyId}`)).forEach(k => localStorage.removeItem(k)); } catch {} })();
+      NextSleepCache.invalidate(familyId, safeEntry.child_id || null);
+      return data;
+    }
     console.error(`[SleepLog] insertLog attempt ${attempt}:`, JSON.stringify(error));
     if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
   }

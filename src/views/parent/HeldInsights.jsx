@@ -7,7 +7,7 @@ import { supabase } from "../../lib/supabase.js";
 import HeldTree from "./HeldTree.jsx";
 
 // ─── DATA HOOK ───────────────────────────────────────────────────────────────
-function useInsightsData(userId, familyId, childId) {
+function useInsightsData(userId, familyId, childId, checkinRefreshKey) {
   const [data, setData] = useState({ checkins: [], sleepSessions: [], ventralCount: 0, loading: true });
 
   useEffect(() => {
@@ -38,7 +38,7 @@ function useInsightsData(userId, familyId, childId) {
         : allSleep;
       setData({ checkins: checkins || [], sleepSessions: filteredSleep, ventralCount: ventralCount ?? 0, loading: false });
     });
-  }, [userId, familyId, childId]);
+  }, [userId, familyId, childId, checkinRefreshKey]);
 
   return data;
 }
@@ -736,11 +736,11 @@ function RootCellarTab({ profile, patterns }) {
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
   const T = useT();
-  const { currentUser, activeFamily, activeChild } = useApp();
+  const { currentUser, activeFamily, activeChild, checkinRefreshKey } = useApp();
   const [insightTab, setInsightTab] = useState("story");
 
   const { checkins, sleepSessions, ventralCount, loading } = useInsightsData(
-    currentUser?.id, activeFamily?.id, activeChild?.id
+    currentUser?.id, activeFamily?.id, activeChild?.id, checkinRefreshKey
   );
 
   const [profile, setProfile] = useState(null);
@@ -752,7 +752,7 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
       .eq("id", currentUser.id)
       .single()
       .then(({ data }) => setProfile(data));
-  }, [currentUser?.id]);
+  }, [currentUser?.id, checkinRefreshKey]);
 
   const weekCount = profile?.created_at
     ? Math.floor((Date.now() - new Date(profile.created_at).getTime()) / (1000 * 60 * 60 * 24 * 7))

@@ -824,7 +824,7 @@ function ConsultantPlanView({ checks, history, allItems, profile, method, mc, be
 // ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
 export function SleepPlanTracker({ user, activeFamily }) {
   const T = useT();
-  const { currentUser } = useContext(AppCtx);
+  const { currentUser, checkinRefreshKey } = useContext(AppCtx);
   const resolvedUser = user || currentUser;
 
   // ── State ──
@@ -883,7 +883,7 @@ export function SleepPlanTracker({ user, activeFamily }) {
 
       setLoading(false);
     });
-  }, [familyId]);
+  }, [familyId, checkinRefreshKey]);
 
   // ── Persist profile ──
   const saveProfile = useCallback(async (newProfile) => {

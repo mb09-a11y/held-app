@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { FamilyStateCache, RegCheckinsCache, CheckinHistoryCache } from "../../lib/heldCache.js";
 import { callAI } from "../../lib/ai.js";
 import { getPrompt } from "../../lib/prompts.js";
 import { getPractice, getNoticedStatement } from "../../lib/practices.js";
@@ -147,17 +148,17 @@ function getEmotionalHeader(currentUser) {
 
 // ─── FAMILY STATE HOOK ────────────────────────────────────────────────────────
 export function useFamilyState(familyId, childId, userId) {
-  const [familyState, setFamilyState] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Read from cache synchronously — renders immediately without waiting for Supabase.
+  const [familyState, setFamilyState] = useState(() =>
+    familyId && childId && userId ? FamilyStateCache.read(familyId, childId, userId) : null
+  );
+  const [loading, setLoading] = useState(() =>
+    // Only show loading spinner if we have no cached data to show
+    !(familyId && childId && userId && FamilyStateCache.read(familyId, childId, userId))
+  );
   const [refreshCounter, setRefreshCounter] = useState(0);
   const refresh = useCallback(() => setRefreshCounter(c => c + 1), []);
 
-  // Re-fetch when user returns to the app (fixes stale NS/sleep state after backgrounding)
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [refresh]);
 
   useEffect(() => {
     if (!familyId) { setLoading(false); return; }
@@ -166,24 +167,48 @@ export function useFamilyState(familyId, childId, userId) {
       const since7 = new Date(Date.now() - 7 * 86400000).toISOString();
       const since24 = new Date(Date.now() - 86400000).toISOString();
 
-      const [
-        { data: sleepLogs },
-        { data: checkins },
-        { data: child },
-        { data: intakeData },
-        { data: sleepConfig },
-      ] = await Promise.all([
-        (() => {
-          let q = supabase.from("sleep_logs").select("*").eq("family_id", familyId).gte("ts", since7);
-          if (childId) q = q.or(`child_id.eq.${childId},child_id.is.null`);
-          return q.order("ts", { ascending: false });
-        })(),
-        supabase.from("regulation_checkins").select("*").eq("user_id", userId)
-          .gte("checked_in_at", since7).order("checked_in_at", { ascending: false }),
-        childId ? supabase.from("children").select("*").eq("id", childId).maybeSingle() : Promise.resolve({ data: null }),
-        supabase.from("intake_responses").select("*").eq("family_id", familyId).maybeSingle(),
-        supabase.from("sleep_configs").select("recommended_wake_windows").eq("family_id", familyId).maybeSingle(),
-      ]);
+      // Hard 8s timeout on the entire fetch bundle.
+      // If Supabase stalls (GoTrue lock contention, network blip, cold start),
+      // we fall back to cached data rather than leaving the screen blank forever.
+      // The timeout fires a retry on next checkinRefreshKey increment.
+      const FETCH_TIMEOUT = 8000;
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("fetch_timeout")), FETCH_TIMEOUT)
+      );
+
+      let sleepLogs, checkins, child, intakeData, sleepConfig;
+      try {
+        ([
+          { data: sleepLogs },
+          { data: checkins },
+          { data: child },
+          { data: intakeData },
+          { data: sleepConfig },
+        ] = await Promise.race([
+          Promise.all([
+            (() => {
+              let q = supabase.from("sleep_logs").select("*").eq("family_id", familyId).gte("ts", since7);
+              if (childId) q = q.or(`child_id.eq.${childId},child_id.is.null`);
+              return q.order("ts", { ascending: false });
+            })(),
+            supabase.from("regulation_checkins").select("*").eq("user_id", userId)
+              .gte("checked_in_at", since7).order("checked_in_at", { ascending: false }),
+            childId ? supabase.from("children").select("*").eq("id", childId).maybeSingle() : Promise.resolve({ data: null }),
+            supabase.from("intake_responses").select("*").eq("family_id", familyId).maybeSingle(),
+            supabase.from("sleep_configs").select("recommended_wake_windows").eq("family_id", familyId).maybeSingle(),
+          ]),
+          timeout,
+        ]));
+      } catch (err) {
+        if (err.message === "fetch_timeout") {
+          // Supabase stalled — stay on cached data, don't wipe the screen.
+          // The next checkinRefreshKey increment will retry automatically.
+          console.warn("[useFamilyState] fetch timed out — retaining cached state");
+          setLoading(false);
+          return;
+        }
+        throw err; // unexpected error — let outer catch handle it
+      }
 
       const logs = sleepLogs || [];
       const todayLogs = logs.filter(l => new Date(l.ts) > new Date(since24));
@@ -209,7 +234,7 @@ export function useFamilyState(familyId, childId, userId) {
       // Child profile from intake
       const intake = intakeData || {};
 
-      setFamilyState({
+      const nextState = {
         childProfile: {
           name: child?.data?.name || child?.name || null,
           age: child?.data ? ageLabel(child.data.dob) : child ? ageLabel(child.dob) : null,
@@ -239,7 +264,9 @@ export function useFamilyState(familyId, childId, userId) {
           targetMorningWake: intake.ideal_wake_time || intake.wake_time || null,
           recommendedWakeWindows: sleepConfig?.recommended_wake_windows || null,
         },
-      });
+      };
+      setFamilyState(nextState);
+      FamilyStateCache.write(familyId, childId, userId, nextState);
       setLoading(false);
     }
 
@@ -312,12 +339,21 @@ Recent wake-up moods: ${sleepData.recentMoods.join(", ") || "none logged"}.`
 
 // ─── CHECKIN HISTORY HOOK ────────────────────────────────────────────────────
 export function useCheckinHistory(userId, familyId) {
-  const [history, setHistory] = useState([]);
-  const [patterns, setPatterns] = useState(null);
+  const [history, setHistory] = useState(() => {
+    const cached = userId && familyId ? CheckinHistoryCache.read(userId, familyId) : null;
+    return cached?.history || [];
+  });
+  const [patterns, setPatterns] = useState(() => {
+    const cached = userId && familyId ? CheckinHistoryCache.read(userId, familyId) : null;
+    return cached?.patterns || null;
+  });
 
   useEffect(() => {
     if (!userId || !familyId) return;
     const since = new Date(Date.now() - 28 * 86400000).toISOString(); // 28 days
+    const histTimer = setTimeout(() => {
+      console.warn("[useCheckinHistory] fetch timed out — retaining cached data");
+    }, 8000);
     supabase
       .from("parent_checkins")
       .select("situation, feeling, checked_in_at, hour_of_day, ai_summary")
@@ -327,6 +363,7 @@ export function useCheckinHistory(userId, familyId) {
       .order("checked_in_at", { ascending: false })
       .limit(30)
       .then(({ data }) => {
+        clearTimeout(histTimer);
         if (!data || data.length === 0) return;
         setHistory(data);
 
@@ -369,7 +406,7 @@ export function useCheckinHistory(userId, familyId) {
         const hardPrior7 = prior7.filter(c => hardFeelings.includes(c.feeling)).length;
         const progressDelta = prior7.length > 0 ? hardLast7 - hardPrior7 : null;
 
-        setPatterns({
+        const nextPatterns = {
           total,
           hardestTime: hardestTime?.[0] || null,
           hardestTimeCount: hardestTime?.[1] || 0,
@@ -381,12 +418,16 @@ export function useCheckinHistory(userId, familyId) {
           progressDelta, // negative = fewer hard check-ins = improvement
           last7Count: last7.length,
           prior7Count: prior7.length,
-        });
-      });
+        };
+        setPatterns(nextPatterns);
+        CheckinHistoryCache.write(userId, familyId, { history: data, patterns: nextPatterns });
+      })
+      .catch(() => clearTimeout(histTimer));
   }, [userId, familyId]);
 
   async function saveCheckin(situation, feeling, aiSummary) {
     if (!userId || !familyId) return;
+    CheckinHistoryCache.invalidate(userId, familyId); // force fresh fetch next mount
     await supabase.from("parent_checkins").insert({
       user_id: userId,
       family_id: familyId,

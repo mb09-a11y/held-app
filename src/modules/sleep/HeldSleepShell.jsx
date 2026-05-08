@@ -126,9 +126,17 @@ function WaitingForPlan({ T, consultantName }) {
 
 export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
   const T = useT();
-  const { currentUser, activeFamily, activeChild, consultants } = useApp();
+  const { currentUser, activeFamily, activeChild, consultants, checkinRefreshKey } = useApp();
   const [view, setView] = useState("log");
   const [sleepTab, setSleepTab] = useState("today");
+
+  // ── Force a plan-existence re-check whenever the shell "wakes up" ──
+  // checkinRefreshKey is incremented by RCCShell on visibilitychange,
+  // so this guarantees stale plan state is thrown away on app resume.
+  useEffect(() => {
+    // Reset planExists to null so the loader re-runs (handled by the effect below).
+    setPlanExists(null);
+  }, [checkinRefreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Check whether a real plan has been built yet ──
   const [planExists, setPlanExists] = useState(null); // null = loading
@@ -147,7 +155,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
       })
       .catch(() => { if (!cancelled) setPlanExists(false); });
     return () => { cancelled = true; };
-  }, [activeFamily?.id, canAccessSleepPlan]);
+  }, [activeFamily?.id, canAccessSleepPlan, checkinRefreshKey]);
 
   const hasConsultant = !!(activeFamily?.consultant_id || (consultants && consultants.length > 0));
   const waitingForPlan = canAccessSleepPlan && hasConsultant && planExists === false;
@@ -255,6 +263,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
               user={currentUser}
               activeFamily={activeFamily}
               initialTab={sleepTab}
+              checkinRefreshKey={checkinRefreshKey}
             />
           </>
         )}

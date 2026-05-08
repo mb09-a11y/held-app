@@ -8,7 +8,7 @@ import {
   THEMES, ThemeCtx, AppCtx, useT, useApp,
   useStorage, font, serif
 } from "./core/shared.jsx";
-import { supabase, clearStaleAuthTokens } from "./lib/supabase.js";
+import { supabase, clearStaleAuthTokens, clearStaleLocks } from "./lib/supabase.js";
 import { warmAI } from "./lib/ai.js";
 
 // ── Layout (held nav + SOS FAB)
@@ -74,6 +74,27 @@ function buildSafeCache(userObj) {
   }, {});
 }
 
+// ─── LOCAL CACHE HELPERS ──────────────────────────────────────────────────────
+// Persist families/children/consultants to localStorage so the app can render
+// immediately on resume without waiting for Supabase to respond.
+// SECURITY: families/children contain no payment or auth data — safe to cache.
+function cacheFamilies(data) {
+  try { localStorage.setItem("rcc_families", JSON.stringify(data)); } catch {}
+}
+function cacheChildren(data) {
+  try { localStorage.setItem("rcc_children", JSON.stringify(data)); } catch {}
+}
+function cacheConsultants(data) {
+  try { localStorage.setItem("rcc_consultants", JSON.stringify(data)); } catch {}
+}
+function clearDataCache() {
+  try {
+    localStorage.removeItem("rcc_families");
+    localStorage.removeItem("rcc_children");
+    localStorage.removeItem("rcc_consultants");
+  } catch {}
+}
+
 // ─── TAB DEFINITIONS ─────────────────────────────────────────────────────────
 const PARENT_TABS = [
   { id: "home",       label: "Home",       icon: "🏡" },
@@ -130,9 +151,24 @@ export default function RCCShell() {
     try { return !!localStorage.getItem("rcc_user"); } catch { return false; }
   });
 
-  const [families, setFamilies] = useState([]);
-  const [consultants, setConsultants] = useState([]);
-  const [children, setChildren] = useState([]);
+  const [families, setFamilies] = useState(() => {
+    try {
+      const c = localStorage.getItem("rcc_families");
+      return c ? JSON.parse(c) : [];
+    } catch { return []; }
+  });
+  const [consultants, setConsultants] = useState(() => {
+    try {
+      const c = localStorage.getItem("rcc_consultants");
+      return c ? JSON.parse(c) : [];
+    } catch { return []; }
+  });
+  const [children, setChildren] = useState(() => {
+    try {
+      const c = localStorage.getItem("rcc_children");
+      return c ? JSON.parse(c) : [];
+    } catch { return []; }
+  });
   const [activeFamilyId, setActiveFamilyId] = useStorage("rcc_active_family", null);
   const activeFamily = families.find(f => f.id === activeFamilyId) || families[0] || null;
   const [activeChildId, setActiveChildId] = useStorage("rcc_active_child", null);
@@ -219,27 +255,117 @@ export default function RCCShell() {
   const bootInFlightRef = useRef(false);
   useEffect(() => {
     let mounted = true;
+
+    // ── FAST BOOT: read session directly from localStorage ────────────────
+    //
+    // getSession() acquires the GoTrue lock internally. If the resume handler
+    // is already holding that lock (fired on tab-back 600ms debounce), boot
+    // queues behind it and hangs — triggering the 8s timeout and the
+    // "Loading sleep data..." stuck state.
+    //
+    // Fix: read the raw session token directly from localStorage first.
+    // Synchronous, zero-lock. Lets us render immediately from cache while
+    // we validate in the background via getSession().
+    function readCachedSession() {
+      try {
+        const raw = localStorage.getItem("rcc-auth");
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        // GoTrue wraps the session in a { currentSession, expiresAt } envelope
+        const s = parsed?.currentSession || parsed;
+        if (!s?.access_token) return null;
+        // Check not expired (expires_at is unix seconds)
+        const expiresAt = s.expires_at || s.expiresAt;
+        if (expiresAt && expiresAt < Math.floor(Date.now() / 1000)) return null;
+        return s;
+      } catch { return null; }
+    }
+
+    const cachedSession = readCachedSession();
+    const hasCachedUser = !!localStorage.getItem("rcc_user");
+
+    if (cachedSession && hasCachedUser) {
+      // Valid-looking session + cached profile — render immediately, no lock wait.
+      setSession(cachedSession);
+      setAuthLoading(false);
+    }
+
+    // Safety net: only relevant now for first-ever load (no cached session).
+    const bootTimeout = setTimeout(() => {
+      if (!mounted) return;
+      console.warn("[RCCShell] boot timeout — unblocking loading screen");
+      setAuthLoading(false);
+    }, 8000);
+
     async function boot() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
+        // ── FAST PATH: skip getSession() if we already have a valid cached session ──
+        // getSession() acquires the GoTrue lock every time — even just to read.
+        // If the resume handler holds the lock, this queues for 8+ seconds,
+        // fires the boot timeout warning, and loadProfile never runs.
+        //
+        // If we have a cached session + cached user, we already set both above
+        // synchronously. Just call loadProfile with the cached session — no lock needed.
+        // onAuthStateChange handles any real auth state changes (token expiry, signout).
+        if (cachedSession && hasCachedUser) {
+          try {
+            await loadProfile(cachedSession.user?.id || cachedSession.sub, cachedSession.user?.email || cachedSession.email, true);
+          } catch (err) {
+            console.error("[RCCShell] boot loadProfile (fast path) error:", err);
+          }
+          // Background-validate the session without blocking — fire and forget.
+          // If it comes back invalid, onAuthStateChange will handle signout.
+          supabase.auth.getSession().then(({ data, error }) => {
+            if (!mounted) return;
+            if (error) {
+              const msg = error.message || "";
+              const isBadToken = msg.includes("Invalid Refresh Token") ||
+                msg.includes("Refresh Token Not Found") ||
+                msg.includes("refresh_token_not_found");
+              if (isBadToken) {
+                clearStaleAuthTokens();
+                setSession(null); setCurrentUser(null);
+                setSessionExpired(true); setAuthLoading(false);
+              } else {
+                clearStaleLocks();
+              }
+            } else if (data?.session) {
+              setSession(data.session);
+            }
+          }).catch(() => {});
+          return;
+        }
+
+        // ── COLD PATH: no cached session — must call getSession() ──
         const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
 
-        // If Supabase returns an auth error on boot (stale/invalid token)
         if (error) {
-          clearStaleAuthTokens();
-          setSession(null);
-          setCurrentUser(null);
-          setSessionExpired(true);
+          const msg = error.message || "";
+          const isConfirmedBadToken =
+            msg.includes("Invalid Refresh Token") ||
+            msg.includes("Refresh Token Not Found") ||
+            msg.includes("refresh_token_not_found");
+
+          if (isConfirmedBadToken) {
+            clearStaleAuthTokens();
+            setSession(null);
+            setCurrentUser(null);
+            setSessionExpired(true);
+          } else {
+            clearStaleLocks();
+            console.warn("[RCCShell] boot getSession transient error (not clearing session):", msg);
+          }
           setAuthLoading(false);
           return;
         }
 
         const activeSession = data?.session || null;
         setSession(activeSession);
+
         if (activeSession?.user) {
-          const hasCachedUser = !!localStorage.getItem("rcc_user");
           try {
             await loadProfile(activeSession.user.id, activeSession.user.email, hasCachedUser);
           } catch (err) {
@@ -247,7 +373,6 @@ export default function RCCShell() {
             setAuthLoading(false);
           }
         } else {
-          // Had a cached user but session is gone — token expired
           const hadCachedUser = !!localStorage.getItem("rcc_user");
           clearStaleAuthTokens();
           if (hadCachedUser) setSessionExpired(true);
@@ -271,7 +396,7 @@ export default function RCCShell() {
 
       // ── Token refresh failed — stale session, need clean re-login ──
       if (event === "TOKEN_REFRESHED" && !newSession) {
-        clearStaleAuthTokens();
+        clearStaleAuthTokens(); clearDataCache();
         setSession(null);
         setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
         setSessionExpired(true);
@@ -281,7 +406,7 @@ export default function RCCShell() {
 
       // ── Signed out (manual or forced by Supabase) ──
       if (event === "SIGNED_OUT") {
-        clearStaleAuthTokens();
+        clearStaleAuthTokens(); clearDataCache();
         setSession(null);
         setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
         setSessionExpired(false);
@@ -306,7 +431,7 @@ export default function RCCShell() {
         setAuthLoading(false);
       }
     });
-    return () => { mounted = false; subscription.unsubscribe(); };
+    return () => { mounted = false; clearTimeout(bootTimeout); subscription.unsubscribe(); };
   }, [inviteToken, consultantInviteToken, coInviteToken]);
 
   // ── INVITE LOADER
@@ -378,28 +503,84 @@ export default function RCCShell() {
     return () => clearTimeout(timer);
   }, [upgradeSuccess, session]);
 
-  // ── PROACTIVE SESSION REFRESH ON APP RESUME ───────────────────────────────
-  // Debounced + guarded to prevent concurrent refreshSession() calls which
-  // cause lock:rcc-auth contention (especially in React Strict Mode dev).
+  // ── CENTRALIZED APP RESUME HANDLER ──────────────────────────────────────────
+  //
+  // WHY THIS EXISTS:
+  //   The March 21 backup had NO resume handler. Navigation worked because modules
+  //   loaded once on mount and stayed stable. Subsequent changes added visibilitychange
+  //   listeners in HeldHome (×4), ParentHome (×1), and SleepLog (×1) — all firing
+  //   simultaneously on resume before activeFamily/activeChild re-hydrated, leaving
+  //   screens stuck in empty loading state. Those listeners are now removed.
+  //   This is the single resume entry point.
+  //
+  // LOCK FIX:
+  //   resumeInFlightRef is a useRef (not a closure variable). It survives React Strict
+  //   Mode double-invoke and rapid visibility+focus pairs. The previous `refreshing`
+  //   local variable reset to false on each closure re-run, allowing concurrent GoTrue
+  //   calls that triggered "lock:rcc-auth was not released within 5000ms".
+  //
+  // ACTIVE_FAMILY STABILITY FIX:
+  //   activeFamily derives as: families.find(f => f.id === activeFamilyId) || families[0]
+  //   The old handler called setFamilies([familyById]) which collapsed the array.
+  //   If activeFamilyId didn't match families[0] for even one render, activeFamily
+  //   became null and tripped child loading guards that never self-corrected.
+  //   This handler MERGES the refreshed family into the existing array instead.
+
+  const resumeInFlightRef = useRef(false);
+
   useEffect(() => {
-    let refreshing = false;
     let timer = null;
 
-    const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (refreshing) return;
+    async function handleResume() {
+      // Guard: drop concurrent resume calls entirely.
+      if (resumeInFlightRef.current) return;
+      resumeInFlightRef.current = true;
 
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (refreshing) return;
-        refreshing = true;
-        try {
-          // First check if current session is still valid
-          const { data: current } = await supabase.auth.getSession();
-          const session = current?.session;
+      try {
+        // ── Step 1: Read GoTrue in-memory state. No network, no lock. ──────
+        const { data: current } = await supabase.auth.getSession();
+        const activeSession = current?.session;
 
-          if (!session) {
-            // No session at all — clear and show login
+        if (!activeSession) {
+          if (currentUser) {
+            clearStaleAuthTokens();
+            setSession(null);
+            setCurrentUser(null);
+            setFamilies([]); setConsultants([]); setChildren([]);
+            setSessionExpired(true);
+            setAuthLoading(false);
+          }
+          return;
+        }
+
+        // ── Step 2: Conditionally refresh — only if token expires < 10 mins ──
+        // refreshSession() acquires the GoTrue lock — gate it to avoid contention.
+        // ALSO: wrap in a hard 5s timeout. If iOS suspended the app mid-lock,
+        // refreshSession() will hang forever waiting for a lock that's never released.
+        // On timeout, we skip the refresh (session is still valid for now) and
+        // clear orphaned locks so the next resume attempt isn't also stuck.
+        const expiresAt = activeSession.expires_at;
+        const tenMinsFromNow = Math.floor(Date.now() / 1000) + 600;
+
+        if (expiresAt && expiresAt < tenMinsFromNow) {
+          const refreshResult = await Promise.race([
+            supabase.auth.refreshSession(),
+            new Promise(resolve =>
+              setTimeout(() => resolve({ data: null, error: new Error("refresh_timeout") }), 5000)
+            ),
+          ]);
+
+          const { data: refreshed, error: refreshError } = refreshResult;
+
+          if (refreshError?.message === "refresh_timeout") {
+            // Lock was likely orphaned by iOS suspension — clear it and bail.
+            // Session is still usable (just slightly stale), so don't log out.
+            clearStaleLocks();
+            console.warn("[RCCShell] refreshSession timed out — skipping refresh, clearing locks");
+            setSession(activeSession);
+          } else if (refreshError || !refreshed?.session) {
+            // Confirmed bad token — sign out cleanly
+            try { await supabase.auth.signOut({ scope: "local" }); } catch {}
             clearStaleAuthTokens();
             setSession(null);
             setCurrentUser(null);
@@ -407,43 +588,99 @@ export default function RCCShell() {
             setSessionExpired(true);
             setAuthLoading(false);
             return;
+          } else {
+            setSession(refreshed.session);
+          }
+        } else {
+          setSession(activeSession);
+        }
+
+        // ── Step 3: Re-fetch profile + data, MERGE into existing state ──────
+        const userId = activeSession.user?.id;
+        const authEmail = activeSession.user?.email;
+        if (!userId) return;
+
+        try {
+          const [
+            { data: profile },
+            { data: familyById },
+            { data: kids },
+          ] = await Promise.all([
+            supabase.from("profiles")
+              .select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin")
+              .eq("id", userId).maybeSingle(),
+            supabase.from("families")
+              .select("*").eq("parent_id", userId).maybeSingle(),
+            supabase.from("children")
+              .select("*").eq("parent_id", userId).order("created_at", { ascending: true }),
+          ]);
+
+          if (profile) {
+            const merged = { ...(profile || {}), id: userId, email: authEmail || profile.user_email };
+            setCurrentUser(prev => ({ ...(prev || {}), ...merged }));
+            try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache(merged))); } catch {}
           }
 
-          // Check if token expires within the next 10 minutes
-          const expiresAt = session.expires_at; // Unix timestamp
-          const tenMinsFromNow = Math.floor(Date.now() / 1000) + 600;
-          
-          if (expiresAt && expiresAt < tenMinsFromNow) {
-            // Token is about to expire or already expired — refresh it
-            const { data, error } = await supabase.auth.refreshSession();
-            if (error || !data?.session) {
-              clearStaleAuthTokens();
-              setSession(null);
-              setCurrentUser(null);
-              setFamilies([]); setConsultants([]); setChildren([]);
-              setSessionExpired(true);
-              setAuthLoading(false);
-              return;
+          if (familyById) {
+            // MERGE: update matching entry rather than replacing the whole array.
+            // Prevents activeFamily flickering to null mid-render.
+            setFamilies(prev => {
+              const exists = prev.some(f => f.id === familyById.id);
+              const next = exists
+                ? prev.map(f => f.id === familyById.id ? { ...f, ...familyById } : f)
+                : [familyById, ...prev];
+              cacheFamilies(next);
+              return next;
+            });
+            setActiveFamilyId(familyById.id);
+
+            if (familyById.consultant_id) {
+              const { data: consultant } = await supabase
+                .from("profiles").select("*").eq("id", familyById.consultant_id).maybeSingle();
+              const cons = consultant ? [consultant] : [];
+              setConsultants(cons); cacheConsultants(cons);
             }
           }
 
-          // Session is valid — tell HeldHome hooks to re-fetch with fresh token
-          setCheckinRefreshKey(k => k + 1);
+          if (kids) { setChildren(kids); cacheChildren(kids); }
 
-        } catch {
-          // Network offline — don't clear session
-        } finally {
-          refreshing = false;
+        } catch (dataErr) {
+          // Data re-fetch failed (network blip). Session is still valid — don't sign out.
+          console.warn("[RCCShell] resume data re-fetch failed:", dataErr.message);
         }
-      }, 300);
-    };
 
-    document.addEventListener("visibilitychange", onVisible);
+        // ── Step 4: Signal child modules AFTER shell state is settled ───────
+        // checkinRefreshKey increments here so all child hooks re-fetch with a
+        // valid activeFamily already in context — not racing shell re-hydration.
+        setCheckinRefreshKey(k => k + 1);
+
+      } catch (err) {
+        // GoTrue timeout, offline, or unexpected — never clear valid local state.
+        console.warn("[RCCShell] resume handler caught:", err.message);
+      } finally {
+        resumeInFlightRef.current = false;
+      }
+    }
+
+    // 600ms debounce: collapses the visibility+focus pair on iOS PWA resume
+    // into a single handleResume() call.
+    function scheduleResume() {
+      clearTimeout(timer);
+      timer = setTimeout(handleResume, 600);
+    }
+
+    document.addEventListener("visibilitychange", e => {
+      if (document.visibilityState === "visible") scheduleResume();
+    });
+    window.addEventListener("focus", scheduleResume);
+
     return () => {
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", scheduleResume);
+      window.removeEventListener("focus", scheduleResume);
       clearTimeout(timer);
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
 
   // ── LOAD PROFILE (UNCHANGED logic)
   async function loadProfile(userId, authEmail = null, fromCache = false) {
@@ -476,9 +713,9 @@ export default function RCCShell() {
           supabase.from("families").select("*"),
           supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal", "admin"]),
         ]);
-        setFamilies(fams || []);
-        setConsultants(cons || []);
-        setChildren([]);
+        setFamilies(fams || []); cacheFamilies(fams || []);
+        setConsultants(cons || []); cacheConsultants(cons || []);
+        setChildren([]); cacheChildren([]);
         setOnboardingStep(null);
         return;
       }
@@ -486,9 +723,9 @@ export default function RCCShell() {
       if (isConsultant(merged.role)) {
         setTab("families");
         const { data: fams } = await supabase.from("families").select("*").eq("consultant_id", userId);
-        setFamilies(fams || []);
-        setConsultants([]);
-        setChildren([]);
+        setFamilies(fams || []); cacheFamilies(fams || []);
+        setConsultants([]); cacheConsultants([]);
+        setChildren([]); cacheChildren([]);
         setOnboardingStep(null);
         return;
       }
@@ -542,7 +779,7 @@ export default function RCCShell() {
       }
 
       if (familyData) {
-        setFamilies([familyData]);
+        setFamilies([familyData]); cacheFamilies([familyData]);
         setActiveFamilyId(familyData.id);
 
         const parentIdForKids = (familyData.parent_id && familyData.parent_id !== userId)
@@ -558,9 +795,10 @@ export default function RCCShell() {
         ]);
 
         const kidList = resolvedKids || [];
-        setChildren(kidList);
+        setChildren(kidList); cacheChildren(kidList);
         if (kidList.length && !activeChildId) setActiveChildId(kidList[0].id);
-        setConsultants(cons ? [cons] : []);
+        const consArr = cons ? [cons] : [];
+        setConsultants(consArr); cacheConsultants(consArr);
 
         const alreadyHasChildren = kidList.length > 0;
         if (merged.role === "co_caregiver") {
@@ -573,9 +811,9 @@ export default function RCCShell() {
           setOnboardingStep(null);
         }
       } else {
-        setFamilies([]);
-        setChildren([]);
-        setConsultants([]);
+        setFamilies([]); cacheFamilies([]);
+        setChildren([]); cacheChildren([]);
+        setConsultants([]); cacheConsultants([]);
         setOnboardingStep(coInviteToken ? null : (inviteToken ? "register" : "child"));
       }
     } catch (err) {
@@ -589,6 +827,7 @@ export default function RCCShell() {
   function logout() {
     supabase.auth.signOut();
     setCurrentUser(null); setFamilies([]); setConsultants([]); setChildren([]);
+    clearDataCache();
     setTab("home"); setAdminConsultantView(false); setProfileReady(false);
     try { localStorage.removeItem("rcc_user"); } catch {}
   }
@@ -848,6 +1087,7 @@ export default function RCCShell() {
     canAccessZoomPhone, canAccessNSPulse, canAccessRegulationTrends,
     asyncSupportCopy, zoomPhoneCopy,
     logout,
+    checkinRefreshKey,
     pendingSleepTab: null, setPendingSleepTab: () => {},
     pendingSleepAction: null,
     // Theme

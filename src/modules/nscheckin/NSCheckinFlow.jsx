@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { RegCheckinsCache, RecentCheckinCache, FamilyStateCache } from "../../lib/heldCache.js";
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 const FEELINGS = [
@@ -366,6 +367,11 @@ export function NSCheckinFlow({ onClose, onCheckinSaved }) {
       if (error) {
         console.error("[NSCheckinFlow] Insert failed:", error);
       } else {
+        // Invalidate NS caches so next render fetches fresh data
+        RegCheckinsCache.invalidate(currentUser.id);
+        RecentCheckinCache.invalidate(currentUser.id);
+        FamilyStateCache.invalidateFamily?.(activeFamily.id) || 
+          FamilyStateCache.invalidate(activeFamily.id, null, currentUser.id);
         onCheckinSaved?.();
       }
     } catch (err) {

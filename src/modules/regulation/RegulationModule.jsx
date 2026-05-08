@@ -1102,7 +1102,7 @@ function CrisisBanner() {
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export function RegulationModule() {
   const T = useT();
-  const { currentUser, canAccessRegulationInsights } = useApp();
+  const { currentUser, canAccessRegulationInsights, checkinRefreshKey } = useApp();
   const isConsultant = currentUser?.role === "consultant" || currentUser?.role === "consultant_internal" || currentUser?.role === "admin";
   const [logs, setLogs] = useState([]);
   const [exerciseLogs, setExerciseLogs] = useState([]);
@@ -1112,7 +1112,7 @@ export function RegulationModule() {
     supabase.from("notification_preferences")
       .select("*").eq("user_id", currentUser.id).maybeSingle()
       .then(({ data }) => { if (data) setNotifPrefsState(data); });
-  }, [currentUser?.id]);
+  }, [currentUser?.id, checkinRefreshKey]);
   async function setNotifPrefs(updater) {
     const next = typeof updater === "function" ? updater(notifPrefs) : updater;
     setNotifPrefsState(next);
@@ -1167,7 +1167,7 @@ export function RegulationModule() {
       })));
       setLoading(false);
     });
-  }, [currentUser?.id]);
+  }, [currentUser?.id, checkinRefreshKey]);
 
   function startCheckIn(type) { setCheckInType(type); setScreen("checkin"); }
 

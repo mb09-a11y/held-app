@@ -180,7 +180,7 @@ function BrainContextCard({ ageMonths, isPremium, showUpgrade, T }) {
 // ─── MAIN MODULE ─────────────────────────────────────────────────────────────
 export function MilestonesModule({ onOpenDrawer }) {
   const T = useT();
-  const { activeChild, activeFamily, currentUser, isPremium } = useApp();
+  const { activeChild, activeFamily, currentUser, isPremium, checkinRefreshKey } = useApp();
 
   const [view, setView] = useState("dashboard"); // "dashboard" | "explore"
   const [activeDomain, setActiveDomain] = useState("all");
@@ -207,7 +207,7 @@ export function MilestonesModule({ onOpenDrawer }) {
         setLogs(map);
         setLogsLoading(false);
       });
-  }, [child?.id]);
+  }, [child?.id, checkinRefreshKey]);
 
   // ── Log a milestone status ──
   async function handleLog(milestoneId, status) {

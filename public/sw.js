@@ -10,7 +10,22 @@ const IS_DEV = self.location.hostname === 'localhost' ||
 
 // ── INSTALL ───────────────────────────────────────────────────────────────────
 self.addEventListener('install', (event) => {
-  if (IS_DEV) { self.skipWaiting(); return; }
+  if (IS_DEV) {
+    // In dev: unregister the SW entirely so it can't intercept fetches or
+    // serve stale cache. This eliminates the PWA cache as a variable when
+    // debugging resume/auth behaviour. The SW will be re-registered when
+    // you deploy to production (non-localhost hostname).
+    event.waitUntil(
+      self.registration.unregister().then(() => {
+        // Tell all open tabs to reload so they pick up the unregistration.
+        return self.clients.matchAll({ type: 'window' }).then(clients => {
+          clients.forEach(client => client.navigate(client.url));
+        });
+      })
+    );
+    self.skipWaiting();
+    return;
+  }
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
