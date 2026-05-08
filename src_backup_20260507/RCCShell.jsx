@@ -382,9 +382,21 @@ export default function RCCShell() {
 
       setSession(newSession);
       if (newSession?.user) {
-        // Always load profile on SIGNED_IN so authLoading clears and the app renders.
-        // On other events (TOKEN_REFRESHED etc.) skip if we already have the user loaded.
-        if (event === "SIGNED_IN" || !currentUser) {
+        // SIGNED_IN fires both on real logins AND when the Supabase client is
+        // reinitialized (e.g. Safari tab restore). Distinguish between them:
+        // - Real sign-in: currentUser is null (user was logged out)
+        // - Client reinit: currentUser already exists with the same user ID
+        // For reinits, skip loadProfile entirely — it would reset the active
+        // tab to "home" and cause an unnecessary full re-render.
+        const isReinit = event === "SIGNED_IN" &&
+          currentUser &&
+          currentUser.id === newSession.user.id;
+
+        if (isReinit) {
+          // Client was reinitialized (Safari network recovery) — don't touch tab or profile
+          console.log("[RCCShell] SIGNED_IN from client reinit — skipping loadProfile");
+          setAuthLoading(false);
+        } else if (event === "SIGNED_IN" || !currentUser) {
           setSessionExpired(false);
           await loadProfile(newSession.user.id, newSession.user.email);
         } else {
@@ -662,12 +674,7 @@ export default function RCCShell() {
         ...(profile || {}),
         id: userId,
         name: profile?.name || authUser?.user_metadata?.name || (resolvedEmail ? resolvedEmail.split("@")[0] : "there"),
-        // IMPORTANT: profile.role is the authoritative source — it is set server-side
-        // by the DB trigger and validated via RLS. user_metadata.role is client-writable
-        // and should only be used as a last resort when there is no profile row yet.
-        // Never fall back to "parent" if we have a profile row — that would route
-        // consultants into the parent view when getUser() returns null transiently.
-        role: profile?.role || (profile ? undefined : authUser?.user_metadata?.role) || "parent",
+        role: profile?.role || authUser?.user_metadata?.role || "parent",
         consultant_pin: profile?.consultant_pin || authUser?.user_metadata?.consultant_pin || null,
         email: resolvedEmail,
       };
@@ -1254,7 +1261,6 @@ export default function RCCShell() {
                     onNSCheckin={() => setShowNSCheckin(true)}
                     onMorningMoment={() => setShowMorningMoment(true)}
                     onEveningClose={() => setShowEveningClose(true)}
-                    onScripts={goToScripts}
                     setTab={setTab}
                     onOpenDrawer={() => setDrawerOpen(true)}
                     onInviteCo={() => setShowInviteCo(true)}

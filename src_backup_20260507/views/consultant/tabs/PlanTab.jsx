@@ -573,7 +573,6 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
   const [noteText, setNoteText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showSendPanel, setShowSendPanel] = useState(false);
-  const [sendSuccess, setSendSuccess] = useState(false);
 
   const familyId = family?.id;
   const planKey  = activeChild?.id || activeChild?.planId;
@@ -611,7 +610,7 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
   if (!plan) return (
     <div style={{ padding: 40, textAlign: "center", color: T.muted, fontFamily: font }}>
       No plan assigned yet.
-      <div onClick={() => onNavigate("methodMatching", { familyId, childId: planKey })} style={{ color: C.teal, marginTop: 12, cursor: "pointer", fontWeight: 600 }}>
+      <div onClick={() => onNavigate("methodMatching")} style={{ color: C.teal, marginTop: 12, cursor: "pointer", fontWeight: 600 }}>
         Assign a method →
       </div>
     </div>
@@ -1034,37 +1033,16 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
                 {plan.phases.length} phases · {totalItems} checklist items · Nap cap {plan.napCapMinutes} min
               </div>
             </div>
-            <button onClick={async () => {
-              try {
-                // Mark plan as sent + insert a message to the family
-                const { data: { session } } = await supabase.auth.getSession();
-                const senderId = session?.user?.id;
-                const senderRole = session?.user?.user_metadata?.role || "consultant";
-                if (familyId && senderId) {
-                  await supabase.from("messages").insert({
-                    family_id: familyId,
-                    sender_id: senderId,
-                    sender_role: senderRole,
-                    content: `Your sleep plan is ready! I've assigned the ${plan.methodLabel} to your family. Open the Plans tab in your Held app to view your personalized checklist and get started.`,
-                    type: "plan_notification",
-                  });
-                  await supabase.from("families")
-                    .update({ sleep_plan_sent_at: new Date().toISOString() })
-                    .eq("id", familyId);
-                }
-                setSendSuccess(true);
-                setTimeout(() => { setShowSendPanel(false); setSendSuccess(false); }, 2200);
-              } catch (err) {
-                console.error("[PlanTab] send:", err);
-                setSendSuccess(true); // Still close gracefully
-                setTimeout(() => { setShowSendPanel(false); setSendSuccess(false); }, 2200);
-              }
+            <button onClick={() => {
+              // In production this would trigger a push notification / Supabase update
+              alert("Plan sent! The family will see it in their Held app.");
+              setShowSendPanel(false);
             }} style={{
               width: "100%", padding: "14px 0", borderRadius: 14, border: "none",
               background: "#2D4A35", color: "#fff", fontFamily: font, fontSize: 14,
               fontWeight: 700, cursor: "pointer",
             }}>
-              {sendSuccess ? "✓ Sent!" : "Send to Family →"}
+              Send to Family →
             </button>
             <button onClick={() => setShowSendPanel(false)} style={{
               width: "100%", padding: "12px 0", borderRadius: 14, border: `1px solid ${T.border}`,

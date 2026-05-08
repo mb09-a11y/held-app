@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { HeldCheckin, useFamilyState, useCheckinHistory } from "./ParentHome.jsx";
 import { supabase } from "../../lib/supabase.js";
+import { RegCheckinsCache, RecentCheckinCache, SleepLogsCache } from "../../lib/heldCache.js";
 import { getCurrentWonderWeeksLeap, getMilestonesForAge } from "../../modules/milestones/data/milestones.js";
 import { useNextSleep } from "../../modules/sleep/sleepHelpers.js";
 
@@ -85,10 +86,15 @@ const RETURN_LOOPS = [
 
 // ─── RECENT NS PULSE ─────────────────────────────────────────────────────────
 function useRecentRegulationCheckins(userId, refreshKey = 0) {
-  const [checkins, setCheckins] = useState([]);
+  const [checkins, setCheckins] = useState(() =>
+    userId ? (RegCheckinsCache.read(userId) || []) : []
+  );
   const fetch = useCallback(() => {
     if (!userId) return;
     const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
+    const timer = setTimeout(() => {
+      console.warn("[useRecentRegulationCheckins] fetch timed out");
+    }, 8000);
     supabase
       .from("regulation_checkins")
       .select("state, checked_in_at, source")
@@ -96,11 +102,16 @@ function useRecentRegulationCheckins(userId, refreshKey = 0) {
       .gte("checked_in_at", since14)
       .order("checked_in_at", { ascending: false })
       .limit(60)
-      .then(({ data }) => setCheckins(data || []));
+      .then(({ data }) => {
+        clearTimeout(timer);
+        const result = data || [];
+        setCheckins(result);
+        RegCheckinsCache.write(userId, result);
+      })
+      .catch(() => clearTimeout(timer));
   }, [userId]);
 
   useEffect(() => { fetch(); }, [fetch, refreshKey]);
-
 
   return checkins;
 }
@@ -235,9 +246,14 @@ async function unlockStreakMilestone(userId, milestoneKey, currentMilestones) {
 }
 
 function useRecentCheckin(userId, refreshKey = 0) {
-  const [checkin, setCheckin] = useState(null);
+  const [checkin, setCheckin] = useState(() =>
+    userId ? RecentCheckinCache.read(userId) : null
+  );
   const fetch = useCallback(() => {
     if (!userId) return;
+    const timer = setTimeout(() => {
+      console.warn("[useRecentCheckin] fetch timed out");
+    }, 8000);
     supabase
       .from("regulation_checkins")
       .select("state, checked_in_at")
@@ -245,7 +261,12 @@ function useRecentCheckin(userId, refreshKey = 0) {
       .order("checked_in_at", { ascending: false })
       .limit(1)
       .maybeSingle()
-      .then(({ data }) => setCheckin(data));
+      .then(({ data }) => {
+        clearTimeout(timer);
+        setCheckin(data);
+        RecentCheckinCache.write(userId, data);
+      })
+      .catch(() => clearTimeout(timer));
   }, [userId]);
   useEffect(() => { fetch(); }, [fetch, refreshKey]);
   return checkin;
@@ -253,7 +274,10 @@ function useRecentCheckin(userId, refreshKey = 0) {
 
 // ─── RECENT SLEEP ─────────────────────────────────────────────────────────────
 function useRecentSleep(familyId, childId) {
-  const [data, setData] = useState({ totalMs: 0, sessions: 0, lastWake: null, openSession: null });
+  const [data, setData] = useState(() => {
+    const cached = familyId ? SleepLogsCache.read(familyId, childId) : null;
+    return cached || { totalMs: 0, sessions: 0, lastWake: null, openSession: null };
+  });
   useEffect(() => {
     if (!familyId) return;
     const since = new Date(Date.now() - 86400000).toISOString();
@@ -263,14 +287,20 @@ function useRecentSleep(familyId, childId) {
       .gte("ts", since)
       .order("ts", { ascending: false });
     if (childId) q = q.eq("child_id", childId);
+    const timer = setTimeout(() => {
+      console.warn("[useRecentSleep] fetch timed out");
+    }, 8000);
     q.then(({ data: logs }) => {
+      clearTimeout(timer);
       const allSessions = (logs || []).filter(l => l.type === "sleep_session");
       const completed = allSessions.filter(l => l.end_ts);
       const totalMs = completed.reduce((s, l) => s + (l.total_sleep_ms || 0), 0);
       const lastWake = completed[0]?.end_ts || null;
       const openSession = allSessions.find(l => !l.end_ts) || null;
-      setData({ totalMs, sessions: completed.length, lastWake, openSession });
-    });
+      const next = { totalMs, sessions: completed.length, lastWake, openSession };
+      setData(next);
+      SleepLogsCache.write(familyId, childId, next);
+    }).catch(() => clearTimeout(timer));
   }, [familyId, childId]);
   return data;
 }
@@ -324,7 +354,7 @@ function HeldCheckinInline({ familyState, patterns, saveCheckin }) {
   );
 }
 
-export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onScripts, onOpenDrawer, onNotifications, onGrounding, checkinRefreshKey = 0, familyStateProp = null }) {
+export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onOpenDrawer, onNotifications, onGrounding, checkinRefreshKey = 0, familyStateProp = null }) {
   const T = useT();
   const { currentUser, activeChild, activeFamily } = useApp();
 
@@ -1133,7 +1163,7 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           {[
             { emoji: "🌙", label: "Log Sleep",    action: () => setTab("sleep") },
             { emoji: "🧠", label: "NS Check-in",  action: () => onNSCheckin() },
-            { emoji: "💬", label: "What do I say?", action: () => onScripts?.() || setTab("library") },
+            { emoji: "💬", label: "What do I say?", action: () => setTab("library") },
             { emoji: "📊", label: "Insights",     action: () => setTab("insights") },
           ].map(item => (
             <button

@@ -16,27 +16,13 @@ const genId = () => Math.random().toString(36).slice(2, 10);
 function useCurrentUser() {
   const [user, setUser] = useState(null);
   useEffect(() => {
-    // Try immediately. If the Supabase client was just reinitialized (tab restore),
-    // the session may not be hydrated yet — retry once after 800ms if null.
-    let retryTimer = null;
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user);
-      } else {
-        retryTimer = setTimeout(() => {
-          supabase.auth.getSession().then(({ data: { session: s2 } }) => {
-            setUser(s2?.user ?? null);
-          });
-        }, 800);
-      }
+      setUser(session?.user ?? null);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
-    return () => {
-      clearTimeout(retryTimer);
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
   return user;
 }
@@ -586,15 +572,12 @@ export function useMessages() {
     }));
 
     try {
-      const { data: { session: senderSession } } = await supabase.auth.getSession();
-      const senderId   = senderSession?.user?.id;
-      const senderRole = senderSession?.user?.user_metadata?.role || "consultant";
       const { data, error } = await supabase
         .from("messages")
         .insert({
           family_id: familyId,
-          sender_id: senderId,
-          sender_role: senderRole,
+          sender_id: (await supabase.auth.getSession()).data.session?.user?.id,
+          sender_role: (await supabase.auth.getSession()).data.session?.user?.user_metadata?.role || "consultant",
           content: text,
           type: "text",
         })

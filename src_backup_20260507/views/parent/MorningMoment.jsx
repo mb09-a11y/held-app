@@ -52,7 +52,7 @@ export function MorningMoment({ onClose }) {
       await supabase.from("regulation_checkins").insert({
         user_id: currentUser.id,
         family_id: activeFamily.id,
-        state: "Regulated", // morning moment = regulated moment; intention stored in metadata
+        state: label,
         source: "morning_moment",
         metadata: { choice_id: choice?.id, anchor: choice?.anchor, cue: choice?.cue },
         checked_in_at: new Date().toISOString(),

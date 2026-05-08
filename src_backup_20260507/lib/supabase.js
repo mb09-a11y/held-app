@@ -82,15 +82,9 @@ if (typeof document !== "undefined") {
         // stops the old client from competing for the GoTrue lock.
         try { _client.auth.stopAutoRefresh(); } catch {}
         _client = createSupabaseClient();
-        // CRITICAL: After creating a fresh client, we must call getSession() so
-        // the new client reads the stored token from localStorage ("rcc-auth")
-        // and re-establishes the session. Without this, getUser() returns null
-        // and loadProfile() falls back to wrong role (e.g. consultant → parent).
-        // We fire this async without awaiting — the app renders from cache while
-        // the new client quietly rehydrates in the background.
-        _client.auth.getSession().catch(err => {
-          console.warn("[supabase] Post-reinit getSession failed:", err?.message);
-        });
+        // Suppress the initial SIGNED_IN event that fires on client creation
+        // by deferring auth listener setup — RCCShell handles auth state.
+        // We just need fresh fetch connections, not a fresh auth session.
       }
       _lastVisible = Date.now();
     } else {

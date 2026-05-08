@@ -273,7 +273,7 @@ export function EveningClose({ onClose }) {
       await supabase.from("regulation_checkins").insert({
         user_id: currentUser.id,
         family_id: activeFamily.id,
-        state: "Regulated", // evening close = regulated moment; reflection stored in metadata
+        state: `ec_${finalAnswers.q1 || "completed"}`,
         source: "evening_close",
         metadata: finalAnswers,
         checked_in_at: new Date().toISOString(),
