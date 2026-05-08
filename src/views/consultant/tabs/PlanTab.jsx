@@ -1039,7 +1039,9 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
                 // Mark plan as sent + insert a message to the family
                 const { data: { session } } = await supabase.auth.getSession();
                 const senderId = session?.user?.id;
-                const senderRole = session?.user?.user_metadata?.role || "consultant";
+                const cachedUser = (() => { try { return JSON.parse(localStorage.getItem("rcc_user") || "{}"); } catch { return {}; } })();
+                const rawRole = cachedUser?.role || session?.user?.user_metadata?.role || "consultant";
+                const senderRole = rawRole === "consultant_internal" ? "consultant" : rawRole;
                 if (familyId && senderId) {
                   await supabase.from("messages").insert({
                     family_id: familyId,

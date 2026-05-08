@@ -587,8 +587,11 @@ export function useMessages() {
 
     try {
       const { data: { session: senderSession } } = await supabase.auth.getSession();
-      const senderId   = senderSession?.user?.id;
-      const senderRole = senderSession?.user?.user_metadata?.role || "consultant";
+      const senderId = senderSession?.user?.id;
+      const cachedUser = (() => { try { return JSON.parse(localStorage.getItem("rcc_user") || "{}"); } catch { return {}; } })();
+      const rawRole = cachedUser?.role || senderSession?.user?.user_metadata?.role || "consultant";
+      // Normalize consultant_internal → consultant for messages constraint
+      const senderRole = rawRole === "consultant_internal" ? "consultant" : rawRole;
       const { data, error } = await supabase
         .from("messages")
         .insert({

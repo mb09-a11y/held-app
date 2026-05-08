@@ -263,7 +263,9 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
                 const senderId = session?.user?.id;
                 // Read role from profile cache, not user_metadata (more reliable)
                 const cachedUser = (() => { try { return JSON.parse(localStorage.getItem("rcc_user") || "{}"); } catch { return {}; } })();
-                const senderRole = cachedUser?.role || session?.user?.user_metadata?.role || "consultant";
+                const rawRole = cachedUser?.role || session?.user?.user_metadata?.role || "consultant";
+                // Normalize consultant_internal → consultant for messages constraint
+                const senderRole = rawRole === "consultant_internal" ? "consultant" : rawRole;
 
                 if (family?.id && senderId) {
                   const { error } = await supabase.from("messages").insert({
