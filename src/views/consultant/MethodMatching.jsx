@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useT, font, serif } from "../../core/shared.jsx";
 import { useFamilies, useIntake, usePlans } from "./data/consultantStore.js";
+import { supabase } from "../../lib/supabase.js";
 import InsightCard from "./shared/InsightCard.jsx";
 
 const METHODS = [
@@ -71,6 +72,8 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
 
   const [selected, setSelected] = useState(null);
   const [assigned, setAssigned] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendDone, setSendDone] = useState(false);
   const [editingMsg, setEditingMsg] = useState(false);
   const [msgText, setMsgText] = useState("");
 
@@ -90,9 +93,33 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
     ? "chair_method"
     : "chair_method";
 
-  const handleAssign = () => {
+  const handleAssign = async () => {
     const method = METHODS.find(m => m.id === (selected || recommended));
+    if (!family?.id || !method) return;
+
+    // Build a fresh plan profile and write it to Supabase
+    const planProfile = {
+      method: method.id,
+      methodLabel: method.label,
+      familyId: family.id,
+      id: child?.id || family.id,
+      phases: [], // consultant sets up phases in PlanTab
+      napCapMinutes: 90,
+      startDate: new Date().toISOString().slice(0, 10),
+    };
+
+    try {
+      await supabase
+        .from("families")
+        .update({ sleep_plan_profile: planProfile })
+        .eq("id", family.id);
+    } catch (err) {
+      console.error("[MethodMatching] assign:", err);
+    }
+
+    // Also seed local state so PlanTab picks it up immediately
     if (child?.planId) changeMethod(child.planId, method.id, method.label);
+
     setMsgText(generatePlanReadyMessage(family, child, method));
     setAssigned(true);
   };
@@ -219,11 +246,36 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
               borderRadius: 20, padding: "8px 14px",
               fontSize: 12, color: T.muted, cursor: "pointer", fontFamily: font,
             }}>✏️ {editingMsg ? "Preview" : "Edit"}</button>
-            <button onClick={() => onNavigate("families")} style={{
-              flex: 1, background: T.teal, color: "#fff",
+            <button onClick={async () => {
+              setSending(true);
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const senderId = session?.user?.id;
+                const senderRole = session?.user?.user_metadata?.role || "consultant";
+                if (family?.id && senderId) {
+                  await supabase.from("messages").insert({
+                    family_id: family.id,
+                    sender_id: senderId,
+                    sender_role: senderRole,
+                    content: msgText,
+                    type: "plan_notification",
+                  });
+                }
+                setSendDone(true);
+                setTimeout(() => onNavigate("family", { familyId }), 1800);
+              } catch (err) {
+                console.error("[MethodMatching] send:", err);
+                setSendDone(true);
+                setTimeout(() => onNavigate("family", { familyId }), 1800);
+              } finally {
+                setSending(false);
+              }
+            }} style={{
+              flex: 1, background: sendDone ? "#5C7A5E" : T.teal, color: "#fff",
               border: "none", borderRadius: 20, padding: 8,
               fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font,
-            }}>Send to family →</button>
+              opacity: sending ? 0.7 : 1,
+            }}>{sendDone ? "✓ Sent!" : sending ? "Sending…" : "Send to family →"}</button>
           </div>
         </div>
       )}

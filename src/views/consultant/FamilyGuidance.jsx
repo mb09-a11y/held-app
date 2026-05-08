@@ -531,6 +531,7 @@ function HistoryStrip({ clientData, onOpenTab, T }) {
 
 // ─── INLINE DRAFT PANEL ───────────────────────────────────────────────────────
 function InlineDraft({ guidance, clientData, family, onClose, onOpenTab, T }) {
+  const [copyDone, setCopyDone] = useState(false);
   return (
     <div style={{ borderRadius: 14, border: `0.5px solid ${T.border}`, background: T.card, overflow: "hidden", marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: `0.5px solid ${T.border}` }}>
@@ -547,10 +548,15 @@ function InlineDraft({ guidance, clientData, family, onClose, onOpenTab, T }) {
           seedMessage={guidance?.draft_seed || ""}
           onInsert={text => {
             navigator.clipboard.writeText(text)
-              .then(() => alert("Draft copied — paste into Messages to send."))
-              .catch(() => alert(`Draft ready:\n\n${text}`));
+              .then(() => { setCopyDone(true); setTimeout(() => setCopyDone(false), 2500); })
+              .catch(() => { setCopyDone(true); setTimeout(() => setCopyDone(false), 2500); });
           }}
         />
+        {copyDone && (
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#EAF0E8", borderRadius: 10, fontFamily: font, fontSize: 12, color: "#5C7A5E" }}>
+            ✓ Draft copied — paste into Messages to send.
+          </div>
+        )}
         <button
           onClick={() => onOpenTab("messages")}
           style={{ marginTop: 10, background: "none", border: "none", fontFamily: font, fontSize: 12, color: T.sage, cursor: "pointer", padding: 0 }}
@@ -590,6 +596,16 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
   const [viewingIntake, setViewingIntake] = useState(false);
   const [intake, setIntake] = useState(null);
   const [showDeepDive, setShowDeepDive] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [endingRel, setEndingRel] = useState(false);
+
+  // Auto-clear toast after 3s
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
   const generatingRef = useRef(false);
 
   // Load intake data
@@ -661,10 +677,10 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
         if (family.intake_complete) {
           setViewingIntake(true);
         } else {
-          if (window.confirm(`Resend the intake form to ${family.display_name || family.invite_email}? They'll see it on their next login.`)) {
-            supabase.from("families").update({ intake_complete: false }).eq("id", family.id)
-              .then(() => window.alert("Intake re-sent — they'll see it on their next login."));
-          }
+          // Resend without confirm dialog — PWA safe
+          supabase.from("families").update({ intake_complete: false }).eq("id", family.id)
+            .then(() => setToast("Intake re-sent — they'll see it on their next login."))
+            .catch(() => setToast("Something went wrong. Please try again."));
         }
         break;
       case "open_regulation":
@@ -723,6 +739,18 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
         @keyframes fg-pulse { 0%,100%{transform:scale(1);opacity:0.4} 50%{transform:scale(2.2);opacity:0} }
         @keyframes fg-shimmer { 0%,100%{opacity:.35} 50%{opacity:.7} }
       `}</style>
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)",
+          background: "#2D4A35", color: "#fff", padding: "10px 20px",
+          borderRadius: 20, fontFamily: font, fontSize: 13, zIndex: 999,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.2)", whiteSpace: "nowrap",
+        }}>
+          {toast}
+        </div>
+      )}
 
       {/* ── TOP NAV BAR ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 0, paddingBottom: 12 }}>
@@ -1085,21 +1113,47 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
         <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.6, marginBottom: 12 }}>
           This will remove your connection to this family. Their access steps down to Free. Their data is preserved.
         </div>
-        <button
-          onClick={async () => {
-            const name = family.display_name || family.invite_email || "this family";
-            if (!window.confirm(`End your relationship with ${name}?\n\nThey'll lose VIP access. Their sleep logs and data are preserved.`)) return;
-            try {
-              const { error } = await supabase.rpc("remove_family_from_consultant", { p_family_id: family.id });
-              if (error) throw error;
-              window.alert(`Relationship with ${name} ended.`);
-              onBack();
-            } catch (e) { window.alert(`Something went wrong: ${e.message}`); }
-          }}
-          style={{ padding: "10px 16px", borderRadius: 10, border: `0.5px solid ${TIERS.urgent.border}`, background: TIERS.urgent.badgeBg, color: TIERS.urgent.badge, fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer", width: "100%" }}
-        >
-          End relationship →
-        </button>
+        {!confirmEnd ? (
+          <button
+            onClick={() => setConfirmEnd(true)}
+            style={{ padding: "10px 16px", borderRadius: 10, border: `0.5px solid ${TIERS.urgent.border}`, background: TIERS.urgent.badgeBg, color: TIERS.urgent.badge, fontFamily: font, fontSize: 13, fontWeight: 600, cursor: "pointer", width: "100%" }}
+          >
+            End relationship →
+          </button>
+        ) : (
+          <div style={{ background: "#FBF0EC", borderRadius: 12, padding: "14px 16px", border: "1px solid rgba(192,84,58,0.2)" }}>
+            <div style={{ fontFamily: font, fontSize: 13, color: "#8B2E2E", marginBottom: 12, lineHeight: 1.5 }}>
+              End relationship with {family.display_name || family.invite_email || "this family"}? They'll lose VIP access — their data is preserved.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={async () => {
+                  setEndingRel(true);
+                  try {
+                    const { error } = await supabase.rpc("remove_family_from_consultant", { p_family_id: family.id });
+                    if (error) throw error;
+                    setToast("Relationship ended.");
+                    setTimeout(() => onBack(), 1500);
+                  } catch (e) {
+                    setToast(`Something went wrong: ${e.message}`);
+                    setConfirmEnd(false);
+                    setEndingRel(false);
+                  }
+                }}
+                disabled={endingRel}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "none", background: "#8B2E2E", color: "#fff", fontFamily: font, fontSize: 13, fontWeight: 600, cursor: endingRel ? "default" : "pointer", opacity: endingRel ? 0.7 : 1 }}
+              >
+                {endingRel ? "Ending…" : "Yes, end it"}
+              </button>
+              <button
+                onClick={() => setConfirmEnd(false)}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: "1px solid rgba(192,84,58,0.3)", background: "none", color: "#8B2E2E", fontFamily: font, fontSize: 13, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
