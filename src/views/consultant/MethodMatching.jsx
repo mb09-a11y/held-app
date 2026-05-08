@@ -109,10 +109,19 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
     };
 
     try {
+      // Write plan profile to families table
       await supabase
         .from("families")
         .update({ sleep_plan_profile: planProfile })
         .eq("id", family.id);
+
+      // Write sleep_method to children table so UI reflects it immediately
+      if (child?.id) {
+        await supabase
+          .from("children")
+          .update({ sleep_method: method.id })
+          .eq("id", child.id);
+      }
     } catch (err) {
       console.error("[MethodMatching] assign:", err);
     }
@@ -249,17 +258,24 @@ export default function MethodMatching({ familyId, childId, onNavigate }) {
             <button onClick={async () => {
               setSending(true);
               try {
+                // Get session first — ensures the client is hydrated before any DB call
                 const { data: { session } } = await supabase.auth.getSession();
                 const senderId = session?.user?.id;
-                const senderRole = session?.user?.user_metadata?.role || "consultant";
+                // Read role from profile cache, not user_metadata (more reliable)
+                const cachedUser = (() => { try { return JSON.parse(localStorage.getItem("rcc_user") || "{}"); } catch { return {}; } })();
+                const senderRole = cachedUser?.role || session?.user?.user_metadata?.role || "consultant";
+
                 if (family?.id && senderId) {
-                  await supabase.from("messages").insert({
+                  const { error } = await supabase.from("messages").insert({
                     family_id: family.id,
                     sender_id: senderId,
                     sender_role: senderRole,
                     content: msgText,
                     type: "plan_notification",
                   });
+                  if (error) console.error("[MethodMatching] message insert error:", error);
+                } else {
+                  console.warn("[MethodMatching] missing family.id or senderId — skipping message insert", { familyId: family?.id, senderId });
                 }
                 setSendDone(true);
                 setTimeout(() => onNavigate("family", { familyId }), 1800);
