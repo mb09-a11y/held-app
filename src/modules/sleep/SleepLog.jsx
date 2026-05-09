@@ -456,9 +456,13 @@ function WellnessView({ logs, activeFamily }) {
   // ── Mood summary ──
   const moodSummary = useMemo(() => {
     const since = new Date(Date.now() - 14*86400000).toISOString();
-    const recent = logs.filter(l => l.type==="sleep_session"&&l.mood&&l.ts>since);
     const counts = {};
-    recent.forEach(s => { counts[s.mood] = (counts[s.mood]||0)+1; });
+    // Wake-up moods logged on sleep sessions
+    logs.filter(l => l.type==="sleep_session" && l.mood && l.ts>since)
+      .forEach(s => { counts[s.mood] = (counts[s.mood]||0)+1; });
+    // Standalone mood log entries
+    logs.filter(l => l.type==="mood" && l.mood && l.ts>since)
+      .forEach(s => { counts[s.mood] = (counts[s.mood]||0)+1; });
     return MOODS.map(m=>({...m, count:counts[m.id]||0})).filter(m=>m.count>0).sort((a,b)=>b.count-a.count);
   }, [logs]);
 
@@ -703,6 +707,73 @@ function WellnessView({ logs, activeFamily }) {
                 </div>
               ))}
             </div>
+          </Card>
+        );
+      })()}
+
+      {/* ── FEED LOG ── */}
+      {(() => {
+        const since = new Date(Date.now() - 14*86400000).toISOString();
+        const recentFeeds = logs
+          .filter(l => (l.type === "feed" || l.type === "solids") && l.ts > since)
+          .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+        if (recentFeeds.length === 0) return null;
+
+        // Totals over 14 days
+        const breastCount  = recentFeeds.filter(l => l.type === "feed" && (l.mode === "nursing" || l.mode === "pump")).length;
+        const bottleFeeds  = recentFeeds.filter(l => l.type === "feed" && l.mode === "bottle");
+        const bottleOz     = bottleFeeds.reduce((s, l) => s + (l.amount || 0), 0);
+        const solidsCount  = recentFeeds.filter(l => l.type === "solids").length;
+
+        return (
+          <Card>
+            <SectionLabel>Feeding · Last 14 Days</SectionLabel>
+
+            {/* Summary row */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+              {[
+                { icon:"🤱", label:"Breast/Pump", value:breastCount, sub:"sessions" },
+                { icon:"🍼", label:"Formula", value:bottleOz > 0 ? `${bottleOz.toFixed(0)}oz` : bottleFeeds.length, sub: bottleOz > 0 ? "total oz" : "bottles" },
+                { icon:"🥣", label:"Solids", value:solidsCount, sub:"sessions" },
+              ].map(s => (
+                <div key={s.label} style={{ textAlign:"center", padding:"10px 4px", borderRadius:12, background:T.faint }}>
+                  <div style={{ fontSize:16, marginBottom:4 }}>{s.icon}</div>
+                  <div style={{ fontFamily:serif, fontSize:20, fontWeight:700, color:T.text, lineHeight:1 }}>{s.value}</div>
+                  <div style={{ fontFamily:font, fontSize:10, color:T.muted, marginTop:3, textTransform:"uppercase", letterSpacing:".06em" }}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recent entries */}
+            {recentFeeds.slice(0, 8).map((log, i, arr) => {
+              const isNursing = log.type === "feed" && log.mode === "nursing";
+              const isPump    = log.type === "feed" && log.mode === "pump";
+              const isBottle  = log.type === "feed" && log.mode === "bottle";
+              const isSolids  = log.type === "solids";
+              const icon = isNursing ? "🤱" : isPump ? "🫙" : isBottle ? "🍼" : "🥣";
+              const label = isNursing
+                ? `Nursing${log.side ? ` · ${log.side}` : ""}${log.duration ? ` · ${log.duration}m` : ""}`
+                : isPump
+                ? `Pump${log.amount ? ` · ${log.amount}oz` : ""}${log.duration ? ` · ${log.duration}m` : ""}`
+                : isBottle
+                ? `Bottle · ${log.amount || "—"}oz`
+                : `Solids${log.food ? ` · ${log.food}` : ""}`;
+              const sub = isSolids && log.reaction ? log.reaction : null;
+              return (
+                <div key={log.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:i<Math.min(arr.length,8)-1?`1px solid ${T.border}`:"none" }}>
+                  <span style={{ fontSize:16 }}>{icon}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{label}</div>
+                    {sub && <div style={{ fontFamily:font, fontSize:11, color:T.muted, textTransform:"capitalize" }}>{sub}</div>}
+                  </div>
+                  <div style={{ fontFamily:font, fontSize:11, color:T.muted, textAlign:"right" }}>
+                    <div>{fmtDateTime(log.ts)}</div>
+                    <div>{(() => { const diff=Math.floor((Date.now()-new Date(log.ts))/86400000); return diff===0?"Today":diff===1?"Yesterday":`${diff}d ago`; })()}</div>
+                  </div>
+                </div>
+              );
+            })}
           </Card>
         );
       })()}

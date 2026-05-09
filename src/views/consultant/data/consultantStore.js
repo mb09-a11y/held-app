@@ -370,7 +370,8 @@ export function useSessions(familyId, rangeDays = 30) {
   const [loading, setLoading]   = useState(false);
 
   useEffect(() => {
-    if (!familyId) return;
+    if (!familyId) { console.warn("[useSessions] no familyId — skipping fetch"); return; }
+    console.log("[useSessions] fetching sleep_logs for familyId:", familyId, "rangeDays:", rangeDays);
     setLoading(true);
 
     const since = new Date(Date.now() - rangeDays * 86400000).toISOString();
@@ -378,14 +379,16 @@ export function useSessions(familyId, rangeDays = 30) {
       .from("sleep_logs")
       .select("*")
       .eq("family_id", familyId)
-      .eq("type", "sleep_session")
+      .in("type", ["sleep_session", "night_waking"])
       .gte("ts", since)
       .order("ts", { ascending: false })
       .then(({ data = [] }) => {
         const byChild = {};
         for (const row of data) {
           const key = row.child_id || familyId;
-          (byChild[key] ||= []).push(normalizeSleepLog(row));
+          (byChild[key] ||= []).push(
+            row.type === "night_waking" ? normalizeWakingLog(row) : normalizeSleepLog(row)
+          );
         }
         setSessions(byChild);
         setLoading(false);
@@ -394,6 +397,22 @@ export function useSessions(familyId, rangeDays = 30) {
   }, [familyId, rangeDays]);
 
   return { sessions, loading };
+}
+
+function normalizeWakingLog(row) {
+  return {
+    id:          row.id,
+    type:        "night_waking",
+    emoji:       "🌛",
+    date:        new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    time:        new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    duration:    row.duration ? `${row.duration}m awake` : "Night waking",
+    durationMin: row.duration || 0,
+    settling:    "0m",
+    settlingMin: 0,
+    flag:        null,
+    raw:         row,
+  };
 }
 
 function normalizeSleepLog(row) {
@@ -635,8 +654,30 @@ export function useMessages() {
 export function useSleepStats(childId, familyId, rangeDays = 30) {
   const { sessions } = useSessions(familyId, rangeDays);
   const childSessions = sessions[childId] || [];
-  const nights = childSessions.filter(s => s.type === "night");
-  const naps   = childSessions.filter(s => s.type === "nap");
+  const nights  = childSessions.filter(s => s.type === "night");
+  const naps    = childSessions.filter(s => s.type === "nap");
+  const wakings = childSessions.filter(s => s.type === "night_waking");
+
+  // Group wakings by night — a waking between 8PM-8AM belongs to the night that started the previous evening
+  // Use the "night date" = date of the evening the night started (roll back if hour < 12)
+  const toNightDate = ts => {
+    const d = new Date(ts);
+    if (d.getHours() < 12) d.setDate(d.getDate() - 1); // early AM → previous night
+    return d.toDateString();
+  };
+  const nightDays = new Set(nights.map(s => toNightDate(s.raw?.ts || s.ts)));
+  const wakingDays = [...nightDays].map(d =>
+    wakings.filter(w => toNightDate(w.raw?.ts || w.ts) === d).length
+  );
+  const avgNightWakes = nightDays.size
+    ? parseFloat((wakingDays.reduce((a,b)=>a+b,0) / nightDays.size).toFixed(1))
+    : wakings.length > 0 ? wakings.length : 0;
+
+  // Avg naps per day
+  const napDays = new Set(naps.map(s => new Date(s.date || s.ts).toDateString()));
+  const avgNapCount = napDays.size
+    ? parseFloat((naps.length / napDays.size).toFixed(1))
+    : 0;
 
   const parseMin = str => {
     if (!str || str === "—") return 0;
@@ -655,15 +696,28 @@ export function useSleepStats(childId, familyId, rangeDays = 30) {
     return h > 0 ? `${h}h ${min}m` : `${min}m`;
   };
 
-  const avgNight    = avg(nights.map(s => s.duration));
-  const avgNap      = avg(naps.map(s => s.duration));
-  const avgSettling = avg(nights.map(s => s.settling));
+  // Actual sleep time per night = session duration minus total waking time during that night
+  const nightActualMins = nights.map(s => {
+    const nightDate = toNightDate(s.raw?.ts || s.ts);
+    const wakingMinsThisNight = wakings
+      .filter(w => toNightDate(w.raw?.ts || w.ts) === nightDate)
+      .reduce((sum, w) => sum + (w.raw?.duration || 0), 0);
+    return Math.max(0, s.durationMin - wakingMinsThisNight);
+  });
+
+  const avgNight    = nightActualMins.length ? nightActualMins.reduce((a,b)=>a+b,0) / nightActualMins.length : 0;
+  const avgNap      = naps.length ? Math.round(naps.reduce((a,s)=>a+s.durationMin,0) / naps.length) : 0;
+  const avgSettling = nights.filter(s=>s.settlingMin>0).length
+    ? Math.round(nights.filter(s=>s.settlingMin>0).reduce((a,s)=>a+s.settlingMin,0) / nights.filter(s=>s.settlingMin>0).length)
+    : 0;
   const flaggedNaps = naps.filter(s => s.flag === "Long").length;
 
   return {
     avgNightStr:    fmtMin(avgNight),
     avgNapStr:      fmtMin(avgNap),
     avgSettlingStr: fmtMin(avgSettling),
+    avgNightWakes,
+    avgNapCount,
     flaggedNaps,
     sessions: childSessions,
     nights,

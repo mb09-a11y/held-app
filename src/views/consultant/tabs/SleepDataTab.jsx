@@ -131,7 +131,7 @@ export default function SleepDataTab({ family, activeChild }) {
           {[
             { num: stats.avgNightStr || "10h 4m", lbl: "Avg Night",  trend: isAlert ? "↓ short" : "↑ solid", pos: !isAlert },
             { num: stats.avgNapStr   || "1h 52m", lbl: "Avg Naps",   trend: isAlert ? "↓ 0.4h long" : "✓ good", pos: !isAlert },
-            { num: stats.avgSettlingStr || "28m",  lbl: "Avg Settling", trend: isAlert ? "↑ high" : "↓ 10m", pos: !isAlert },
+            { num: stats.avgSettlingStr || "—",  lbl: "Avg Settling", trend: isAlert ? "↑ high" : "✓ good", pos: !isAlert },
           ].map((s, i) => (
             <div key={i} style={{
               padding: "6px 0", textAlign: "center",
@@ -146,9 +146,9 @@ export default function SleepDataTab({ family, activeChild }) {
         <div style={{ height: 1, background: T.border, margin: "10px 0" }} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0 }}>
           {[
-            { num: isAlert ? "42m"  : "10m",  lbl: "Avg Settling", color: isAlert ? "#C08A3A" : T.teal },
-            { num: isAlert ? "2.8"  : "0.4",  lbl: "Night Wakings", color: isAlert ? "#C0543A" : T.teal },
-            { num: "1",                         lbl: "Naps/Day",     color: T.teal },
+            { num: stats.avgSettlingStr || "—",          lbl: "Avg Settling",  color: isAlert ? "#C08A3A" : T.teal },
+            { num: String(stats.avgNightWakes ?? "—"),   lbl: "Night Wakings", color: isAlert ? "#C0543A" : T.teal },
+            { num: String(stats.avgNapCount   ?? "—"),   lbl: "Naps/Day",      color: T.teal },
           ].map((s, i) => (
             <div key={i} style={{ padding: "6px 0", textAlign: "center", borderRight: i < 2 ? `1px solid ${T.border}` : "none" }}>
               <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 600, color: s.color, lineHeight: 1 }}>{s.num}</div>

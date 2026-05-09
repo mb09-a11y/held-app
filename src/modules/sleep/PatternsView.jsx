@@ -715,9 +715,9 @@ export function PatternsView({ logs, onPatch, onDelete }) {
         {(() => {
           const fmtHm2 = h => { if (!h||h<=0) return "—"; const hrs=Math.floor(h),mins=Math.round((h-hrs)*60); return mins>0?`${hrs}h ${mins}m`:`${hrs}h`; };
           const recentEntries = logs
-            .filter(l => l.type === "sleep_session" || l.type === "diaper" || l.type === "night_waking")
+            .filter(l => l.type === "sleep_session" || l.type === "diaper" || l.type === "night_waking" || l.type === "feed" || l.type === "solids")
             .sort((a, b) => new Date(b.ts) - new Date(a.ts))
-            .slice(0, 15);
+            .slice(0, 20);
           return (
             <Card>
               <SectionLabel>Recent Sessions</SectionLabel>
@@ -725,22 +725,30 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                 <p style={{ fontSize:13, color:T.muted, textAlign:"center", padding:"12px 0", fontFamily:font }}>No sessions logged yet</p>
               )}
               {recentEntries.map((s, i, arr) => {
-                const isSleep = s.type === "sleep_session";
+                const isSleep  = s.type === "sleep_session";
                 const isDiaper = s.type === "diaper";
                 const isWaking = s.type === "night_waking";
+                const isFeed   = s.type === "feed";
+                const isSolids = s.type === "solids";
                 const durH = isSleep && s.end_ts ? Math.max(0,(new Date(s.end_ts)-new Date(s.ts))/3600000) : null;
                 const settle = isSleep && s.fall_asleep_secs != null ? Math.round(s.fall_asleep_secs/60) : null;
                 const icon = isSleep
                   ? (s.session_type === "night" ? "🌙" : "☀️")
                   : isDiaper ? (s.sub_type === "dirty" ? "💩" : "💦")
-                  : "🌛";
-                const label = isSleep ? fmtDateTime(s.ts)
-                  : isDiaper ? `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper`
-                  : "Night waking";
+                  : isWaking ? "🌛"
+                  : isFeed   ? (s.mode === "nursing" ? "🤱" : s.mode === "pump" ? "🫙" : "🍼")
+                  : "🥣";
+                const label = isSleep  ? (s.session_type === "night" ? "Night sleep" : "Nap")
+                            : isDiaper ? (s.sub_type === "dirty" ? "Dirty diaper" : s.sub_type === "both" ? "Wet + Dirty" : "Wet diaper")
+                            : isWaking ? "Night waking"
+                            : isFeed   ? (s.mode === "nursing" ? `Nursing${s.side ? ` · ${s.side}` : ""}` : s.mode === "pump" ? `Pump${s.amount ? ` · ${s.amount}oz` : ""}` : `Bottle · ${s.amount || "—"}oz`)
+                            : `Solids${s.food ? ` · ${s.food}` : ""}`;
                 const sub = isSleep
                   ? [durH != null ? fmtHm2(durH) : "in progress", settle != null ? `settled in ${settle}m` : null, s.mood ? MOODS.find(m=>m.id===s.mood)?.emoji ?? "" : null].filter(Boolean).join(" · ")
                   : isWaking ? [s.duration ? `${s.duration}m awake` : null, s.description || null].filter(Boolean).join(" · ")
-                  : s.description || "";
+                  : isSolids && s.reaction ? s.reaction
+                  : "";
+                const canEdit = isSleep || isDiaper || isWaking;
                 return (
                   <div key={s.id} style={{ padding:"12px 0", borderBottom: i<arr.length-1?`1px solid ${T.border}`:"none", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                     <div>
@@ -751,7 +759,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                       </div>
                       {sub ? <div style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{sub}</div> : null}
                     </div>
-                    {onPatch && <button onClick={() => setEditingLog(s)} style={{ background:T.faint, border:`1px solid ${T.border}`, color:T.muted, fontSize:11.5, cursor:"pointer", padding:"5px 10px", borderRadius:8, fontFamily:font, flexShrink:0, marginLeft:8 }}>Edit</button>}
+                    {onPatch && canEdit && <button onClick={() => setEditingLog(s)} style={{ background:T.faint, border:`1px solid ${T.border}`, color:T.muted, fontSize:11.5, cursor:"pointer", padding:"5px 10px", borderRadius:8, fontFamily:font, flexShrink:0, marginLeft:8 }}>Edit</button>}
                   </div>
                 );
               })}
