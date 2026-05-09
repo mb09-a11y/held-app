@@ -180,9 +180,11 @@ function useCheckinStreak(userId) {
         // Build set of unique days (local date string)
         const daySet = new Set(logs.map(l => new Date(l.checked_in_at).toDateString()));
 
-        // Current consecutive streak — walk back from today
+        // Current consecutive streak — if today has no check-in yet, start from yesterday
         let streak = 0;
-        for (let i = 0; i < 90; i++) {
+        const todayStr = new Date().toDateString();
+        const startOffset = daySet.has(todayStr) ? 0 : 1;
+        for (let i = startOffset; i < 90 + startOffset; i++) {
           const d = new Date(Date.now() - i * 86400000).toDateString();
           if (daySet.has(d)) streak++;
           else break;

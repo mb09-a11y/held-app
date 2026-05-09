@@ -916,6 +916,9 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
   const [saving, setSaving] = useState(false);
 
   const isDiaper = log.type === "diaper";
+  const isWaking = log.type === "night_waking";
+  const [duration, setDuration] = useState(log.duration ? String(log.duration) : "10");
+  const [notes, setNotes] = useState(log.description || "");
 
   async function handleSave() {
     setSaving(true);
@@ -935,6 +938,10 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
     if (isDiaper) {
       changes.sub_type = diaperType;
     }
+    if (isWaking) {
+      changes.duration = parseInt(duration) || 10;
+      changes.description = notes || null;
+    }
     await onSave(log.id, changes);
     setSaving(false); onClose();
   }
@@ -947,7 +954,7 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
       <div style={{ background:T.bg2||T.bg, borderRadius:"20px 20px 0 0", width:"100%", padding:"24px 20px 48px", maxHeight:"85vh", overflowY:"auto" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
           <h3 style={{ fontFamily:serif, fontSize:18, color:T.headingText, margin:0 }}>
-            {isDiaper ? "Edit Diaper Log" : "Edit Log"}
+            {isDiaper ? "Edit Diaper Log" : isWaking ? "Edit Night Waking" : "Edit Log"}
           </h3>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:T.muted }}>✕</button>
         </div>
@@ -963,6 +970,18 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
               ))}
             </div>
           </div>
+        )}
+        {isWaking && (
+          <>
+            <div style={{ marginBottom:14 }}>
+              <label style={labelStyle}>Duration awake (minutes)</label>
+              <input type="number" value={duration} onChange={e=>setDuration(e.target.value)} min="1" max="120" style={inputStyle} />
+            </div>
+            <div style={{ marginBottom:20 }}>
+              <label style={labelStyle}>Notes (optional)</label>
+              <input type="text" value={notes} onChange={e=>setNotes(e.target.value)} placeholder="e.g. teething, bad dream…" style={inputStyle} />
+            </div>
+          </>
         )}
         {isDiaper && (
           <div style={{ marginBottom:20 }}>

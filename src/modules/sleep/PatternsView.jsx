@@ -138,6 +138,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
       avgSettleMins: (() => { const w = sessions.filter(l => l.fall_asleep_secs != null); return w.length ? Math.round(w.reduce((s,l)=>s+l.fall_asleep_secs,0)/w.length/60) : null; })(),
       onTrack: totalH > 0 && totalH >= target.total - 1,
       hasData: sessions.length > 0,
+      hasWakingData: dl.filter(l => l.type === "night_waking").length > 0,
     };
   }), [logs, range, target.total]);
 
@@ -146,7 +147,11 @@ export function PatternsView({ logs, onPatch, onDelete }) {
     if (!days.length) return null;
     const avg = k => days.reduce((s,d)=>s+d[k],0)/days.length;
     const avgTotal = avg("totalH"), avgNap = avg("napH"), avgNight = avg("nightH");
-    const avgNightWakes = avg("nightWakes");
+    // Night wakes averaged across all days with any data (including waking-only days)
+    const daysWithAnyData = dayData.filter(d => d.hasData || d.hasWakingData);
+    const avgNightWakes = daysWithAnyData.length
+      ? daysWithAnyData.reduce((s,d)=>s+d.nightWakes,0)/daysWithAnyData.length
+      : 0;
     const settleArr = days.filter(d=>d.avgSettleMins!==null);
     const avgSettle = settleArr.length ? Math.round(settleArr.reduce((s,d)=>s+d.avgSettleMins,0)/settleArr.length) : null;
     return {
@@ -262,7 +267,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
       const wakes = dayLogs.filter(l=>l.type==="night_waking").length;
       const dur = ns.reduce((s,l)=>s+Math.max(0,new Date(l.end_ts)-new Date(l.ts)),0)/3600000;
       const settle = ns.filter(l=>l.fall_asleep_secs!=null);
-      return ns.length>0 ? { durH:dur, wakes, avgSettle: settle.length?Math.round(settle.reduce((s,l)=>s+l.fall_asleep_secs,0)/settle.length/60):null } : null;
+      return (ns.length > 0 || wakes > 0) ? { durH:dur, wakes, avgSettle: settle.length?Math.round(settle.reduce((s,l)=>s+l.fall_asleep_secs,0)/settle.length/60):null } : null;
     }).filter(Boolean);
     if (!nights.length) return null;
     return { avgDurH: parseFloat((nights.reduce((s,n)=>s+n.durH,0)/nights.length).toFixed(1)), avgWakes: parseFloat((nights.reduce((s,n)=>s+n.wakes,0)/nights.length).toFixed(1)), avgSettle: nights.some(n=>n.avgSettle!==null)?Math.round(nights.filter(n=>n.avgSettle!==null).reduce((s,n)=>s+n.avgSettle,0)/nights.filter(n=>n.avgSettle!==null).length):null };
@@ -710,7 +715,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
         {(() => {
           const fmtHm2 = h => { if (!h||h<=0) return "—"; const hrs=Math.floor(h),mins=Math.round((h-hrs)*60); return mins>0?`${hrs}h ${mins}m`:`${hrs}h`; };
           const recentEntries = logs
-            .filter(l => l.type === "sleep_session" || l.type === "diaper")
+            .filter(l => l.type === "sleep_session" || l.type === "diaper" || l.type === "night_waking")
             .sort((a, b) => new Date(b.ts) - new Date(a.ts))
             .slice(0, 15);
           return (
@@ -722,24 +727,27 @@ export function PatternsView({ logs, onPatch, onDelete }) {
               {recentEntries.map((s, i, arr) => {
                 const isSleep = s.type === "sleep_session";
                 const isDiaper = s.type === "diaper";
+                const isWaking = s.type === "night_waking";
                 const durH = isSleep && s.end_ts ? Math.max(0,(new Date(s.end_ts)-new Date(s.ts))/3600000) : null;
                 const settle = isSleep && s.fall_asleep_secs != null ? Math.round(s.fall_asleep_secs/60) : null;
                 const icon = isSleep
                   ? (s.session_type === "night" ? "🌙" : "☀️")
-                  : (s.sub_type === "dirty" ? "💩" : "💦");
-                const label = isSleep
-                  ? fmtDateTime(s.ts)
-                  : `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper · ${fmtDateTime(s.ts)}`;
+                  : isDiaper ? (s.sub_type === "dirty" ? "💩" : "💦")
+                  : "🌛";
+                const label = isSleep ? fmtDateTime(s.ts)
+                  : isDiaper ? `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper`
+                  : "Night waking";
                 const sub = isSleep
                   ? [durH != null ? fmtHm2(durH) : "in progress", settle != null ? `settled in ${settle}m` : null, s.mood ? MOODS.find(m=>m.id===s.mood)?.emoji ?? "" : null].filter(Boolean).join(" · ")
+                  : isWaking ? [s.duration ? `${s.duration}m awake` : null, s.description || null].filter(Boolean).join(" · ")
                   : s.description || "";
                 return (
                   <div key={s.id} style={{ padding:"12px 0", borderBottom: i<arr.length-1?`1px solid ${T.border}`:"none", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                     <div>
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
                         <span style={{ fontSize:13 }}>{icon}</span>
-                        <span style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{isSleep ? fmtDateTime(s.ts) : `${s.sub_type === "dirty" ? "Dirty" : "Wet"} diaper`}</span>
-                        {isDiaper && <span style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{fmtDateTime(s.ts)}</span>}
+                        <span style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{label}</span>
+                        <span style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{fmtDateTime(s.ts)}</span>
                       </div>
                       {sub ? <div style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{sub}</div> : null}
                     </div>

@@ -249,9 +249,11 @@ function analyzePatterns(checkins, sleepSessions) {
       : `"Even one moment of noticing is the practice."`,
   };
 
-  // 7-day streak
+  // 7-day streak — if today has no check-in yet, start counting from yesterday
   let streak = 0;
-  for (let i = 0; i < 7; i++) {
+  const todayHasLog = checkins.some(c => new Date(c.checked_in_at).toDateString() === new Date().toDateString());
+  const startOffset = todayHasLog ? 0 : 1;
+  for (let i = startOffset; i < 7 + startOffset; i++) {
     const d = new Date(Date.now() - i * 86400000).toDateString();
     const hasLog = checkins.some(c => new Date(c.checked_in_at).toDateString() === d);
     if (hasLog) streak++;
