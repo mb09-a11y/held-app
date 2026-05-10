@@ -108,6 +108,7 @@ function normalizeFamilyRow(fam, children = [], lastMsg = null, nsCheckins = [])
     nsState,
     nsTrend: nsTrend.length > 0 ? nsTrend : [2, 2, 2, 2, 2],
     nsNote: latestNS?.notes || "",
+    nsCheckinTime: latestNS?.checked_in_at || null,
     children: normalizedChildren,
     lastMessage: lastMsg?.content || fam.last_message || "",
     lastMessageTime: lastMsg?.created_at
@@ -365,7 +366,7 @@ export function useIntake(familyId) {
 // Returns sleep sessions keyed by childId from sleep_logs table.
 // rangeDays controls how far back to fetch (7 | 14 | 30)
 
-export function useSessions(familyId, rangeDays = 30) {
+export function useSessions(familyId, rangeDays = 30, timezone = null) {
   const [sessions, setSessions] = useState({});
   const [loading, setLoading]   = useState(false);
 
@@ -387,35 +388,40 @@ export function useSessions(familyId, rangeDays = 30) {
         for (const row of data) {
           const key = row.child_id || familyId;
           (byChild[key] ||= []).push(
-            row.type === "night_waking" ? normalizeWakingLog(row) : normalizeSleepLog(row)
+            row.type === "night_waking" ? normalizeWakingLog(row, timezone) : normalizeSleepLog(row, timezone)
           );
         }
         setSessions(byChild);
         setLoading(false);
       })
       .catch(err => { console.error("[useSessions]", err); setLoading(false); });
-  }, [familyId, rangeDays]);
+  }, [familyId, rangeDays, timezone]);
 
   return { sessions, loading };
 }
 
-function normalizeWakingLog(row) {
+function normalizeWakingLog(row, tz) {
   return {
     id:          row.id,
     type:        "night_waking",
     emoji:       "🌛",
-    date:        new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
-    time:        new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    date:        tz
+      ? new Date(row.ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz })
+      : new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    time:        tz
+      ? new Date(row.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })
+      : new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
     duration:    row.duration ? `${row.duration}m awake` : "Night waking",
     durationMin: row.duration || 0,
     settling:    "0m",
     settlingMin: 0,
     flag:        null,
     raw:         row,
+    tz,
   };
 }
 
-function normalizeSleepLog(row) {
+function normalizeSleepLog(row, tz) {
   // Use total_sleep_ms if available (most accurate), fall back to ts/end_ts diff
   const durationMs = row.total_sleep_ms
     ? row.total_sleep_ms
@@ -439,8 +445,12 @@ function normalizeSleepLog(row) {
     id:          row.id,
     type:        isNight ? "night" : "nap",
     emoji:       isNight ? "🌙" : "☀️",
-    date:        new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
-    time:        new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    date:        tz
+      ? new Date(row.ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz })
+      : new Date(row.ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    time:        tz
+      ? new Date(row.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })
+      : new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
     duration:    durationStr,
     durationMin,
     settling:    settlingMin > 0 ? `${settlingMin}m` : "0m",
@@ -651,18 +661,23 @@ export function useMessages() {
 // Derives sleep stats for a child from the sessions hook.
 // Signature unchanged — SleepDataTab calls useSleepStats(childId).
 
-export function useSleepStats(childId, familyId, rangeDays = 30) {
-  const { sessions } = useSessions(familyId, rangeDays);
+export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null) {
+  const { sessions } = useSessions(familyId, rangeDays, timezone);
   const childSessions = sessions[childId] || [];
   const nights  = childSessions.filter(s => s.type === "night");
   const naps    = childSessions.filter(s => s.type === "nap");
-  const wakings = childSessions.filter(s => s.type === "night_waking");
+  // Only count wakings that occurred during nighttime hours (7pm–6am) — excludes nap wakings
+  const allWakings = childSessions.filter(s => s.type === "night_waking");
+  const wakings = allWakings.filter(s => {
+    const h = new Date(s.raw?.ts).getHours();
+    return h >= 19 || h < 6;
+  });
 
-  // Group wakings by night — a waking between 8PM-8AM belongs to the night that started the previous evening
-  // Use the "night date" = date of the evening the night started (roll back if hour < 12)
+  // Group wakings by night — a waking between 7PM-6AM belongs to the night that started the previous evening
+  // Use the "night date" = date of the evening the night started (roll back if hour < 6)
   const toNightDate = ts => {
     const d = new Date(ts);
-    if (d.getHours() < 12) d.setDate(d.getDate() - 1); // early AM → previous night
+    if (d.getHours() < 6) d.setDate(d.getDate() - 1); // early AM → previous night
     return d.toDateString();
   };
   const nightDays = new Set(nights.map(s => toNightDate(s.raw?.ts || s.ts)));
@@ -712,6 +727,50 @@ export function useSleepStats(childId, familyId, rangeDays = 30) {
     : 0;
   const flaggedNaps = naps.filter(s => s.flag === "Long").length;
 
+  // Group naps by position within each calendar day to build per-slot stats
+  const napsByDay = {};
+  [...naps].sort((a, b) => new Date(a.raw?.ts || 0) - new Date(b.raw?.ts || 0)).forEach(s => {
+    const day = new Date(s.raw?.ts).toDateString();
+    (napsByDay[day] ||= []).push(s);
+  });
+  const daysWithNapData = Object.values(napsByDay);
+  const maxNapSlot = (() => {
+    let max = 0;
+    for (let i = 0; i < 4; i++) {
+      const daysWithSlot = daysWithNapData.filter(d => d[i]).length;
+      if (daysWithSlot >= 2) max = i + 1;
+      else break;
+    }
+    return Math.max(max, naps.length > 0 ? 1 : 0);
+  })();
+  const napSlots = Array.from({ length: maxNapSlot }, (_, idx) => {
+    const slotSessions = daysWithNapData.map(d => d[idx]).filter(Boolean);
+    const avgDurMin = slotSessions.length
+      ? Math.round(slotSessions.reduce((a, s) => a + s.durationMin, 0) / slotSessions.length) : 0;
+    const withSettle = slotSessions.filter(s => s.settlingMin > 0);
+    const avgSettleMin = withSettle.length
+      ? Math.round(withSettle.reduce((a, s) => a + s.settlingMin, 0) / withSettle.length) : 0;
+    const recent = slotSessions.slice(-7);
+    // x-axis labels: short weekday from each session date
+    const xLabels = recent.map(s => {
+      const raw = s.raw?.ts;
+      if (!raw) return "";
+      return new Date(raw).toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2);
+    });
+    return {
+      label: "Nap " + (idx + 1),
+      avgDurStr: fmtMin(avgDurMin),
+      avgSettleStr: avgSettleMin > 0 ? fmtMin(avgSettleMin) : "—",
+      avgDurMin,
+      avgSettleMin,
+      durSeries:    recent.map(s => s.durationMin),
+      settleSeries: recent.map(s => s.settlingMin),
+      xLabels,
+      flaggedCount: slotSessions.filter(s => s.flag === "Long").length,
+      sessionCount: slotSessions.length,
+    };
+  });
+
   return {
     avgNightStr:    fmtMin(avgNight),
     avgNapStr:      fmtMin(avgNap),
@@ -719,6 +778,7 @@ export function useSleepStats(childId, familyId, rangeDays = 30) {
     avgNightWakes,
     avgNapCount,
     flaggedNaps,
+    napSlots,
     sessions: childSessions,
     nights,
     naps,

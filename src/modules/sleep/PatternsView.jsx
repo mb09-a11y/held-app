@@ -354,14 +354,28 @@ export function PatternsView({ logs, onPatch, onDelete }) {
           {ageMonths !== null && ageMonths < 24 && (() => {
             const since = new Date(Date.now() - range * 86400000).toISOString();
             const periodLogs = logs.filter(l => l.ts > since);
-            const daysInRange = range;
 
-            const wetPerDay  = parseFloat((periodLogs.filter(l => l.type === "diaper" && l.sub_type === "wet").length   / daysInRange).toFixed(1));
-            const dirtyPerDay = parseFloat((periodLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty").length / daysInRange).toFixed(1));
-            const feedLogs   = periodLogs.filter(l => l.type === "feed");
-            const feedsPerDay = parseFloat((feedLogs.length / daysInRange).toFixed(1));
-            const totalOz    = feedLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
-            const ozPerDay   = parseFloat((totalOz / daysInRange).toFixed(1));
+            // Helper: count distinct calendar days that have at least one matching log
+            function daysWithLogs(subset) {
+              const days = new Set(subset.map(l => new Date(l.ts).toDateString()));
+              return days.size || 1; // avoid divide-by-zero; falls back to 1 if no logs
+            }
+
+            const wetLogs    = periodLogs.filter(l => l.type === "diaper" && l.sub_type === "wet");
+            const dirtyLogs  = periodLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty");
+            // Diapers: divide by days that have ANY diaper logged (wet or dirty), so partial days aren't penalised
+            const diaperLogs = periodLogs.filter(l => l.type === "diaper");
+            const diaperDays = daysWithLogs(diaperLogs);
+            const wetPerDay   = diaperLogs.length ? parseFloat((wetLogs.length   / diaperDays).toFixed(1)) : 0;
+            const dirtyPerDay = diaperLogs.length ? parseFloat((dirtyLogs.length / diaperDays).toFixed(1)) : 0;
+
+            const feedLogs    = periodLogs.filter(l => l.type === "feed");
+            const feedDays    = daysWithLogs(feedLogs);
+            const feedsPerDay = feedLogs.length ? parseFloat((feedLogs.length / feedDays).toFixed(1)) : 0;
+            const totalOz     = feedLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const ozLogs      = feedLogs.filter(l => parseFloat(l.amount) > 0);
+            const ozDays      = daysWithLogs(ozLogs);
+            const ozPerDay    = ozLogs.length ? parseFloat((totalOz / ozDays).toFixed(1)) : 0;
             const hasBottle  = feedLogs.some(l => l.mode !== "nursing");
             const hasNursing = feedLogs.some(l => l.mode === "nursing");
 

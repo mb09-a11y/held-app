@@ -2,17 +2,30 @@
 import { useT, font } from "../../../core/shared.jsx";
 
 const STATE_COLOR = {
-  regulated:   { bg: "rgba(92,122,94,0.15)", border: "rgba(92,122,94,0.4)", text: "#7BAA8A", label: "Regulated" },
-  activated:   { bg: "rgba(192,138,58,0.15)", border: "rgba(192,138,58,0.4)", text: "#C08A3A", label: "Activated" },
-  overwhelmed: { bg: "rgba(192,84,58,0.15)", border: "rgba(192,84,58,0.4)", text: "#E87A5E", label: "Overwhelmed" },
+  regulated:   { bg: "rgba(92,122,94,0.12)",  border: "rgba(92,122,94,0.35)",  text: "#5C7A5E", label: "Regulated" },
+  activated:   { bg: "rgba(192,138,58,0.12)", border: "rgba(192,138,58,0.35)", text: "#C08A3A", label: "Activated" },
+  overwhelmed: { bg: "rgba(192,84,58,0.12)",  border: "rgba(192,84,58,0.35)",  text: "#C0543A", label: "Overwhelmed" },
 };
 
-export default function NSBanner({ family, nsLog }) {
+function fmtRelTime(iso) {
+  if (!iso) return null;
+  const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (mins < 60)   return `${mins}m ago`;
+  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+  return `${Math.floor(mins / 1440)}d ago`;
+}
+
+export default function NSBanner({ family }) {
   const T = useT();
-  const state = family?.nsState || "regulated";
-  const col = STATE_COLOR[state] || STATE_COLOR.regulated;
-  const trend = family?.nsTrend || [2, 2, 2, 2, 2];
-  const maxTrend = Math.max(...trend, 1);
+  const state     = family?.nsState      || "regulated";
+  const col       = STATE_COLOR[state]   || STATE_COLOR.regulated;
+  const trend     = family?.nsTrend      || [2, 2, 2, 2, 2];
+  const note      = family?.nsNote       || "";
+  const timeStr   = fmtRelTime(family?.nsCheckinTime);
+  const maxTrend  = Math.max(...trend, 1);
+
+  // How many bars to "fill" based on state
+  const filledBars = state === "overwhelmed" ? 5 : state === "activated" ? 3 : 2;
 
   return (
     <div style={{
@@ -28,16 +41,28 @@ export default function NSBanner({ family, nsLog }) {
       <div style={{ flex: 1 }}>
         <div style={{
           fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
-          fontWeight: 600, color: col.text, marginBottom: 2, fontFamily: font,
+          fontWeight: 700, color: col.text, marginBottom: 3, fontFamily: font,
+          display: "flex", alignItems: "center", gap: 5,
         }}>
-          Parent Nervous System · Family · {col.label}
+          Parent NS · Family · {col.label}
+          {timeStr && (
+            <span style={{ fontWeight: 400, opacity: 0.7, textTransform: "none", letterSpacing: 0 }}>
+              · {timeStr}
+            </span>
+          )}
         </div>
-        <div style={{ fontSize: 12, color: T.text, lineHeight: 1.4, fontFamily: font }}>
-          {family?.nsNote || "No recent check-ins."}
+        <div style={{ fontSize: 12, color: T.text, lineHeight: 1.45, fontFamily: font }}>
+          {note
+            ? note
+            : !family?.nsCheckinTime
+              ? "No recent check-ins."
+              : `${col.label} — no note left.`
+          }
         </div>
       </div>
-      {/* Mini trend bars */}
-      <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 34 }}>
+
+      {/* Trend bars — height driven by trend values, color driven by state */}
+      <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 34, flexShrink: 0 }}>
         {trend.map((v, i) => (
           <div key={i} style={{
             width: 5,
@@ -45,7 +70,7 @@ export default function NSBanner({ family, nsLog }) {
             minHeight: 4,
             borderRadius: 2,
             background: col.text,
-            opacity: 0.5 + (i / trend.length) * 0.5,
+            opacity: i < filledBars ? 0.85 : 0.25,
           }} />
         ))}
       </div>

@@ -152,6 +152,27 @@ export function fmtDateTime(iso) {
   return new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
     + " · " + fmtTime(iso);
 }
+
+// Timezone-aware versions for consultant views — always renders in the FAMILY's timezone.
+// Pass the family's `timezone` string (e.g. "America/Chicago"). Falls back to local if absent.
+export function fmtTimeTz(iso, tz) {
+  if (!tz) return fmtTime(iso);
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: tz });
+}
+export function fmtDateTimeTz(iso, tz) {
+  if (!tz) return fmtDateTime(iso);
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
+  const timePart = fmtTimeTz(iso, tz);
+  return `${datePart} · ${timePart}`;
+}
+// Same as isToday() but evaluated in the family's timezone
+export function isTodayTz(ts, tz) {
+  if (!tz) return isToday(ts);
+  const opts = { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" };
+  const fmt = d => new Date(d).toLocaleDateString("en-CA", opts); // YYYY-MM-DD
+  return fmt(ts) === fmt(new Date());
+}
 export function fmtDuration(mins) {
   const m = Math.abs(Math.round(mins));
   if (m < 60) return `${m}m`;
