@@ -124,6 +124,7 @@ function normalizeFamilyRow(fam, children = [], lastMsg = null, nsCheckins = [])
     parent_id: fam.parent_id,
     sleep_plan_profile: fam.sleep_plan_profile,
     sleep_progress: fam.sleep_progress,
+    timezone: fam.timezone || null,
   };
 }
 
@@ -666,32 +667,41 @@ export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null
   const childSessions = sessions[childId] || [];
   const nights  = childSessions.filter(s => s.type === "night");
   const naps    = childSessions.filter(s => s.type === "nap");
-  // Only count wakings that occurred during nighttime hours (7pm–6am) — excludes nap wakings
+
+  // Timezone-aware helpers — always interpret timestamps in the family's timezone
+  const tzOpts = timezone ? { timeZone: timezone } : {};
+  const tzHour = ts => parseInt(
+    new Date(ts).toLocaleString("en-US", { hour: "numeric", hour12: false, ...tzOpts }), 10
+  );
+  const tzDateKey = ts => new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit", ...tzOpts });
+
+  // Only count wakings during nighttime hours (7pm–6am) in family's timezone
   const allWakings = childSessions.filter(s => s.type === "night_waking");
   const wakings = allWakings.filter(s => {
-    const h = new Date(s.raw?.ts).getHours();
+    const h = tzHour(s.raw?.ts);
     return h >= 19 || h < 6;
   });
 
-  // Group wakings by night — a waking between 7PM-6AM belongs to the night that started the previous evening
-  // Use the "night date" = date of the evening the night started (roll back if hour < 6)
+  // Group wakings by night using family timezone
+  // "night date" = calendar date of the evening (roll back early AM to previous day)
   const toNightDate = ts => {
+    const h = tzHour(ts);
     const d = new Date(ts);
-    if (d.getHours() < 6) d.setDate(d.getDate() - 1); // early AM → previous night
-    return d.toDateString();
+    if (h < 6) d.setTime(d.getTime() - 24 * 60 * 60 * 1000);
+    return tzDateKey(d);
   };
   const nightDays = new Set(nights.map(s => toNightDate(s.raw?.ts || s.ts)));
   const wakingDays = [...nightDays].map(d =>
     wakings.filter(w => toNightDate(w.raw?.ts || w.ts) === d).length
   );
   const avgNightWakes = nightDays.size
-    ? parseFloat((wakingDays.reduce((a,b)=>a+b,0) / nightDays.size).toFixed(1))
+    ? Math.round(wakingDays.reduce((a,b)=>a+b,0) / nightDays.size)
     : wakings.length > 0 ? wakings.length : 0;
 
-  // Avg naps per day
-  const napDays = new Set(naps.map(s => new Date(s.date || s.ts).toDateString()));
+  // Avg naps per day — grouped in family timezone
+  const napDays = new Set(naps.map(s => tzDateKey(s.date || s.ts)));
   const avgNapCount = napDays.size
-    ? parseFloat((naps.length / napDays.size).toFixed(1))
+    ? Math.round(naps.length / napDays.size)
     : 0;
 
   const parseMin = str => {
@@ -730,7 +740,7 @@ export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null
   // Group naps by position within each calendar day to build per-slot stats
   const napsByDay = {};
   [...naps].sort((a, b) => new Date(a.raw?.ts || 0) - new Date(b.raw?.ts || 0)).forEach(s => {
-    const day = new Date(s.raw?.ts).toDateString();
+    const day = tzDateKey(s.raw?.ts);
     (napsByDay[day] ||= []).push(s);
   });
   const daysWithNapData = Object.values(napsByDay);
@@ -755,7 +765,7 @@ export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null
     const xLabels = recent.map(s => {
       const raw = s.raw?.ts;
       if (!raw) return "";
-      return new Date(raw).toLocaleDateString("en-US", { weekday: "short" }).slice(0, 2);
+      return new Date(raw).toLocaleDateString("en-US", { weekday: "short", ...tzOpts }).slice(0, 2);
     });
     return {
       label: "Nap " + (idx + 1),

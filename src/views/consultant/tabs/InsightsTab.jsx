@@ -34,7 +34,7 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
 
   // Next put-down — same hook as parent view
   const { nextSleepStr, minsUntil, isSleeping } = useNextSleep(
-    family?.id, activeChild?.id, activeChild?.dob
+    family?.id, activeChild?.id, activeChild?.dob, familyTz
   );
 
   if (!activeChild) return null;
@@ -73,6 +73,61 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
     ? (recentWakes < olderWakes - 0.3 ? "down" : recentWakes > olderWakes + 0.3 ? "up" : "flat")
     : null;
 
+  // ── Pattern detection: consistent waking window ───────────────────────────
+  const wakingWindowPattern = (() => {
+    const nights = stats.nights || [];
+    if (nights.length < 3) return null;
+    // Collect the first night waking time (in minutes from midnight) for each of last 3+ nights
+    const allSessions = (stats.sessions || []);
+    const wakingSessions = allSessions.filter(s => s.type === "night_waking");
+    // Group wakings by night date
+    const wakingsByNight = {};
+    for (const w of wakingSessions) {
+      const nightKey = w.date;
+      if (!wakingsByNight[nightKey]) wakingsByNight[nightKey] = [];
+      wakingsByNight[nightKey].push(w);
+    }
+    const nightKeys = Object.keys(wakingsByNight).slice(0, 5); // last 5 nights max
+    if (nightKeys.length < 3) return null;
+    // Get first waking time in minutes-since-midnight for each night
+    const firstWakingMins = nightKeys.map(k => {
+      const w = wakingsByNight[k][0];
+      if (!w?.time) return null;
+      const match = w.time.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+      if (!match) return null;
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const ampm = match[3]?.toUpperCase();
+      if (ampm === "PM" && h !== 12) h += 12;
+      if (ampm === "AM" && h === 12) h = 0;
+      // Normalize: wakings after midnight (0-6am) add 24h so they sort after 7pm
+      if (h < 6) h += 24;
+      return h * 60 + m;
+    }).filter(v => v != null);
+    if (firstWakingMins.length < 3) return null;
+    // Check if all first wakings are within ±15 min of each other
+    const minT = Math.min(...firstWakingMins);
+    const maxT = Math.max(...firstWakingMins);
+    if (maxT - minT > 30) return null; // >30 min spread = not a consistent pattern
+    // Get waking durations for trend (most recent first)
+    const durations = nightKeys.slice(0, 3).map(k => {
+      const w = wakingsByNight[k][0];
+      return w?.durationMin ?? null;
+    }).filter(v => v != null);
+    const isTrending = durations.length >= 2 && durations[0] < durations[durations.length - 1];
+    // Format the consistent time for display
+    const midMins = Math.round((minT + maxT) / 2);
+    const displayH = midMins >= 24 * 60 ? Math.floor((midMins - 24 * 60) / 60) : Math.floor(midMins / 60);
+    const displayM = midMins % 60;
+    const ampm = displayH >= 12 ? "PM" : "AM";
+    const h12 = displayH % 12 || 12;
+    const timeLabel = `${h12}:${String(displayM).padStart(2, "0")} ${ampm}`;
+    const durationTrend = durations.length >= 2
+      ? durations.map(d => d < 60 ? `${d}m` : `${Math.floor(d/60)}h ${d%60}m`).reverse().join(" → ")
+      : null;
+    return { timeLabel, durationTrend, isTrending, nightCount: nightKeys.length };
+  })();
+
   // ── Co-Pilot sleep insight ─────────────────────────────────────────────────
   const sleepInsight = (() => {
     if (!hasData) return {
@@ -87,6 +142,10 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
       title: "Frequent night wakings — check for overtiredness.",
       body:  `${childName} is averaging ${avgNightWakes} wakings per night. This often points to daytime sleep debt accumulating. Review nap timing and total daytime sleep.`,
     };
+    if (wakingsTrend === "down" && planDay != null && planDay >= 4 && planDay <= 6) return {
+      title: `Day ${planDay} — regression window is coming. Stay ready.`,
+      body:  `Progress is real — wakings are trending down. But days 4–6 commonly bring one harder night before things consolidate. Prepare the parent now so they don't panic if tonight is rougher.`,
+    };
     if (wakingsTrend === "down") return {
       title: "Night wakings trending down. Stay the course.",
       body:  `${childName}'s wakings have dropped over recent nights — the nervous system is consolidating. A brief celebration message builds parent confidence right now.`,
@@ -98,6 +157,18 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
     if (planDay != null && [5, 7, 10, 14].includes(planDay)) return {
       title: `Day ${planDay} regression window — normal and expected.`,
       body:  `Sleep latency may increase tonight. This is a common plateau, not a method failure. Prepare the parent now so they don't panic when it happens.`,
+    };
+    if (planDay === 1) return {
+      title: `Night 1 — hold the plan and hold the parent.`,
+      body:  `The first night is the hardest emotionally for parents, not always the hardest for the child. Your most important job tonight is keeping the parent regulated enough to stay consistent.`,
+    };
+    if (planDay === 2) return {
+      title: `Night 2 — wakings can spike before they drop.`,
+      body:  `Night 2 is often harder than night 1 — this is normal. The nervous system is still calibrating. Prepare the parent now so they aren't blindsided if tonight feels like a step back.`,
+    };
+    if (planDay === 3) return {
+      title: `Night 3 — things often start to shift here.`,
+      body:  `Most families see meaningful improvement around night 3. Celebrate any progress, even small. Parent confidence built now carries them through the regression window ahead.`,
     };
     return {
       title: "Strong progress. Stay the course.",
@@ -134,17 +205,64 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
     };
   })();
 
-  // ── Proactive suggestion ───────────────────────────────────────────────────
-  const proactiveText = (() => {
-    if (nsState === "overwhelmed")
-      return `Parent is in overwhelm. Reach out before they message you — a short "thinking of you" note can regulate their system before tonight.`;
-    if (isUrgent)
-      return `${childName}'s stats are flagged urgent. Prepare a regulated response now so you're not drafting under pressure when the message arrives tonight.`;
-    if (flaggedNaps > 0)
-      return `${childName} had a long nap recently. A quick heads-up about bedtime timing tonight could prevent a panic message.`;
-    if (planDay != null && [3, 5, 7, 10, 14].includes(planDay))
-      return `Day ${planDay} is a common regression window. Send a proactive note to normalize any bumps — parents who feel prepared panic less.`;
-    return `Check in proactively before tonight — it builds trust and reduces reactive messages.`;
+  // ── Proactive suggestion (day-triggered anticipatory guidance) ────────────
+  const proactiveSuggestion = (() => {
+    // NS state always takes priority
+    if (nsState === "overwhelmed") return {
+      icon: "🫂",
+      label: "Parent state · Act now",
+      text: `Parent is in overwhelm. Reach out before they message you — a short, warm note can regulate their system before tonight's session.`,
+      cta: "Draft support message →",
+    };
+    if (isUrgent) return {
+      icon: "⚠️",
+      label: "Tonight, watch for",
+      text: `${childName}'s stats are flagged. Prepare a regulated response now so you're not drafting under pressure when the message arrives.`,
+      cta: "Draft message →",
+    };
+    // Day-triggered anticipatory guidance
+    if (planDay === 1) return {
+      icon: "🌱",
+      label: "Proactive · Night 1",
+      text: `Before tonight, send a warm grounding message. Let the parent know what to expect and remind them you're in their corner. They need to feel held, not managed.`,
+      cta: "Draft night 1 message →",
+    };
+    if (planDay === 2) return {
+      icon: "🌊",
+      label: "Proactive · Night 2 heads-up",
+      text: `Night 2 often feels harder before it gets easier — prep the parent now. A quick message normalizing a potential spike protects them from interpreting a hard night as failure.`,
+      cta: "Draft heads-up →",
+    };
+    if (planDay === 3) return {
+      icon: "🌿",
+      label: "Proactive · Celebrate progress",
+      text: `Night 3 is usually when families start to feel the shift. Send a celebration message — even small wins deserve acknowledgment and it builds the parent's confidence for what's ahead.`,
+      cta: "Draft celebration →",
+    };
+    if (planDay != null && planDay >= 4 && planDay <= 6) return {
+      icon: "🔮",
+      label: "Proactive · Regression window",
+      text: `Days 4–6 commonly bring one harder night before things consolidate. Send a heads-up now so the parent knows this is normal — parents who are prepared don't panic.`,
+      cta: "Draft regression prep →",
+    };
+    if (flaggedNaps > 0) return {
+      icon: "⏰",
+      label: "Proactive · Nap watch",
+      text: `${childName} had a long nap recently. A quick heads-up about bedtime timing tonight could prevent a panic message at 9pm.`,
+      cta: "Draft heads-up →",
+    };
+    if (planDay != null && [7, 10, 14].includes(planDay)) return {
+      icon: "🔮",
+      label: `Proactive · Day ${planDay} plateau`,
+      text: `Day ${planDay} is a common consolidation plateau. Send a proactive note to normalize any bumps — parents who feel prepared stay regulated.`,
+      cta: "Draft message →",
+    };
+    return {
+      icon: "🔮",
+      label: "Proactive suggestion",
+      text: `Check in proactively before tonight — it builds trust and reduces reactive messages.`,
+      cta: "Draft message →",
+    };
   })();
 
   // ── Next put-down ──────────────────────────────────────────────────────────
@@ -256,12 +374,35 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
         </div>
       )}
 
+      {/* Pattern detection card — fires when consistent waking window detected */}
+      {wakingWindowPattern && (
+        <InsightCard
+          label="◎ Co-Pilot · Sleep pattern"
+          title={`Waking clustering at ${wakingWindowPattern.timeLabel} — this is expected.`}
+          body={[
+            `${childName}'s night wakings on the last ${wakingWindowPattern.nightCount} nights all occurred around ${wakingWindowPattern.timeLabel}. This timing reflects a natural transition out of the first deep sleep cycle — a predictable arousal point in sleep architecture.`,
+            wakingWindowPattern.durationTrend
+              ? `Duration trend: ${wakingWindowPattern.durationTrend}. ${wakingWindowPattern.isTrending ? "The decreasing duration shows the skill is consolidating." : "Duration is stable — may need a few more nights to fully bridge."}`
+              : null,
+            `No intervention needed. The pattern is the nervous system working through something specific, not a sign something is wrong.`,
+          ].filter(Boolean).join(" ")}
+          actions={[
+            { label: "Draft a message", onClick: () => onNavigate("responseBuilder", {
+                prefill: `I wanted to share something reassuring — I've been watching ${childName}'s data closely and noticed her wakings have been happening around the same time each night (around ${wakingWindowPattern.timeLabel}). This is actually really normal. It's a natural transition point as she moves between sleep cycles. The fact that the wakings are getting shorter each night is exactly what we want to see. Stay the course — she's doing the work.`,
+                tone: "Educational",
+              })
+            },
+            { label: "View data", onClick: () => onNavigate("sleepData") },
+          ]}
+        />
+      )}
+
       {/* Proactive suggestion */}
       <ProactiveCard
-        icon={isUrgent ? "⚠️" : nsState === "overwhelmed" ? "🫂" : "🔮"}
-        label={isUrgent ? "Tonight, watch for" : "Proactive suggestion"}
-        text={proactiveText}
-        cta="Draft message →"
+        icon={proactiveSuggestion.icon}
+        label={proactiveSuggestion.label}
+        text={proactiveSuggestion.text}
+        cta={proactiveSuggestion.cta}
         onCta={() => onNavigate("responseBuilder")}
       />
     </div>

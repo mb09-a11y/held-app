@@ -582,6 +582,7 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
             <LogTile icon="💧" label="Wet" onClick={() => logAndToast("diaper", { sub_type: "wet" }, "Wet diaper logged", "💦")} />
             <LogTile icon="💩" label="Dirty" onClick={() => openSheet({ title: "💩 Dirty Diaper", fields: [{ key: "description", label: "Type", type: "select", options: ["Normal/Mustardy","Green","Watery","Hard/Pellets","Mucousy","Bloody"], default: "Normal/Mustardy" }], onConfirm: (v) => logAndToast("diaper", { sub_type: "dirty", description: v.description }, "Dirty diaper logged", "💩") })} />
+            <LogTile icon="💦💩" label="Both" onClick={() => openSheet({ title: "💦💩 Wet + Dirty", fields: [{ key: "description", label: "Stool type", type: "select", options: ["Normal/Mustardy","Green","Watery","Hard/Pellets","Mucousy","Bloody"], default: "Normal/Mustardy" }], onConfirm: (v) => logAndToast("diaper", { sub_type: "both", description: v.description }, "Wet + dirty logged", "💦💩") })} />
           </div>
         </Card>
       )}

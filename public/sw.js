@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rcc-app-v4';
+const CACHE_NAME = 'rcc-app-v5';
 const STATIC_ASSETS = ['/', '/index.html'];
 
 // ── DEV MODE BYPASS ───────────────────────────────────────────────────────────
@@ -118,5 +118,43 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => caches.match(request))
+  );
+});
+
+// ── PUSH ──────────────────────────────────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  let data = {};
+  try { data = event.data.json(); } catch { data = { title: 'Held', body: event.data.text() }; }
+
+  const { title = 'Held', body = '', tag, tab, family_id } = data;
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      tag: tag || 'held-default',
+      icon: '/icon-192.png',
+      badge: '/icon-96.png',
+      data: { tab, family_id },
+    })
+  );
+});
+
+// ── NOTIFICATION CLICK ────────────────────────────────────────────────────────
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const { tab, family_id } = event.notification.data || {};
+
+  let url = '/';
+  if (tab) url = `/?tab=${tab}`;
+  if (family_id) url = `/?tab=${tab || 'messages'}&family=${family_id}`;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      const existing = clients.find(c => c.url.includes(self.location.origin));
+      if (existing) return existing.focus().then(c => c.navigate(url));
+      return self.clients.openWindow(url);
+    })
   );
 });

@@ -147,17 +147,22 @@ export function PatternsView({ logs, onPatch, onDelete }) {
     if (!days.length) return null;
     const avg = k => days.reduce((s,d)=>s+d[k],0)/days.length;
     const avgTotal = avg("totalH"), avgNap = avg("napH"), avgNight = avg("nightH");
-    // Night wakes averaged across all days with any data (including waking-only days)
-    const daysWithAnyData = dayData.filter(d => d.hasData || d.hasWakingData);
-    const avgNightWakes = daysWithAnyData.length
-      ? daysWithAnyData.reduce((s,d)=>s+d.nightWakes,0)/daysWithAnyData.length
+    // Night wakes — only average across days that actually had a waking logged
+    const daysWithWakings = dayData.filter(d => d.nightWakes > 0);
+    const avgNightWakes = daysWithWakings.length
+      ? parseFloat((daysWithWakings.reduce((s,d)=>s+d.nightWakes,0)/daysWithWakings.length).toFixed(1))
       : 0;
     const settleArr = days.filter(d=>d.avgSettleMins!==null);
     const avgSettle = settleArr.length ? Math.round(settleArr.reduce((s,d)=>s+d.avgSettleMins,0)/settleArr.length) : null;
+    // Naps/day — only average across days that actually had naps
+    const daysWithNaps = days.filter(d => d.napCount > 0);
+    const avgNapCount = daysWithNaps.length
+      ? parseFloat((daysWithNaps.reduce((s,d)=>s+d.napCount,0)/daysWithNaps.length).toFixed(1))
+      : 0;
     return {
       avgTotal: parseFloat(avgTotal.toFixed(1)), avgNap: parseFloat(avgNap.toFixed(1)),
-      avgNight: parseFloat(avgNight.toFixed(1)), avgNightWakes: parseFloat(avgNightWakes.toFixed(1)),
-      avgSettle, avgNapCount: parseFloat(avg("napCount").toFixed(1)),
+      avgNight: parseFloat(avgNight.toFixed(1)), avgNightWakes,
+      avgSettle, avgNapCount,
       totalGap: parseFloat((avgTotal - target.total).toFixed(1)),
       napGap: parseFloat((avgNap - target.nap).toFixed(1)),
     };
@@ -361,13 +366,13 @@ export function PatternsView({ logs, onPatch, onDelete }) {
               return days.size || 1; // avoid divide-by-zero; falls back to 1 if no logs
             }
 
-            const wetLogs    = periodLogs.filter(l => l.type === "diaper" && l.sub_type === "wet");
-            const dirtyLogs  = periodLogs.filter(l => l.type === "diaper" && l.sub_type === "dirty");
-            // Diapers: divide by days that have ANY diaper logged (wet or dirty), so partial days aren't penalised
             const diaperLogs = periodLogs.filter(l => l.type === "diaper");
             const diaperDays = daysWithLogs(diaperLogs);
-            const wetPerDay   = diaperLogs.length ? parseFloat((wetLogs.length   / diaperDays).toFixed(1)) : 0;
-            const dirtyPerDay = diaperLogs.length ? parseFloat((dirtyLogs.length / diaperDays).toFixed(1)) : 0;
+            // "both" counts as both a wet and a dirty — match the same logic as SleepLog wellness view
+            const wetCount   = diaperLogs.filter(l => l.sub_type === "wet"   || l.sub_type === "both").length;
+            const dirtyCount = diaperLogs.filter(l => l.sub_type === "dirty" || l.sub_type === "both").length;
+            const wetPerDay   = diaperLogs.length ? parseFloat((wetCount   / diaperDays).toFixed(1)) : 0;
+            const dirtyPerDay = diaperLogs.length ? parseFloat((dirtyCount / diaperDays).toFixed(1)) : 0;
 
             const feedLogs    = periodLogs.filter(l => l.type === "feed");
             const feedDays    = daysWithLogs(feedLogs);

@@ -154,6 +154,7 @@ export default function SleepDataTab({ family, activeChild }) {
   const T = useT();
   const [range, setRange] = useState("7d");
   const [patternDismissed, setPatternDismissed] = useState(false);
+  const [showAllSessions, setShowAllSessions] = useState(false);
   const rangeDays = range === "7d" ? 7 : range === "14d" ? 14 : 30;
   const familyTz = family?.timezone || null;
   const stats = useSleepStats(activeChild?.id, family?.id, rangeDays, familyTz);
@@ -230,7 +231,7 @@ export default function SleepDataTab({ family, activeChild }) {
         <div style={{ height: 1, background: T.border, margin: "10px 0" }} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0 }}>
           {[
-            { num: stats.avgSettlingStr || "—",          lbl: "Avg Settling",  color: isAlert ? "#C08A3A" : T.teal },
+            { num: stats.avgFeedsStr ?? "—",              lbl: "Feeds",         color: T.teal },
             { num: String(stats.avgNightWakes ?? "—"),   lbl: "Avg Wakings/Night", color: isAlert ? "#C0543A" : T.teal },
             { num: String(stats.avgNapCount   ?? "—"),   lbl: "Naps/Day",      color: T.teal },
           ].map((s, i) => (
@@ -358,7 +359,7 @@ export default function SleepDataTab({ family, activeChild }) {
         )}
       </div>
       <div style={{ margin: "0 18px 10px", background: T.card, borderRadius: 18, padding: "14px 16px", boxShadow: T.shadow }}>
-        {(stats.sessions || []).slice(0, 7).map((s, i) => (
+        {(stats.sessions || []).slice(0, showAllSessions ? undefined : 7).map((s, i) => (
           <div key={s.id} style={{
             display: "flex", alignItems: "flex-start", gap: 10,
             padding: "11px 0",
@@ -379,8 +380,8 @@ export default function SleepDataTab({ family, activeChild }) {
             )}
           </div>
         ))}
-        <div style={{ textAlign: "center", paddingTop: 10, fontSize: 12, color: T.teal, cursor: "pointer", fontWeight: 500, fontFamily: font }}>
-          View all 30 days →
+        <div onClick={() => setShowAllSessions(v => !v)} style={{ textAlign: "center", paddingTop: 10, fontSize: 12, color: T.teal, cursor: "pointer", fontWeight: 500, fontFamily: font }}>
+          {showAllSessions ? "Show less ↑" : "View all 30 days →"}
         </div>
       </div>
     </div>

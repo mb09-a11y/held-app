@@ -216,7 +216,7 @@ export function logLabel(l) {
 // Used by both HeldHome and TodayView so they always show the same value.
 import { useState, useEffect } from "react";
 
-export function useNextSleep(familyId, childId, childDob) {
+export function useNextSleep(familyId, childId, childDob, timezone = null) {
   const [result, setResult] = useState({
     nextSleepStr: null,
     minsUntil: null,
@@ -228,6 +228,11 @@ export function useNextSleep(familyId, childId, childDob) {
   useEffect(() => {
     if (!familyId) return;
     const since = new Date(Date.now() - 14 * 86400000).toISOString();
+
+    // Timezone-aware helpers
+    const tzOpts = timezone ? { timeZone: timezone } : {};
+    const tzDateKey = ts => new Date(ts).toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit", ...tzOpts });
+    const tzHour    = ts => parseInt(new Date(ts).toLocaleString("en-US", { hour: "numeric", hour12: false, ...tzOpts }), 10);
 
     Promise.all([
       (() => {
@@ -241,6 +246,7 @@ export function useNextSleep(familyId, childId, childDob) {
       const allLogs = logs || [];
       const nowMs = Date.now();
       const FUTURE_TOL = 5 * 60 * 1000;
+      const todayKey = tzDateKey(nowMs);
 
       // Open session = currently sleeping
       const openSession = allLogs.find(l => l.type === "sleep_session" && !l.end_ts) || null;
@@ -252,13 +258,13 @@ export function useNextSleep(familyId, childId, childDob) {
         new Date(l.end_ts).getTime() <= nowMs + FUTURE_TOL
       ).sort((a, b) => new Date(b.end_ts) - new Date(a.end_ts));
 
-      // Nap count today
+      // Nap count today — evaluated in family timezone
       const napCount = allLogs.filter(l => {
         if (l.type !== "sleep_session") return false;
-        if (new Date(l.ts).toDateString() !== new Date().toDateString()) return false;
+        if (tzDateKey(l.ts) !== todayKey) return false;
         if (l.session_type === "night") return false;
         if (l.session_type === "nap") return true;
-        return new Date(l.ts).getHours() >= 6;
+        return tzHour(l.ts) >= 6;
       }).length;
 
       // Last wake reference
@@ -274,12 +280,12 @@ export function useNextSleep(familyId, childId, childDob) {
       const effectiveWindows = cfg?.recommended_wake_windows || ageWindows;
       const window_ = effectiveWindows[napCount] ?? effectiveWindows[effectiveWindows.length - 1];
 
-      // Suggested next sleep
+      // Suggested next sleep — formatted in family timezone
       const suggestedTs = lastWakeUp
         ? new Date(new Date(lastWakeUp.end_ts).getTime() + window_ * 3600000)
         : null;
       const nextSleepStr = suggestedTs
-        ? suggestedTs.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+        ? suggestedTs.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", ...tzOpts })
         : null;
       const minsUntil = suggestedTs
         ? Math.round((suggestedTs.getTime() - Date.now()) / 60000)
@@ -287,7 +293,7 @@ export function useNextSleep(familyId, childId, childDob) {
 
       setResult({ nextSleepStr, minsUntil, window_, isSleeping: !!openSession, openSession });
     });
-  }, [familyId, childId, childDob]);
+  }, [familyId, childId, childDob, timezone]);
 
   return result;
 }
