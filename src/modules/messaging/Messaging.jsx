@@ -342,7 +342,7 @@ function MessageBubble({ msg, isOwn, onPin, onSearch, signedUrls = {} }) {
 
         {/* Context menu */}
         {menuOpen && (
-          <div style={{ position: "absolute", [isOwn ? "right" : "left"]: 0, top: "100%", marginTop: 4, background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", zIndex: 10, minWidth: 160, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+          <div style={{ position: "absolute", [isOwn ? "right" : "left"]: 0, top: "100%", marginTop: 4, background: T.card, border: `1.5px solid ${T.border}`, borderRadius: 10, overflow: "hidden", zIndex: 10, minWidth: 160, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
             {[
               { label: "📌 Pin to case", action: () => { onPin(msg.id); setMenuOpen(false); } },
               { label: "📋 Add to plan note", action: () => { setMenuOpen(false); } },
@@ -430,7 +430,7 @@ function FilesTab({ messages, searchQuery, setSearchQuery, signedUrls = {} }) {
       <div style={{ position: "relative", marginBottom: 14 }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.4 }}>🔍</span>
         <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search files…"
-          style={{ width: "100%", background: T.faint, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+          style={{ width: "100%", background: T.faint, border: `1.5px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
       </div>
 
       {/* Tag filters */}
@@ -608,6 +608,10 @@ Use the child's name naturally. Know what method they're on and what day — don
       if (!ignore) {
         if (!error) setDbMessages((data || []).map(normalizeMsg));
         setLoading(false);
+        // Scroll to bottom after initial load
+        setTimeout(() => {
+          if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }, 150);
       }
     }
     load();
@@ -633,7 +637,14 @@ Use the child's name naturally. Know what method they're on and what day — don
   }, [activeFamily?.id, mode]);
 
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    // Fire immediately, then again at 100ms and 400ms to catch slow renders
+    const scroll = () => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    };
+    scroll();
+    const t1 = setTimeout(scroll, 100);
+    const t2 = setTimeout(scroll, 400);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [messages, aiTyping]);
 
   // ── Scroll up when iOS keyboard appears ──────────────────────────────────
@@ -922,7 +933,7 @@ Use the child's name naturally. Know what method they're on and what day — don
         @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
       `}</style>
 
-      <div style={{ color: T.text, display: "flex", flexDirection: "column", fontFamily: font }}>
+      <div style={{ color: T.text, display: "flex", flexDirection: "column", fontFamily: font, height: "100%", overflow: "hidden" }}>
 
         {/* HEADER */}
         <div style={{ padding: "24px 20px 0", flexShrink: 0 }}>
@@ -953,7 +964,7 @@ Use the child's name naturally. Know what method they're on and what day — don
                     }}
                     style={{
                       background: T.card,
-                      border: `1px solid ${T.border}`,
+                      border: `1.5px solid ${T.border}`,
                       borderRadius: 10,
                       padding: "8px 12px",
                       color: T.text,
@@ -1001,7 +1012,7 @@ Use the child's name naturally. Know what method they're on and what day — don
           {searchQuery !== null && mode !== "files" && (
             <div style={{ position: "relative", marginBottom: 12 }}>
               <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search messages…" autoFocus
-                style={{ width: "100%", background: T.faint, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
+                style={{ width: "100%", background: T.faint, border: `1.5px solid ${T.border}`, borderRadius: 10, padding: "10px 12px 10px 36px", color: T.text, fontFamily: font, fontSize: 13.5, outline: "none", boxSizing: "border-box" }} />
               <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", opacity: 0.4, fontSize: 14 }}>🔍</span>
             </div>
           )}
@@ -1080,6 +1091,7 @@ Use the child's name naturally. Know what method they're on and what day — don
               flex: 1,
               width: "100%",
               minWidth: 0,
+              minHeight: 0,
               marginTop: 14,
               padding: "0 20px 20px",
               overflowY: "auto"
@@ -1092,7 +1104,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             {!loading && mode === "messages" && (!activeFamily?.consultant_id) && (
               /* ── No consultant yet ── */
               <div style={{ padding: "24px 4px" }}>
-                <div style={{ borderRadius: 16, padding: "20px", background: T.card, border: `1px solid ${T.border}`, marginBottom: 14 }}>
+                <div style={{ borderRadius: 16, padding: "20px", background: T.card, border: `1.5px solid ${T.border}`, marginBottom: 14 }}>
                   <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText, marginBottom: 6 }}>
                     Not working with a consultant yet?
                   </div>
@@ -1150,10 +1162,10 @@ Use the child's name naturally. Know what method they're on and what day — don
             style={{
               width: "100%",
               minWidth: 0,
-              padding: "12px 20px calc(24px + env(safe-area-inset-bottom, 0px))",
+              padding: "12px 20px 0",
               flexShrink: 0,
               borderTop: `1px solid ${T.faint}`,
-              paddingBottom: "max(24px, calc(24px + env(safe-area-inset-bottom, 0px)))",
+              paddingBottom: "max(76px, calc(60px + env(safe-area-inset-bottom, 0px)))",
             }}
           >
             {/* AI limit reached — upgrade prompt */}
@@ -1199,7 +1211,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             >
               {/* Attach */}
               <button onClick={() => fileRef.current?.click()}
-                style={{ width: 40, height: 40, borderRadius: "50%", background: T.faint, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 16, flexShrink: 0 }}>
+                style={{ width: 40, height: 40, borderRadius: "50%", background: T.faint, border: `1.5px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, fontSize: 16, flexShrink: 0 }}>
                 📎
               </button>
               <input ref={fileRef} type="file" accept="image/*,application/pdf,video/*" onChange={handleFile} style={{ display: "none" }} />
@@ -1232,8 +1244,8 @@ Use the child's name naturally. Know what method they're on and what day — don
                   flex: 1,
                   width: "100%",
                   minWidth: 0,
-                  background: T.inputBg,
-                  border: `1px solid ${T.border}`,
+                  background: "#FFFFFF",
+                  border: `1.5px solid ${T.border}`,
                   borderRadius: 20,
                   padding: "10px 16px",
                   color: T.text,
@@ -1244,7 +1256,8 @@ Use the child's name naturally. Know what method they're on and what day — don
                   lineHeight: 1.5,
                   maxHeight: 120,
                   overflowY: "auto",
-                  opacity: !activeFamily && mode !== "ai" ? 0.6 : 1
+                  opacity: !activeFamily && mode !== "ai" ? 0.6 : 1,
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.08)"
                 }}
               />
 

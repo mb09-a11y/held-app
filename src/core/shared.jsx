@@ -55,7 +55,7 @@ const THEMES = {
     muted:        "rgba(58,46,40,0.45)",
     subText:      "rgba(58,46,40,0.32)",
     headingText:  "#2D4A35",          // forest green for headings
-    inputBg:      "rgba(255,255,255,0.95)",
+    inputBg:      "#FFFFFF",
     // Brand accents
     teal:         "#5C7A5E",          // moss green (primary accent)
     sage:         "#8A9E8B",          // sage

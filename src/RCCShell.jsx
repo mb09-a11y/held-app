@@ -1266,7 +1266,16 @@ export default function RCCShell() {
                 )}
                 {tab === "sleep"      && <SleepTabView onOpenDrawer={() => setDrawerOpen(true)} />}
                 {tab === "milestones" && <MilestonesModule onOpenDrawer={() => setDrawerOpen(true)} />}
-                {tab === "messages"   && <Messaging user={currentUser} activeFamily={activeFamily} onFindConsultant={() => setShowFindConsultant(true)} />}
+                {tab === "messages" && (
+                  <div style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    height: "calc(100vh - env(safe-area-inset-top, 0px))",
+                    overflow: "hidden",
+                  }}>
+                    <Messaging user={currentUser} activeFamily={activeFamily} onFindConsultant={() => setShowFindConsultant(true)} />
+                  </div>
+                )}
                 {tab === "insights"   && <HeldInsights setTab={setTab} onOpenDrawer={() => setDrawerOpen(true)} onScripts={goToScripts} />}
                 {tab === "library"    && <LibraryModule defaultTab={libraryDefaultTab} key={libraryKey} onOpenDrawer={() => setDrawerOpen(true)} />}
 
