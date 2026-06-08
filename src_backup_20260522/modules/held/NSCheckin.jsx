@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { callAI } from "../../lib/ai.js";
-import { getPrompt, getChildDevContext } from "../../lib/prompts.js";
+import { getPrompt } from "../../lib/prompts.js";
 import { supabase } from "../../lib/supabase.js";
 
 // ─── SESSION STORAGE KEY ─────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export function NSCheckin() {
     setError(null);
 
     const childName = activeChild?.name || "my child";
-    const totalMonths = (() => {
+    const childAge = (() => {
       if (!activeChild?.dob) return null;
       const birth = new Date(activeChild.dob);
       const now = new Date();
@@ -108,12 +108,9 @@ export function NSCheckin() {
       let mos = now.getMonth() - birth.getMonth();
       if (now.getDate() < birth.getDate()) mos--;
       if (mos < 0) { years--; mos += 12; }
-      return years * 12 + mos;
+      const totalMonths = years * 12 + mos;
+      return totalMonths < 24 ? `${totalMonths} month old` : `${years} year old`;
     })();
-    const childAge = totalMonths !== null
-      ? (totalMonths < 24 ? `${totalMonths} month old` : `${Math.floor(totalMonths / 12)} year old`)
-      : null;
-    const devContext = getChildDevContext(totalMonths);
 
     const userMessage = [
       childAge ? `I'm parenting a ${childAge}, ${childName}.` : `I'm parenting ${childName}.`,
@@ -122,7 +119,7 @@ export function NSCheckin() {
 
     try {
       const raw = await callAI({
-        system: getPrompt("ns_checkin") + (devContext ? `\n\n${devContext}` : ""),
+        system: getPrompt("ns_checkin"),
         max_tokens: 700,
         messages: [{ role: "user", content: userMessage }],
       });

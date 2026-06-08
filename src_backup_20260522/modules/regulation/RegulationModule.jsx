@@ -5,24 +5,51 @@ import { callAI } from "../../lib/ai.js";
 
 
 
-// ─── STATE + EXERCISE DATA (single source of truth) ──────────────────────────
-import { STATE_META, EXERCISES, STATE_EXERCISES, getExercisesForState, getPrimaryExercise } from "./regulationData.js";
+// ─── STATE COLORS ─────────────────────────────────────────────────────────────
+const STATE_META = {
+  Regulated:  { color:"#7BAA8A", icon:"🌿", label:"Regulated",   short:"Ventral",   bg:"rgba(123,170,138,0.14)" },
+  Fight:      { color:"#C07070", icon:"🔥", label:"Fight",        short:"Activated", bg:"rgba(192,112,112,0.14)" },
+  Flight:     { color:"#A89B5A", icon:"⚡", label:"Flight",       short:"Anxious",   bg:"rgba(168,155,90,0.14)"  },
+  Freeze:     { color:"#7B8FAA", icon:"❄️", label:"Freeze",       short:"Low Energy",bg:"rgba(123,143,170,0.14)" },
+  Shutdown:   { color:"#8A7BAA", icon:"🌑", label:"Shutdown",     short:"Dorsal",    bg:"rgba(138,123,170,0.14)" },
+};
+
+// ─── EXERCISE LIBRARY ─────────────────────────────────────────────────────────
+const EXERCISES = {
+  body_scan:          { id:"body_scan",          title:"Body Scan",          duration:"1 min 42 sec", durationSec:102, tag:"soothing",  desc:"A slow, gentle scan from head to toe to locate where you're holding tension — and let it soften.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770311704/bodyscan_cqugpk.m4a",           states:["Flight","Shutdown","Regulated"] },
+  butterfly_hug:      { id:"butterfly_hug",      title:"Butterfly Hug",      duration:"1 min 25 sec", durationSec:85,  tag:"soothing",  desc:"Cross your arms over your chest and tap alternating sides gently. Bilateral movement helps your nervous system settle.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770320497/butterfly_hug_lkdcqo.m4a",      states:["Fight","Flight"] },
+  drop_shoulders:     { id:"drop_shoulders",     title:"Drop the Shoulders", duration:"35 sec",       durationSec:35,  tag:"downshift", desc:"Exhale, roll your shoulders back and down. Unclench your jaw. Let your spine soften.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770320498/Drop_the_shoulders_khikvb.m4a", states:["Fight"] },
+  gentle_wake_up:     { id:"gentle_wake_up",     title:"Gentle Wake Up",     duration:"1 min 18 sec", durationSec:78,  tag:"upshift",   desc:"Soft movement and breath to gently activate without overwhelming a frozen system.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770319380/gentlewakeup_emkew6.m4a",      states:["Freeze","Flight"] },
+  gratitude:          { id:"gratitude",          title:"Gratitude Pause",    duration:"1 min 35 sec", durationSec:95,  tag:"orienting", desc:"Three slow breaths, then one small thing that felt okay today. Just one. That's enough.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770311704/gratitude_xoiksx.m4a",          states:["Regulated","Freeze"] },
+  held_visualization: { id:"held_visualization", title:"Held Visualization", duration:"1 min 30 sec", durationSec:90,  tag:"soothing",  desc:"A gentle guided visualization to help you feel held and safe. Good for moments when you need to feel less alone.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770312081/heldvisualization_syjyp8.m4a",  states:["Shutdown","Freeze","Flight"] },
+  humming:            { id:"humming",            title:"Humming",            duration:"1 min 20 sec", durationSec:80,  tag:"downshift", desc:"Humming activates the vagus nerve through vibration. Even a soft hum counts.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770319380/humming_tll9hs.m4a",            states:["Fight","Freeze"] },
+  orient:             { id:"orient",             title:"Orient",             duration:"1 min 21 sec", durationSec:81,  tag:"orienting", desc:"Slowly look around your space. Name what you see. Let your eyes land somewhere that feels neutral or soft.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770319380/orient_lhnf0c.m4a",             states:["Flight","Freeze","Shutdown","Regulated"] },
+  reset:              { id:"reset",              title:"Reset Breathing",    duration:"1 min",        durationSec:60,  tag:"downshift", desc:"Extended exhale breathing (4 in, 6 out). Longer exhales activate the parasympathetic brake.", audioUrl:"https://res.cloudinary.com/dosa5mjyg/video/upload/v1770320497/reset_l6bq1j.m4a",              states:["Fight","Flight","Shutdown"] },
+};
+
+const STATE_EXERCISES = {
+  Regulated: ["gratitude","body_scan","orient"],
+  Fight:     ["drop_shoulders","humming","butterfly_hug"],
+  Flight:    ["orient","gentle_wake_up","reset"],
+  Freeze:    ["gentle_wake_up","humming","held_visualization"],
+  Shutdown:  ["orient","held_visualization","reset"],
+};
 
 // ─── VALIDATION MESSAGES (RCC voice) ──────────────────────────────────────────
 const VALIDATION = {
   Regulated:  "You showed up. That matters more than you know.",
-  Fight:      "Your body is working hard right now. This is your body protecting you",
+  Fight:      "Your body is working hard right now. That's not a flaw — it's protection.",
   Flight:     "The buzzy, overwhelmed feeling is real. Your nervous system is trying to stay safe.",
   Freeze:     "The heaviness you're carrying makes sense. You don't have to push through it.",
   Shutdown:   "When we feel flat or disconnected, it's often because we've been carrying a lot for a long time. You're not broken.",
 };
 
 const STATE_DESCRIPTION = {
-  Regulated:  "A regulated nervous system means you have some capacity right now. Lean into that",
+  Regulated:  "A regulated nervous system doesn't mean life is easy — it means you have some capacity right now. That's worth honoring.",
   Fight:      "You may notice tension in your body, a shorter fuse, or the urge to push back. This can happen when we feel unsupported or overwhelmed by demands.",
   Flight:     "You may feel restless, scattered, or like your mind won't slow down. This is your system scanning for safety — it's working overtime.",
   Freeze:     "A freeze response can feel like exhaustion, heaviness, or difficulty starting things. Your nervous system is conserving energy because something has felt like too much.",
-  Shutdown:   "Shutdown can look like numbness, flatness, or feeling disconnected from yourself or others. It's a deep protective response.",
+  Shutdown:   "Shutdown can look like numbness, flatness, or feeling disconnected from yourself or others. It's a deep protective response — not apathy.",
 };
 
 // ─── STORAGE HELPERS ──────────────────────────────────────────────────────────
@@ -509,7 +536,7 @@ function ResultScreen({ result, onExercise, onHome, onBack }) {
 }
 
 // ─── EXERCISE SCREEN ──────────────────────────────────────────────────────────
-export function ExerciseScreen({ exerciseId, preState, onComplete, onBack, onLogSession }) {
+function ExerciseScreen({ exerciseId, preState, onComplete, onBack, onLogSession }) {
   const T = useT();
   const ex = EXERCISES[exerciseId];
   const audioRef = useRef(null);

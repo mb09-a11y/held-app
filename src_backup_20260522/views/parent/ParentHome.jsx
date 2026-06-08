@@ -3,7 +3,7 @@ import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { FamilyStateCache, RegCheckinsCache, CheckinHistoryCache } from "../../lib/heldCache.js";
 import { callAI } from "../../lib/ai.js";
-import { getPrompt, getChildDevContext } from "../../lib/prompts.js";
+import { getPrompt } from "../../lib/prompts.js";
 import { getPractice, getNoticedStatement } from "../../lib/practices.js";
 import { getCurrentWonderWeeksLeap, getMilestonesForAge } from "../../modules/milestones/data/milestones.js";
 import { HamburgerButton, ChildPill } from "../shared/AppDrawer.jsx";
@@ -303,11 +303,10 @@ function useAIInsight(familyState, isPremium) {
     if (cached?.insight) { setInsight(cached.insight); setLoading(false); return; }
 
     const { sleepData, parentState, childProfile } = familyState;
-    const devContext = getChildDevContext(getChildAgeMonths(childProfile.dob));
 
     callAI({
       max_tokens: 600,
-      system: getPrompt("sleep_insight") + (devContext ? `\n\n${devContext}` : ""),
+      system: getPrompt("sleep_insight"),
       messages: [{
         role: "user",
         content: `Child: ${childProfile.name || "baby"}, ${childProfile.age || "young"}.
@@ -747,12 +746,11 @@ export function HeldCheckin({ familyState, patterns, saveCheckin }) {
 
     const childAge  = getChildAge(activeChild);
     const childName = activeChild?.name || "my baby";
-    const devContext = getChildDevContext(getChildAgeMonths(activeChild?.dob));
     const userMsg   = [childAge ? `I'm parenting a ${childAge}, ${childName}.` : `I'm parenting ${childName}.`, trimmed].join(" ");
     const histCtx   = buildHistoryContext(patterns);
 
     try {
-      const raw    = await callAI({ system: getPrompt("ns_checkin") + (devContext ? `\n\n${devContext}` : ""), model: "claude-haiku-4-5-20251001", max_tokens: 700, messages: [{ role: "user", content: `${userMsg}${histCtx ? "\n\n" + histCtx : ""}` }] });
+      const raw    = await callAI({ system: getPrompt("ns_checkin"), model: "claude-haiku-4-5-20251001", max_tokens: 700, messages: [{ role: "user", content: `${userMsg}${histCtx ? "\n\n" + histCtx : ""}` }] });
       const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
       persistResponse(parsed);
       saveCheckin?.(trimmed, "freeform", parsed.validation?.slice(0, 200)).catch(() => {});
@@ -768,7 +766,6 @@ export function HeldCheckin({ familyState, patterns, saveCheckin }) {
 
     const childAge  = getChildAge(activeChild);
     const childName = activeChild?.name || "your baby";
-    const devContext = getChildDevContext(getChildAgeMonths(activeChild?.dob));
     const sitLabel  = SITUATION_LABELS[situation] || situation;
     const feelLabel = FEELING_LABELS[feeling]     || "checking in";
     const sleepCtx  = buildSleepContext(familyState);
@@ -779,7 +776,7 @@ export function HeldCheckin({ familyState, patterns, saveCheckin }) {
 
     try {
       const raw    = await callAI({
-        system: getPrompt(situation === "just_understand" ? "sleep_checkin_insight" : "sleep_checkin") + (devContext ? `\n\n${devContext}` : ""),
+        system: getPrompt(situation === "just_understand" ? "sleep_checkin_insight" : "sleep_checkin"),
         max_tokens: 700,
         messages: [{ role: "user", content: `My ${childAge || "baby"}, ${childName}: ${sitLabel}. I'm feeling ${feelLabel}. ${dataNote}${histCtx ? " " + histCtx : ""}` }],
       });
@@ -1089,16 +1086,6 @@ function getChildAge(activeChild) {
   return total < 24 ? `${total} month old` : `${years} year old`;
 }
 
-function getChildAgeMonths(dob) {
-  if (!dob) return null;
-  const birth = new Date(dob), now = new Date();
-  let years = now.getFullYear() - birth.getFullYear();
-  let mos   = now.getMonth() - birth.getMonth();
-  if (now.getDate() < birth.getDate()) mos--;
-  if (mos < 0) { years--; mos += 12; }
-  return years * 12 + mos;
-}
-
 function buildSleepContext(familyState) {
   if (!familyState) return "";
   const { sleepData, parentState } = familyState;
@@ -1284,7 +1271,7 @@ export function ParentHome({ user, onLogout, onInviteCo, onAddChild, onOpenDrawe
     <div style={{ paddingBottom: 100 }}>
       {showUpgrade && <UpgradeModal onClose={() => setShowUpgrade(false)} T={T} currentUser={currentUser} />}
       {showSOS && <SOSFlow onClose={() => setShowSOS(false)} setTab={setTab} />}
-      {showNS && <NSCheckinFlow onClose={() => setShowNS(false)} onCheckinSaved={refreshFamilyState} sleepSessionId={openSession?.id ?? null} />}
+      {showNS  && <NSCheckinFlow onClose={() => setShowNS(false)} onCheckinSaved={refreshFamilyState} />}
 
       {/* ── SOS FLOATING BUTTON ── */}
       <button onClick={() => setShowSOS(true)} style={{
