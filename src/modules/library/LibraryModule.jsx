@@ -154,6 +154,22 @@ const SCRIPTS = [
     ],
   },
   {
+    id: "reset",
+    emoji: "🌬️",
+    label: "I need a moment to reset",
+    grounding: "I can't pour from empty. Pausing is parenting.",
+    say: [
+      "\"I need a moment to collect myself so I can show up the way I want to.\"",
+      "\"I'm feeling big feelings right now. Let me breathe first.\"",
+      "\"I love you. I need one minute.\"",
+    ],
+    do: [
+      "Step away briefly if safe to do so",
+      "Three slow breaths before re-entering",
+      "Return with presence, not performance",
+    ],
+  },
+  {
     id: "repair",
     emoji: "🔁",
     label: "After a hard moment (repair)",
@@ -162,6 +178,9 @@ const SCRIPTS = [
       "\"That was a hard moment. I'm still with you.\"",
       "\"I didn't like how I handled that. I'm working on it.\"",
       "\"We're okay.\"",
+      "\"I raised my voice and I'm sorry. You didn't deserve that.\"",
+      "\"We had a hard moment. We're still okay. We always come back to each other.\"",
+      "\"I'm learning too. I'm going to keep trying.\"",
     ],
     do: [
       "Gentle touch (if welcomed)",
@@ -291,7 +310,7 @@ const SCRIPTS = [
 ];
 
 // ─── SCRIPTS TAB ──────────────────────────────────────────────────────────────
-function ScriptsTab() {
+export function ScriptsTab() {
   const T = useT();
   const [open, setOpen] = useState(null);
 

@@ -120,6 +120,230 @@ function useNSCheckinCount(userId) {
   return count;
 }
 
+// ─── FOREST STAGE HELPERS ─────────────────────────────────────────────────────
+const SUPABASE_FOREST_BASE = "https://fzokhiqiulflvgkbzqel.supabase.co/storage/v1/object/public/forest-stages";
+
+function getForestStage(totalCheckins) {
+  const count = totalCheckins ?? 0;
+  return Math.min(Math.floor(count / 10) + 1, 16);
+}
+
+function getForestProgress(totalCheckins) {
+  const count = totalCheckins ?? 0;
+  return (count % 10) / 10; // 0.0–1.0 within current stage
+}
+
+function getForestImageUrl(stage, orientation = "landscape") {
+  const padded = String(stage).padStart(2, "0");
+  return `${SUPABASE_FOREST_BASE}/${orientation}/stage-${padded}.png`;
+}
+
+// ─── FOREST JOURNEY MODAL ─────────────────────────────────────────────────────
+function ForestJourneyModal({ stage, totalCheckins, onClose, onCheckin, T }) {
+  const progress = getForestProgress(totalCheckins);
+  const checkinIntoStage = (totalCheckins ?? 0) % 10;
+  const portraitUrl = getForestImageUrl(stage, "portrait");
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 200,
+      background: "#0a1608",
+      display: "flex", flexDirection: "column",
+      overflowY: "auto",
+    }}>
+      {/* Portrait image */}
+      <div style={{ position: "relative", width: "100%", flex: 1 }}>
+        <img
+          src={portraitUrl}
+          alt={`Forest stage ${stage}`}
+          style={{
+            width: "100%",
+            display: "block",
+            objectFit: "cover",
+            minHeight: "60vh",
+          }}
+        />
+
+        {/* Top gradient + close */}
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0,
+          background: "linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, transparent 40%)",
+          padding: "16px 18px",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <div style={{
+            fontFamily: font, fontSize: 9, letterSpacing: ".14em",
+            textTransform: "uppercase", color: "rgba(255,255,255,0.65)",
+          }}>
+            Your forest journey
+          </div>
+          <button onClick={onClose} style={{
+            background: "rgba(0,0,0,0.35)", border: "1px solid rgba(255,255,255,0.2)",
+            borderRadius: "50%", width: 32, height: 32,
+            color: "rgba(255,255,255,0.8)", fontSize: 16,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+          }}>×</button>
+        </div>
+
+        {/* Bottom gradient + stage info */}
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          background: "linear-gradient(to top, rgba(10,22,8,0.95) 0%, rgba(10,22,8,0.6) 60%, transparent 100%)",
+          padding: "32px 22px 24px",
+        }}>
+          {/* Stage pill */}
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 5,
+            background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.18)",
+            borderRadius: 20, padding: "3px 10px", marginBottom: 10,
+          }}>
+            <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#9acd60" }} />
+            <span style={{ fontFamily: font, fontSize: 9, color: "rgba(255,255,255,0.65)", letterSpacing: ".08em" }}>
+              STAGE {stage} OF 16
+            </span>
+          </div>
+
+          {/* Progress line */}
+          <div style={{ fontFamily: font, fontSize: 13, color: "rgba(255,255,255,0.5)", marginBottom: 14 }}>
+            {checkinIntoStage} of 10 check-ins to next stage
+          </div>
+
+          {/* Vine progress bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+            <div style={{
+              flex: 1, height: 4,
+              background: "rgba(255,255,255,0.12)", borderRadius: 4, overflow: "hidden",
+            }}>
+              <div style={{
+                height: "100%",
+                width: `${Math.round(progress * 100)}%`,
+                background: "linear-gradient(to right, #4a7828, #8ac848)",
+                borderRadius: 4,
+                transition: "width 0.6s ease",
+              }} />
+            </div>
+            <span style={{ fontSize: 13 }}>🌿</span>
+            <span style={{ fontFamily: font, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              {totalCheckins ?? 0} leaves
+            </span>
+          </div>
+
+          {/* CTA */}
+          <button onClick={() => { onClose(); onCheckin(); }} style={{
+            width: "100%", padding: "15px",
+            borderRadius: 14, border: "none",
+            background: "linear-gradient(135deg, #2e5a18, #4a8828)",
+            color: "#fff", fontFamily: font, fontSize: 14,
+            fontWeight: 600, cursor: "pointer",
+            boxShadow: "0 4px 20px rgba(74,136,40,0.35)",
+          }}>
+            Check in to grow your forest →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── FOREST BANNER ────────────────────────────────────────────────────────────
+function ForestBanner({ stage, totalCheckins, invitation, onTap, T }) {
+  const progress = getForestProgress(totalCheckins);
+  const landscapeUrl = getForestImageUrl(stage, "landscape");
+  const checkinIntoStage = (totalCheckins ?? 0) % 10;
+
+  return (
+    <div
+      onClick={onTap}
+      style={{
+        position: "relative", width: "100%",
+        overflow: "hidden",
+        marginBottom: 0, cursor: "pointer",
+      }}
+    >
+      {/* Landscape image */}
+      <img
+        src={landscapeUrl}
+        alt={`Forest stage ${stage}`}
+        style={{
+          width: "100%", height: 200,
+          objectFit: "cover", objectPosition: "center 30%",
+          display: "block",
+        }}
+      />
+
+      {/* Full gradient overlay */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: "linear-gradient(to bottom, rgba(8,14,6,0.72) 0%, rgba(8,14,6,0.15) 42%, rgba(8,14,6,0.0) 55%, rgba(8,14,6,0.78) 78%, rgba(8,14,6,0.94) 100%)",
+        pointerEvents: "none",
+      }} />
+
+      {/* TOP — invitation copy */}
+      <div style={{
+        position: "absolute", top: 13, left: 16, right: 16,
+        textAlign: "center", pointerEvents: "none",
+      }}>
+        <div style={{
+          fontFamily: font, fontSize: 9, letterSpacing: ".14em",
+          textTransform: "uppercase", color: "rgba(255,255,255,0.55)",
+          marginBottom: 6,
+        }}>
+          Today's Invitation
+        </div>
+        <div style={{
+          fontFamily: serif, fontStyle: "italic", fontSize: 14,
+          color: "rgba(255,255,255,0.92)", lineHeight: 1.45,
+        }}>
+          "{invitation}"
+        </div>
+      </div>
+
+      {/* Stage pill — top right */}
+      <div style={{
+        position: "absolute", top: 13, right: 14,
+        display: "inline-flex", alignItems: "center", gap: 4,
+        background: "rgba(0,0,0,0.32)", border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: 20, padding: "3px 9px",
+      }}>
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#9acd60" }} />
+        <span style={{ fontFamily: font, fontSize: 8.5, color: "rgba(255,255,255,0.6)", letterSpacing: ".06em" }}>
+          {stage}/16
+        </span>
+      </div>
+
+      {/* BOTTOM — CTA + vine bar */}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "0 15px 13px" }}>
+        <div style={{
+          fontFamily: font, fontSize: 10, letterSpacing: ".1em",
+          textTransform: "uppercase", color: "rgba(255,255,255,0.6)",
+          marginBottom: 7, textAlign: "center",
+        }}>
+          Tap to explore your journey
+        </div>
+
+        {/* Vine progress bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{
+            flex: 1, height: 4,
+            background: "rgba(255,255,255,0.12)", borderRadius: 4, overflow: "hidden",
+          }}>
+            <div style={{
+              height: "100%",
+              width: `${Math.round(progress * 100)}%`,
+              background: "linear-gradient(to right, #4a7828, #8ac848)",
+              borderRadius: 4,
+            }} />
+          </div>
+          <span style={{ fontSize: 12 }}>🌿</span>
+          <span style={{ fontFamily: font, fontSize: 9.5, color: "rgba(255,255,255,0.45)" }}>
+            {checkinIntoStage}/10
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── STREAK MESSAGES per tier ─────────────────────────────────────────────────
 const STREAK_MESSAGES = {
   zero:  ["Log your first check-in to start your streak."],
@@ -344,6 +568,11 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
   const recentRegCheckins = useRecentRegulationCheckins(currentUser?.id, checkinRefreshKey);
   const nsCheckinCount = useNSCheckinCount(currentUser?.id);
   const { currentStreak, milestonesEver } = useCheckinStreak(currentUser?.id);
+
+  // ── Forest stage ──
+  const [showJourney, setShowJourney] = useState(false);
+  const forestStage = getForestStage(nsCheckinCount);
+  const forestProgress = getForestProgress(nsCheckinCount);
   const { nextSleepStr, minsUntil: minsUntilSleep, isSleeping } = useNextSleep(
     activeFamily?.id, activeChild?.id, activeChild?.dob
   );
@@ -529,96 +758,170 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
         </div>
       </div>
 
-      <div style={{ padding: "0 18px" }}>
-
-        {/* ── GREETING ── */}
-        <div style={{ marginBottom: 18 }}>
-          <div style={{
-            fontFamily: serif, fontSize: 28, color: T.headingText,
-            lineHeight: 1.2, marginBottom: 4,
-          }}>
-            {greeting}
-          </div>
-        </div>
-
-        {/* ── TODAY'S INVITATION — always present ── */}
+      {/* ── GREETING ── */}
+      <div style={{ padding: "0 18px", marginBottom: 14 }}>
         <div style={{
-          borderRadius: 18, padding: "18px 20px 16px 24px", marginBottom: 14,
-          background: T.card,
-          borderLeft: `4px solid ${T.warm}`,
-          position: "relative", overflow: "hidden",
+          fontFamily: serif, fontSize: 28, color: T.headingText,
+          lineHeight: 1.2,
         }}>
-          <div style={{
-            fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase",
-            color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 10,
-          }}>
-            Today's Invitation
-          </div>
-          <div style={{
-            fontFamily: serif, fontSize: 18, fontStyle: "italic",
-            color: T.headingText, lineHeight: 1.55, marginBottom: 12,
-          }}>
-            "{invitation}"
-          </div>
-
-          {/* Before check-in: show morning/evening button */}
-          {!doneMorningToday && !doneEveningToday && (showMorning || showEvening) && (
-            <button
-              onClick={showMorning ? onMorningMoment : onEveningClose}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                background: "none", border: `1px solid ${T.teal}40`,
-                borderRadius: 20, padding: "6px 14px",
-                fontFamily: font, fontSize: 12.5, color: T.teal,
-                fontWeight: 600, cursor: "pointer", marginBottom: 12,
-              }}
-            >
-              {showMorning ? "☀️ Morning moment →" : "🌙 Evening close →"}
-            </button>
-          )}
-
-          {/* After check-in: unlock 1-Minute Reset + Say This Instead */}
-          {(doneMorningToday || doneEveningToday) && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{
-                padding: "10px 14px", borderRadius: 10,
-                background: `${T.teal}0d`, border: `1px solid ${T.teal}20`,
-                marginBottom: 8,
-              }}>
-                <div style={{
-                  fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                  color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 5,
-                }}>
-                  1-Minute Reset
-                </div>
-                <p style={{ fontFamily: font, fontSize: 13, color: T.text, lineHeight: 1.65, margin: 0 }}>
-                  {todayPrompt.reset}
-                </p>
-              </div>
-              <div style={{
-                padding: "10px 14px", borderRadius: 10,
-                background: "#A87B8A0d", border: "1px solid #A87B8A20",
-              }}>
-                <div style={{
-                  fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                  color: "#A87B8A", fontFamily: font, fontWeight: 700, marginBottom: 5,
-                }}>
-                  Say This Instead
-                </div>
-                <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: T.headingText, lineHeight: 1.6, margin: 0 }}>
-                  {todayPrompt.script}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div style={{ height: 1, background: T.border, margin: "4px 0 12px" }} />
-          <HeldCheckinInline
-            familyState={familyState}
-            patterns={patterns}
-            saveCheckin={saveCheckin}
-          />
+          {greeting}
         </div>
+      </div>
+
+      {/* ── FOREST BANNER — full bleed ── */}
+      <ForestBanner
+        stage={forestStage}
+        totalCheckins={nsCheckinCount}
+        invitation={invitation}
+        onTap={() => setShowJourney(true)}
+        T={T}
+      />
+
+      {/* ── FOREST JOURNEY MODAL ── */}
+      {showJourney && (
+        <ForestJourneyModal
+          stage={forestStage}
+          totalCheckins={nsCheckinCount}
+          onClose={() => setShowJourney(false)}
+          onCheckin={() => { setShowJourney(false); onNSCheckin(); }}
+          T={T}
+        />
+      )}
+
+      <div style={{ padding: "14px 18px 0" }}>
+
+        {/* ── JAR + STREAK ROW ── */}
+        {(() => {
+          const streak = currentStreak;
+          const streakMsg = getStreakMessage(streak);
+          const leaves = nsCheckinCount ?? 0;
+
+          // Last 7 days dot calendar
+          const todayStr = new Date().toDateString();
+          const last7 = Array.from({ length: 7 }).map((_, i) => {
+            const d = new Date(Date.now() - (6 - i) * 86400000);
+            const label = d.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
+            const dateStr = d.toDateString();
+            const filled = recentRegCheckins.some(c =>
+              new Date(c.checked_in_at).toDateString() === dateStr
+            );
+            const isToday = dateStr === todayStr;
+            return { label, filled, isToday };
+          });
+
+          // Milestone badge
+          const milestoneBadge = milestonesEver?.[30] ? "30-day milestone ✦"
+            : milestonesEver?.[20] ? "20-day milestone ✦"
+            : milestonesEver?.[10] ? "10-day milestone ✦"
+            : null;
+
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "5fr 7fr", gap: 10, marginBottom: 12 }}>
+
+              {/* ── JAR CARD (left) ── */}
+              <div style={{
+                background: T.bg, borderRadius: 16,
+                border: `1px solid ${T.border}`,
+                padding: "6px 4px 6px",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", gap: 3,
+              }}>
+                <div style={{
+                  width: "80%", maxWidth: 80,
+                  backgroundColor: T.bg,
+                  borderRadius: 8,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  <img
+                    src={leaves > 0 ? "/tree/jar-open.png" : "/tree/jar-empty.png"}
+                    alt="leaf jar"
+                    style={{
+                      width: "100%",
+                      objectFit: "contain",
+                      display: "block",
+                      filter: leaves > 0 ? "drop-shadow(0 0 6px rgba(92,122,94,0.35))" : "none",
+                    }}
+                  />
+                </div>
+                <span style={{
+                  fontFamily: serif, fontSize: 10,
+                  color: "#5C7A5E", letterSpacing: ".05em",
+                }}>
+                  {leaves === 1 ? "1 leaf" : `${leaves} leaves`}
+                </span>
+              </div>
+
+              {/* ── STREAK CARD (right) ── */}
+              <div style={{
+                background: T.card, borderRadius: 16,
+                border: `1px solid ${T.border}`,
+                borderLeft: "3px solid #5C7A5E",
+                padding: "8px 10px",
+                display: "flex", flexDirection: "column", gap: 5,
+              }}>
+                {/* Streak number + message */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{
+                    display: "flex", flexDirection: "column", alignItems: "center",
+                    background: "#5C7A5E14", borderRadius: 8,
+                    padding: "5px 8px", flexShrink: 0,
+                    minWidth: 38,
+                  }}>
+                    <span style={{ fontSize: 17, fontWeight: 600, color: "#5C7A5E", lineHeight: 1, fontFamily: serif }}>
+                      {streak}
+                    </span>
+                    <span style={{ fontSize: 8, color: "#5C7A5E", letterSpacing: ".05em", marginTop: 1, fontFamily: font }}>
+                      {streak === 1 ? "day" : "days"}
+                    </span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {milestoneBadge && (
+                      <div style={{
+                        fontSize: 7.5, letterSpacing: ".08em", textTransform: "uppercase",
+                        color: "#B8924A", fontFamily: font, fontWeight: 600, marginBottom: 2,
+                      }}>
+                        {milestoneBadge}
+                      </div>
+                    )}
+                    <p style={{ fontFamily: font, fontSize: 10.5, color: T.text, lineHeight: 1.4, margin: 0 }}>
+                      {streakMsg}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 7-day dot calendar */}
+                <div style={{ display: "flex", gap: 2, justifyContent: "space-between" }}>
+                  {last7.map((day, i) => (
+                    <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                      <div style={{
+                        width: 17, height: 17, borderRadius: "50%",
+                        background: day.filled ? "#5C7A5E" : T.faint,
+                        border: day.isToday && !day.filled ? `2px dashed #5C7A5E60` : "none",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        transition: "background 0.3s",
+                      }}>
+                        {day.filled && (
+                          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "white" }} />
+                        )}
+                      </div>
+                      <span style={{ fontSize: 7.5, color: T.muted, fontFamily: font }}>{day.label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* CTA */}
+                <button onClick={onNSCheckin} style={{
+                  background: "none", border: "none", padding: 0,
+                  fontFamily: font, fontSize: 10.5, color: "#5C7A5E",
+                  fontWeight: 600, cursor: "pointer", textAlign: "left",
+                }}>
+                  {streak === 0 ? "Start your streak →" : "Check in now →"}
+                </button>
+              </div>
+
+            </div>
+          );
+        })()}
 
         {/* ── SCENARIO CARD — additive layer, only when condition is met ── */}
         {scenario && (
@@ -862,27 +1165,112 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           );
         })()}
 
-        {/* ── SOS BUTTON ── */}
-        <button onClick={onSOS} style={{
-          width: "100%", marginBottom: 14,
-          padding: "16px 18px",
-          borderRadius: 16, border: "none",
-          background: `linear-gradient(135deg, ${T.warm}, ${T.gold})`,
-          display: "flex", alignItems: "center", gap: 14,
-          cursor: "pointer", textAlign: "left",
-          boxShadow: `0 4px 16px ${T.warm}70`,
-        }}>
-          <span style={{ fontSize: 22, flexShrink: 0 }}>⚡</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: "#fff" }}>
-              I Need Help Right Now
+        {/* ── PATTERN I'M NOTICING ── */}
+        {(() => {
+          const sessions = familyState?.sleepData?.weekSessions || [];
+          const napSessions = sessions.filter(s => s.session_type !== "night" && s.end_ts);
+          const napTimes = napSessions.map(s => new Date(s.ts).getHours() * 60 + new Date(s.ts).getMinutes());
+          const avgNapStart = napTimes.length > 0 ? napTimes.reduce((a, b) => a + b, 0) / napTimes.length : null;
+          const napTimeStr = avgNapStart !== null
+            ? (() => { const h = Math.floor(avgNapStart / 60); const m = Math.round(avgNapStart % 60); return `${h}:${m.toString().padStart(2, "0")}${h >= 12 ? "pm" : "am"}`; })()
+            : null;
+          const steadyDominant = ["Regulated"].includes(familyState?.parentState?.nervousSystemTrend);
+          const patternText = napTimeStr && steadyDominant
+            ? `"You tend to feel steadier on days when ${childName}'s first nap lands before ${napTimeStr}. Want to see why?"`
+            : `"${childName}'s nap timing and your regulation patterns are connected. The data is starting to show it."`;
+          return (
+            <div style={{
+              borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+              background: T.card, border: `1px solid ${T.border}`,
+              borderLeft: `3px solid ${T.warm}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                <span style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>🔍</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                    color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 6,
+                  }}>
+                    Pattern I'm Noticing
+                  </div>
+                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, marginBottom: 8 }}>
+                    {patternText}
+                  </p>
+                  <button onClick={() => setTab("insights")} style={{
+                    background: "none", border: "none", padding: 0,
+                    fontFamily: font, fontSize: 12.5, color: T.warm,
+                    fontWeight: 600, cursor: "pointer",
+                  }}>
+                    See the full pattern →
+                  </button>
+                </div>
+              </div>
             </div>
-            <div style={{ fontFamily: font, fontSize: 12, color: "rgba(255,255,255,0.75)", marginTop: 2 }}>
-              Tap for immediate support
+          );
+        })()}
+
+        {/* ── MILESTONES PROGRESS ── */}
+        {upcomingMilestones.length > 0 && (() => {
+          const months = activeChild?.dob
+            ? Math.floor((Date.now() - new Date(activeChild.dob)) / (1000 * 60 * 60 * 24 * 30.44))
+            : null;
+          const domainColors = {
+            gross_motor: "#7B9EA8", fine_motor: "#A8907B", language: "#8A7BAA",
+            social: "#A87B8A", cognitive: "#7BAA8A", sensory_ns: "#AA9B7B",
+          };
+          const domainEmojis = {
+            gross_motor: "🏃", fine_motor: "✋", language: "💬",
+            social: "❤️", cognitive: "🧠", sensory_ns: "🌿",
+          };
+          return (
+            <div
+              onClick={() => setTab("milestones")}
+              style={{
+                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+                background: T.card, border: `1px solid ${T.border}`,
+                borderLeft: `3px solid #7BAA8A`,
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{
+                  fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                  color: "#7BAA8A", fontFamily: font, fontWeight: 700,
+                }}>
+                  🌱 Milestones — {childName}
+                </div>
+                {months !== null && (
+                  <div style={{ fontSize: 10, color: T.muted, fontFamily: font }}>{months}mo</div>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {upcomingMilestones.map(m => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+                      background: `${domainColors[m.domain] || "#7BAA8A"}22`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 14,
+                    }}>
+                      {domainEmojis[m.domain] || "🌱"}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: font, fontSize: 12.5, color: T.text, fontWeight: 600, marginBottom: 2 }}>
+                        {m.title}
+                      </div>
+                      <div style={{ fontFamily: font, fontSize: 11, color: T.muted, lineHeight: 1.4 }}>
+                        {m.description?.slice(0, 72)}{m.description?.length > 72 ? "…" : ""}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, fontFamily: font, fontSize: 11.5, color: "#7BAA8A", fontWeight: 600 }}>
+                See full tracker →
+              </div>
             </div>
-          </div>
-          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 18 }}>›</span>
-        </button>
+          );
+        })()}
 
         {/* ── WONDER WEEKS / STATE SHIFT ── */}
         {leap && (
@@ -964,198 +1352,6 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           );
         })()}
 
-        {/* ── PATTERN I'M NOTICING — real sleep + checkin correlation ── */}
-        {(() => {
-          const sessions = familyState?.sleepData?.weekSessions || [];
-          const checkins = recentRegCheckins;
-          if (sessions.length < 3 || checkins.length < 3) return null;
-
-          // Find days where first nap was early vs late, compare parent state
-          const napSessions = sessions.filter(s => s.session_type !== "night" && s.end_ts);
-          if (napSessions.length < 3) return null;
-
-          // Get earliest nap start time
-          const napTimes = napSessions.map(s => new Date(s.ts).getHours() * 60 + new Date(s.ts).getMinutes());
-          const avgNapStart = napTimes.reduce((a, b) => a + b, 0) / napTimes.length;
-          const earlyNapHr = Math.floor(avgNapStart / 60);
-          const earlyNapMin = Math.round(avgNapStart % 60);
-          const napTimeStr = `${earlyNapHr}:${earlyNapMin.toString().padStart(2, "0")}${earlyNapHr >= 12 ? "pm" : "am"}`.replace("am","am").replace("12:","12:");
-
-          // Check if parent tends to be steadier on days with early naps
-          const steadyDominant = ["Regulated"].includes(familyState?.parentState?.nervousSystemTrend);
-
-          return (
-            <div style={{
-              borderRadius: 16, padding: "14px 16px", marginBottom: 10,
-              background: T.card, border: `1px solid ${T.border}`,
-              borderLeft: `3px solid ${T.warm}`,
-            }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                <span style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>🔍</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
-                    color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 6,
-                  }}>
-                    Pattern I'm Noticing
-                  </div>
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, marginBottom: 8 }}>
-                    {steadyDominant
-                      ? `"You tend to feel steadier on days when ${childName}'s first nap lands before ${napTimeStr}. Want to see why?"`
-                      : `"${childName}'s nap timing and your regulation patterns are connected. The data is starting to show it."`
-                    }
-                  </p>
-                  <button onClick={() => setTab("insights")} style={{
-                    background: "none", border: "none", padding: 0,
-                    fontFamily: font, fontSize: 12.5, color: T.warm,
-                    fontWeight: 600, cursor: "pointer",
-                  }}>
-                    See the full pattern →
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ── HELD IS THINKING ABOUT YOU ── */}
-        <div style={{
-          fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase",
-          color: T.subText, fontFamily: font, marginBottom: 10,
-        }}>
-          Held is thinking about you
-        </div>
-
-        {/* Card 1: NS check-in streak — consecutive days */}
-        {(() => {
-          const streak = currentStreak;
-          const streakMsg = getStreakMessage(streak);
-
-          // Last 7 days dot calendar
-          const todayStr = new Date().toDateString();
-          const last7 = Array.from({ length: 7 }).map((_, i) => {
-            const d = new Date(Date.now() - (6 - i) * 86400000);
-            const label = d.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
-            const dateStr = d.toDateString();
-            const filled = recentRegCheckins.some(c =>
-              new Date(c.checked_in_at).toDateString() === dateStr
-            );
-            const isToday = dateStr === todayStr;
-            return { label, filled, isToday };
-          });
-
-          // Milestone badge — show the highest unlocked one
-          const milestoneBadge = milestonesEver?.[30] ? "30-day milestone ✦"
-            : milestonesEver?.[20] ? "20-day milestone ✦"
-            : milestonesEver?.[10] ? "10-day milestone ✦"
-            : null;
-
-          return (
-            <div style={{
-              borderRadius: 16, padding: "16px 18px", marginBottom: 10,
-              background: T.card, border: `1px solid ${T.border}`,
-              borderLeft: "3px solid #5C7A5E",
-            }}>
-              {/* Streak number + message */}
-              <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
-                <div style={{
-                  display: "flex", flexDirection: "column", alignItems: "center",
-                  background: "#5C7A5E14", borderRadius: 12, padding: "10px 14px", flexShrink: 0,
-                }}>
-                  <span style={{ fontSize: 28, fontWeight: 600, color: "#5C7A5E", lineHeight: 1, fontFamily: serif }}>
-                    {streak}
-                  </span>
-                  <span style={{ fontSize: 10, color: "#5C7A5E", letterSpacing: ".05em", marginTop: 2, fontFamily: font }}>
-                    {streak === 1 ? "day" : "days"}
-                  </span>
-                </div>
-                <div style={{ flex: 1 }}>
-                  {milestoneBadge && (
-                    <div style={{
-                      fontSize: 9.5, letterSpacing: ".1em", textTransform: "uppercase",
-                      color: "#B8924A", fontFamily: font, fontWeight: 600, marginBottom: 5,
-                    }}>
-                      {milestoneBadge}
-                    </div>
-                  )}
-                  <p style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.55, margin: 0 }}>
-                    {streakMsg}
-                  </p>
-                  {streak > 0 && (
-                    <p style={{ fontFamily: font, fontSize: 12, color: T.muted, margin: "4px 0 0" }}>
-                      {(nsCheckinCount ?? 0)} check-ins total
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* 7-day dot calendar */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-                {last7.map((day, i) => (
-                  <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: "50%",
-                      background: day.filled ? "#5C7A5E" : T.faint,
-                      border: day.isToday && !day.filled ? `2px dashed #5C7A5E60` : "none",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      transition: "background 0.3s",
-                    }}>
-                      {day.filled && (
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: "white" }} />
-                      )}
-                    </div>
-                    <span style={{ fontSize: 10, color: T.muted, fontFamily: font }}>{day.label}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
-                <button onClick={onNSCheckin} style={{
-                  background: "none", border: "none", padding: 0,
-                  fontFamily: font, fontSize: 12.5, color: "#5C7A5E",
-                  fontWeight: 600, cursor: "pointer",
-                }}>
-                  {streak === 0 ? "Start your streak →" : "Check in now →"}
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-
-
-        {/* ── QUICK ACCESS ── */}
-        <div style={{
-          fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",
-          color: T.muted, fontFamily: font, marginBottom: 10,
-        }}>
-          Quick access
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 18 }}>
-          {[
-            { emoji: "🌙", label: "Log Sleep",    action: () => setTab("sleep") },
-            { emoji: "🧠", label: "NS Check-in",  action: () => onNSCheckin() },
-            { emoji: "💬", label: "What do I say?", action: () => onScripts?.() || setTab("library") },
-            { emoji: "📊", label: "Insights",     action: () => setTab("insights") },
-          ].map(item => (
-            <button
-              key={item.label}
-              onClick={item.action}
-              style={{
-                padding: "12px 6px 10px",
-                borderRadius: 14, border: `1px solid ${T.border}`,
-                background: T.card, cursor: "pointer",
-                display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 6,
-              }}
-            >
-              <span style={{ fontSize: 22 }}>{item.emoji}</span>
-              <span style={{ fontFamily: font, fontSize: 10.5, color: T.muted, textAlign: "center", lineHeight: 1.3 }}>
-                {item.label}
-              </span>
-            </button>
-          ))}
-        </div>
 
       </div>
     </div>

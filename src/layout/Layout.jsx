@@ -9,55 +9,20 @@ import { ThemeToggle } from "../core/shared.jsx";
 const SUBSTACK_URL = "https://substack.com/@manu142886/notes?utm_campaign=profile&utm_medium=profile-page";
 
 // ─── NAV TABS (parent view) ───────────────────────────────────────────────────
-// Matches held wireframe: Home / Sleep / Milestones / Messages / Insights
+// New lineup: Home | Sleep | [SOS] | Messages | Insights
 const PARENT_NAV = [
-  { id: "home",       emoji: "🏡", label: "Home"       },
-  { id: "sleep",      emoji: "🌙", label: "Sleep"      },
-  { id: "milestones", emoji: "🌱", label: "Milestones" },
-  { id: "messages",   emoji: "💬", label: "Messages"   },
-  { id: "insights",   emoji: "✦",  label: "Insights"   },
+  { id: "home",     emoji: "🏡", label: "Home"     },
+  { id: "sleep",    emoji: "🌙", label: "Sleep"    },
+  { id: "sos",      sos: true                       }, // center SOS slot
+  { id: "messages", emoji: "💬", label: "Messages" },
+  { id: "insights", emoji: "✦",  label: "Insights" },
 ];
 
-// ─── SOS FAB ─────────────────────────────────────────────────────────────────
-export function SOSFab({ onPress }) {
-  const T = useT();
-  return (
-    <button
-      onClick={onPress}
-      style={{
-        position: "fixed",
-        bottom: "calc(env(safe-area-inset-bottom, 0px) + 76px)",
-        right: "max(18px, calc(50vw - 215px + 18px))",
-        zIndex: 90,
-        width: 56,
-        height: 56,
-        borderRadius: "50%",
-        background: `linear-gradient(135deg, ${T.gold} 0%, ${T.warm} 55%, ${T.warm}cc 100%)`,
-        border: "none",
-        boxShadow: `0 4px 20px ${T.warm}88, 0 2px 8px rgba(0,0,0,0.2)`,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        transition: "transform 0.15s, box-shadow 0.15s",
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = "scale(1.1)";
-        e.currentTarget.style.boxShadow = `0 6px 28px ${T.warm}bb, 0 3px 12px rgba(0,0,0,0.25)`;
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = "scale(1)";
-        e.currentTarget.style.boxShadow = `0 4px 20px ${T.warm}88, 0 2px 8px rgba(0,0,0,0.2)`;
-      }}
-      aria-label="SOS — I need help right now"
-    >
-      <span style={{ fontSize: 22, lineHeight: 1, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.2))" }}>⚡</span>
-    </button>
-  );
-}
+// ─── SOS FAB (kept for backward compat — renders nothing, SOS is now in nav) ──
+export function SOSFab({ onPress }) { return null; }
 
 // ─── BOTTOM NAV ───────────────────────────────────────────────────────────────
-export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
+export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread, onSOS }) {
   const T = useT();
 
   return (
@@ -72,10 +37,36 @@ export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
       background: T.bg,
       borderTop: `1px solid ${T.border}`,
       paddingBottom: "env(safe-area-inset-bottom, 0px)",
-      borderRadius: "0 0 0 0",
     }}>
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", alignItems: "flex-end" }}>
         {tabs.map(t => {
+          // ── SOS center slot ──
+          if (t.sos) {
+            return (
+              <div key="sos" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", paddingBottom: 8 }}>
+                <button
+                  onClick={onSOS}
+                  style={{
+                    width: 52, height: 52,
+                    borderRadius: "50%",
+                    background: `linear-gradient(135deg, ${T.gold} 0%, ${T.warm} 100%)`,
+                    border: `3px solid ${T.bg}`,
+                    boxShadow: `0 2px 16px ${T.warm}88, 0 1px 6px rgba(0,0,0,0.18)`,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    marginBottom: 2,
+                    transform: "translateY(-10px)",
+                    flexShrink: 0,
+                  }}
+                  aria-label="SOS — I need help right now"
+                >
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".06em", color: "#fff", fontFamily: "system-ui, sans-serif" }}>SOS</span>
+                </button>
+              </div>
+            );
+          }
+
+          // ── Regular tab ──
           const isActive = active === t.id;
           const badge = unread?.[t.id];
           return (
@@ -102,7 +93,6 @@ export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
                 transition: "color .18s",
               }}
             >
-              {/* Icon */}
               <span style={{
                 fontSize: (t.emoji || t.icon) === "✦" ? 17 : 22,
                 lineHeight: 1,
@@ -114,7 +104,6 @@ export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
                 {t.emoji || t.icon}
               </span>
 
-              {/* Label */}
               <span style={{
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -128,19 +117,16 @@ export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
                 {t.label}
               </span>
 
-              {/* Active dot */}
               {isActive && (
                 <span style={{
                   position: "absolute",
                   bottom: 3,
-                  width: 4,
-                  height: 4,
+                  width: 4, height: 4,
                   borderRadius: "50%",
                   background: T.teal,
                 }} />
               )}
 
-              {/* Unread badge */}
               {badge > 0 && (
                 <div style={{
                   position: "absolute",
@@ -148,12 +134,8 @@ export function BottomNav({ tabs = PARENT_NAV, active, setActive, unread }) {
                   width: 16, height: 16,
                   borderRadius: "50%",
                   background: T.warm,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 9,
-                  fontWeight: 700,
-                  color: "#fff",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 9, fontWeight: 700, color: "#fff",
                 }}>
                   {badge}
                 </div>

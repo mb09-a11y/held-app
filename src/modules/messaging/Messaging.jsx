@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 // Import shared UI and logic from your core file
 import { useT, useApp, Card, Btn, font, serif, mono } from "../../core/shared.jsx";
 import { callAI } from "../../lib/ai.js";
+import { ScriptsTab } from "../library/LibraryModule.jsx";
 // Import the centralized supabase client
 import { supabase } from "../../lib/supabase.js";
 
@@ -913,10 +914,11 @@ Use the child's name naturally. Know what method they're on and what day — don
     ? displayMessages.filter(m => (m.content || m.fileName || "").toLowerCase().includes(searchQuery.toLowerCase()))
     : displayMessages;
 
-  // Always show all three tabs — wireframe style
+  // Always show all four tabs — wireframe style
   const tabs = [
     { id: "ai",       label: "✦ RCC Coach"       },
     { id: "messages", label: "🧑‍💼 Your Consultant" },
+    { id: "scripts",  label: "💬 What to say"     },
     { id: "files",    label: "📁 Files"            },
   ];
 
@@ -941,7 +943,7 @@ Use the child's name naturally. Know what method they're on and what day — don
             <div>
               <div style={{ fontSize: 9.5, letterSpacing: ".18em", textTransform: "uppercase", color: "rgba(255,255,255,0.18)", fontWeight: 600, marginBottom: 6 }}>Rooted Connections Collective</div>
               <h1 style={{ fontFamily: serif, fontSize: 22, color: T.headingText, lineHeight: 1 }}>
-                {mode === "ai" ? "RCC Coach" : mode === "files" ? "Files" : "Your Consultant"}
+                {mode === "ai" ? "RCC Coach" : mode === "files" ? "Files" : mode === "scripts" ? "What to Say" : "Your Consultant"}
               </h1>
               {mode === "ai" && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}>
@@ -1083,8 +1085,15 @@ Use the child's name naturally. Know what method they're on and what day — don
           </div>
         )}
 
+        {/* SCRIPTS / WHAT TO SAY TAB */}
+        {mode === "scripts" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 90px" }}>
+            <ScriptsTab />
+          </div>
+        )}
+
         {/* MESSAGES / AI CHAT */}
-        {mode !== "files" && (
+        {mode !== "files" && mode !== "scripts" && (
           <div
             ref={scrollRef}
             style={{
@@ -1157,7 +1166,7 @@ Use the child's name naturally. Know what method they're on and what day — don
         )}
 
         {/* INPUT BAR */}
-        {mode !== "files" && !(mode === "messages" && !canAccessHumanMessaging && !activeFamily?.consultant_id) && (
+        {mode !== "files" && mode !== "scripts" && !(mode === "messages" && !canAccessHumanMessaging && !activeFamily?.consultant_id) && (
           <div
             style={{
               width: "100%",

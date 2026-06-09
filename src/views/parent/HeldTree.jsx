@@ -275,7 +275,7 @@ export default function HeldTree({
       </div>
 
       {/* Stats */}
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+      <div className="tree-stats-row" style={{ display: "flex", gap: 10, marginTop: 12 }}>
         {[
           { label: "check-ins",  value: totalNsLogs   },
           { label: "leaves", value: ventralPoints },

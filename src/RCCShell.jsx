@@ -97,11 +97,11 @@ function clearDataCache() {
 
 // ─── TAB DEFINITIONS ─────────────────────────────────────────────────────────
 const PARENT_TABS = [
-  { id: "home",       label: "Home",       icon: "🏡" },
-  { id: "sleep",      label: "Sleep",      icon: "🌙" },
-  { id: "milestones", label: "Milestones", icon: "🌱" },
-  { id: "messages",   label: "Messages",   icon: "💬" },
-  { id: "insights",   label: "Insights",   icon: "✦"  },
+  { id: "home",     label: "Home",     icon: "🏡" },
+  { id: "sleep",    label: "Sleep",    icon: "🌙" },
+  { id: "sos",      sos: true                     }, // center SOS slot
+  { id: "messages", label: "Messages", icon: "💬" },
+  { id: "insights", label: "Insights", icon: "✦"  },
 ];
 
 // Note: consultant nav is now fully owned by ConsultantShell — no CONSULTANT_TABS needed here
@@ -1206,7 +1206,7 @@ export default function RCCShell() {
           {showSOS && <SOSFlow onClose={() => setShowSOS(false)} setTab={setTab} />}
 
           {/* ── NS CHECK-IN OVERLAY ── */}
-          {showNSCheckin && <NSCheckinFlow onClose={() => { setShowNSCheckin(false); setCheckinRefreshKey(k => k + 1); }} />}
+          {showNSCheckin && <NSCheckinFlow onClose={() => { setShowNSCheckin(false); setCheckinRefreshKey(k => k + 1); }} onCheckinSaved={() => setCheckinRefreshKey(k => k + 1)} />}
 
           {/* ── MORNING MOMENT OVERLAY ── */}
           {showMorningMoment && <MorningMoment onClose={() => { setShowMorningMoment(false); setCheckinRefreshKey(k => k + 1); }} />}
@@ -1280,14 +1280,13 @@ export default function RCCShell() {
                 {tab === "library"    && <LibraryModule defaultTab={libraryDefaultTab} key={libraryKey} onOpenDrawer={() => setDrawerOpen(true)} />}
 
                 {/* SOS FAB — visible on all parent tabs */}
-                <SOSFab onPress={() => setShowSOS(true)} />
-
                 {/* Bottom nav */}
                 <BottomNav
                   tabs={PARENT_TABS}
                   active={tab === "library" ? "insights" : tab}
                   setActive={setTab}
                   unread={unread}
+                  onSOS={() => setShowSOS(true)}
                 />
               </>
             )}
