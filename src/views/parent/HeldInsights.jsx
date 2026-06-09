@@ -46,30 +46,96 @@ function useInsightsData(userId, familyId, childId, checkinRefreshKey) {
 // ─── PATTERN ANALYSIS ────────────────────────────────────────────────────────
 function analyzePatterns(checkins, sleepSessions) {
   const now = Date.now();
-  const month = 30 * 86400000;
-  const recent = checkins.filter(c => now - new Date(c.checked_in_at) < month);
-  const realCheckins = recent.filter(c =>
+  const week = 7 * 86400000;
+
+  // ── This week vs last week ────────────────────────────────────────────────
+  const thisWeekCheckins = checkins.filter(c =>
+    now - new Date(c.checked_in_at) < week &&
     c.source !== "evening_close" && !c.state?.startsWith("ec_") && c.state != null
   );
-
-  const stateFreq = {};
-  realCheckins.forEach(c => {
-    if (c.state) stateFreq[c.state] = (stateFreq[c.state] || 0) + 1;
+  const lastWeekCheckins = checkins.filter(c => {
+    const age = now - new Date(c.checked_in_at);
+    return age >= week && age < 2 * week &&
+      c.source !== "evening_close" && !c.state?.startsWith("ec_") && c.state != null;
   });
-  const topState = Object.entries(stateFreq).sort((a, b) => b[1] - a[1])[0];
-  const activationCount = realCheckins.filter(c =>
-    ["Fight","Flight","Freeze","Shutdown","Stretched"].includes(c.state)
-  ).length;
-  const steadyCount = realCheckins.filter(c => c.state === "Regulated").length;
 
+  const realCheckins = thisWeekCheckins;
+  const recent = checkins.filter(c => now - new Date(c.checked_in_at) < 30 * 86400000);
+
+  const countStates = (arr) => {
+    const freq = {};
+    arr.forEach(c => { if (c.state) freq[c.state] = (freq[c.state] || 0) + 1; });
+    return freq;
+  };
+
+  const thisFreq  = countStates(thisWeekCheckins);
+  const topState  = Object.entries(thisFreq).sort((a, b) => b[1] - a[1])[0];
+
+  const activationStates = ["Fight","Flight","Freeze","Shutdown","Stretched"];
+  const thisActivation = thisWeekCheckins.filter(c => activationStates.includes(c.state)).length;
+  const lastActivation = lastWeekCheckins.filter(c => activationStates.includes(c.state)).length;
+  const activationCount = thisActivation;
+  const steadyCount = thisWeekCheckins.filter(c => c.state === "Regulated").length;
+
+  // Trend: "improving" | "worsening" | "holding" | "new"
+  const getTrend = () => {
+    if (lastWeekCheckins.length < 2) return "new";
+    if (thisActivation < lastActivation - 1) return "improving";
+    if (thisActivation > lastActivation + 1) return "worsening";
+    return "holding";
+  };
+  const trend = getTrend();
+
+  const trendNote = () => {
+    if (trend === "new") return null;
+    const diff = Math.abs(thisActivation - lastActivation);
+    if (trend === "improving") return `That's ${diff} fewer activation${diff === 1 ? "" : "s"} than last week — your system is finding some ground.`;
+    if (trend === "worsening") return `That's ${diff} more than last week. Something is accumulating. Notice it without judgment.`;
+    return `About the same as last week. Consistency means you can work with it.`;
+  };
+
+  // Deterministic rotation: changes each calendar week
+  const weekOfYear = Math.floor(now / (7 * 86400000));
+  const pick = (arr) => arr[weekOfYear % arr.length];
+
+  // ── Sleep data ────────────────────────────────────────────────────────────
+  const getSleepMs = s => {
+    if (s.total_sleep_ms) return s.total_sleep_ms;
+    if (s.ts && s.end_ts) return Math.max(0, new Date(s.end_ts) - new Date(s.ts));
+    return 0;
+  };
+  const since7 = new Date(now - week);
+  const since14 = new Date(now - 2 * week);
+  const sessionsWithDuration = sleepSessions.filter(s => getSleepMs(s) > 0);
+  const avgSleepMs = sessionsWithDuration.length
+    ? sessionsWithDuration.reduce((s, l) => s + getSleepMs(l), 0) / sessionsWithDuration.length : 0;
+  const avgSleepHrs = avgSleepMs > 0 ? parseFloat((avgSleepMs / 3600000).toFixed(1)) : null;
+
+  const roughNights = sleepSessions.filter(s => {
+    const hrs = getSleepMs(s) / 3600000;
+    if (hrs <= 0 || new Date(s.ts) < since7) return false;
+    return s.session_type === "night" ? hrs < 8 : hrs < 6;
+  }).length;
+  const lastWeekRoughNights = sleepSessions.filter(s => {
+    const hrs = getSleepMs(s) / 3600000;
+    const ts = new Date(s.ts);
+    if (hrs <= 0 || ts < since14 || ts >= since7) return false;
+    return s.session_type === "night" ? hrs < 8 : hrs < 6;
+  }).length;
+  const shortNapCount = sleepSessions.filter(s => {
+    const hrs = getSleepMs(s) / 3600000;
+    if (new Date(s.ts) < since7) return false;
+    return hrs > 0 && hrs < 1.5 && s.session_type !== "night";
+  }).length;
+
+  // ── Peak activation hour ──────────────────────────────────────────────────
   const hourBuckets = {};
   checkins.filter(c => c.state && c.state !== "Regulated" && !c.source?.includes?.("evening")).forEach(c => {
     const h = new Date(c.checked_in_at).getHours();
     hourBuckets[h] = (hourBuckets[h] || 0) + 1;
   });
   const peakHour = Object.entries(hourBuckets).sort((a, b) => b[1] - a[1])[0];
-  let peakTimeStr = null;
-  let alertTimeStr = null;
+  let peakTimeStr = null, alertTimeStr = null;
   if (peakHour && parseInt(peakHour[1]) >= 2) {
     const h = parseInt(peakHour[0]);
     const fmt = (hr) => {
@@ -81,149 +147,250 @@ function analyzePatterns(checkins, sleepSessions) {
     alertTimeStr = fmt(h > 0 ? h - 1 : 23);
   }
 
-  const getSleepMs = s => {
-    if (s.total_sleep_ms) return s.total_sleep_ms;
-    if (s.ts && s.end_ts) return Math.max(0, new Date(s.end_ts) - new Date(s.ts));
-    return 0;
-  };
-  const sessionsWithDuration = sleepSessions.filter(s => getSleepMs(s) > 0);
-  const avgSleepMs = sessionsWithDuration.length
-    ? sessionsWithDuration.reduce((s, l) => s + getSleepMs(l), 0) / sessionsWithDuration.length
-    : 0;
-  const avgSleepHrs = avgSleepMs > 0 ? parseFloat((avgSleepMs / 3600000).toFixed(1)) : null;
-  const since7 = new Date(Date.now() - 7 * 86400000);
-  const roughNights = sleepSessions.filter(s => {
-    const hrs = getSleepMs(s) / 3600000;
-    if (hrs <= 0) return false;
-    if (new Date(s.ts) < since7) return false; // only last 7 days
-    return s.session_type === "night" ? hrs < 8 : hrs < 6;
-  }).length;
-  const shortNapCount = sleepSessions.filter(s => {
-    const hrs = getSleepMs(s) / 3600000;
-    if (new Date(s.ts) < since7) return false; // only last 7 days
-    return hrs > 0 && hrs < 1.5 && s.session_type !== "night";
-  }).length;
-
+  // ── 7-day dot calendar ────────────────────────────────────────────────────
   const morningCheckins = recent.filter(c => c.source === "morning_moment");
   const eveningCheckins = recent.filter(c => c.source === "evening_close");
-
   const days = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date(Date.now() - (6 - i) * 86400000);
+    const d = new Date(now - (6 - i) * 86400000);
     const label = d.toLocaleDateString("en", { weekday: "short" }).slice(0, 1);
     const dc = realCheckins.filter(c => new Date(c.checked_in_at).toDateString() === d.toDateString());
     const score = dc.length > 0
-      ? dc.reduce((s, c) => s + (c.state === "Regulated" ? 5 : c.state === "Stretched" ? 3 : 1.5), 0) / dc.length
-      : 0;
+      ? dc.reduce((s, c) => s + (c.state === "Regulated" ? 5 : c.state === "Stretched" ? 3 : 1.5), 0) / dc.length : 0;
     return { label, score, count: dc.length, hasData: dc.length > 0 };
   });
 
   let consecutiveActivated = 0;
   for (let i = days.length - 1; i >= 0; i--) {
-    const d = new Date(Date.now() - (6 - i) * 86400000);
+    const d = new Date(now - (6 - i) * 86400000);
     const dc = realCheckins.filter(c =>
       new Date(c.checked_in_at).toDateString() === d.toDateString() &&
-      ["Fight","Flight","Freeze","Shutdown","Stretched"].includes(c.state)
+      activationStates.includes(c.state)
     );
     if (dc.length > 0) consecutiveActivated++;
     else break;
   }
 
+  // ── Week narrative ────────────────────────────────────────────────────────
   let weekNarrative = null;
   if (realCheckins.length > 0) {
     if (consecutiveActivated >= 3) {
       weekNarrative = `You've been in '${topState?.[0] || "go"}' mode for ${consecutiveActivated} days. Your window of tolerance is narrowing — that's biology, not failure.`;
     } else if (steadyCount > activationCount) {
-      weekNarrative = `More steady than stretched this week. Your nervous system is finding its rhythm.`;
+      weekNarrative = trend === "improving"
+        ? `More steady than stretched — and improving on last week. Your system is responding.`
+        : `More steady than stretched this week. Your nervous system is finding its rhythm.`;
     } else if (activationCount >= 4) {
-      weekNarrative = `A stretched week. Every check-in is proof you're paying attention — that's the work.`;
+      weekNarrative = trend === "worsening"
+        ? `A hard week — harder than last week. Something is accumulating. That's worth paying attention to.`
+        : `A stretched week. Every check-in is proof you're paying attention — that's the work.`;
     } else {
       weekNarrative = `${realCheckins.length} check-in${realCheckins.length === 1 ? "" : "s"} this week. Your patterns are starting to take shape.`;
     }
   }
 
+  // ── Meaning Maker ─────────────────────────────────────────────────────────
   let meaningMaker = null;
+  const note = trendNote();
+
   const sleepAndActivation = roughNights >= 2 && activationCount >= 3;
   const sleepDebt = roughNights >= 2 || shortNapCount >= 3;
+
   if (sleepAndActivation || (sleepDebt && realCheckins.length >= 2)) {
     const napNote = shortNapCount >= 2 ? ` + ${shortNapCount} short nap${shortNapCount > 1 ? "s" : ""}` : "";
+    const sleepTrend = roughNights < lastWeekRoughNights
+      ? ` Sleep was harder last week (${lastWeekRoughNights} rough nights), so this may be a turning point.`
+      : roughNights > lastWeekRoughNights
+      ? ` Last week had ${lastWeekRoughNights} rough nights — this week is harder.`
+      : null;
     meaningMaker = {
       quote: `${roughNights} rough night${roughNights === 1 ? "" : "s"}${napNote} → nervous system is maxed.`,
-      body: `When sleep debt accumulates, regulation capacity shrinks — in your child and in you. The fussiness, the clinginess, the resistance — all of it makes sense right now.`,
+      body: pick([
+        `When sleep debt accumulates, regulation capacity shrinks — in your child and in you. The fussiness, the clinginess, the resistance — all of it makes sense right now.${sleepTrend || ""}`,
+        `Sleep loss doesn't just make you tired — it actively reduces your prefrontal cortex's ability to regulate. You're not doing anything wrong. Your biology is just maxed.${sleepTrend || ""}`,
+        `The connection between rough nights and hard days isn't coincidence — it's physiology. Your nervous system is doing the best it can with a depleted tank.${sleepTrend || ""}`,
+      ]),
       chip: { emoji: "🧠", label: "Nervous System" },
+      trend: note,
     };
   } else if (topState?.[0] === "Stretched" && topState[1] >= 3) {
     meaningMaker = {
-      quote: `Stretched ${topState[1]}× this week → running on reserve.`,
-      body: `Stretched isn't crisis — but it's close to the edge. Even 10 minutes of genuine rest changes what's available tonight.`,
+      quote: pick([
+        `Stretched ${topState[1]}x this week — running on reserve.`,
+        `Your system has been in high gear. Reserve is low.`,
+        `Stretched repeatedly — the body is asking for something different.`,
+      ]),
+      body: pick([
+        `Stretched isn't crisis — but it's close to the edge. Even 10 minutes of genuine rest changes what's available tonight.`,
+        `Running stretched means your window of tolerance is narrow. Small things feel big. That's not you being dramatic — that's biology.`,
+        `When you're consistently stretched, your nervous system starts anticipating threat. A moment of genuine safety — not productivity — is what resets it.`,
+      ]),
       chip: { emoji: "🧠", label: "Nervous System" },
+      trend: note,
     };
   } else if (topState?.[0] === "Fight") {
     meaningMaker = {
-      quote: `High activation + caregiving = your nervous system doing double duty.`,
-      body: `Fight state while parenting is like driving with one foot on the brake. The patterns you're tracking help you catch it sooner.`,
+      quote: pick([
+        `High activation + caregiving = your nervous system doing double duty.`,
+        `Fight state this week: your system is mobilized. That costs something.`,
+        `Activation while caregiving is one of the hardest combinations on the nervous system.`,
+      ]),
+      body: pick([
+        `Fight state while parenting is like driving with one foot on the brake. The patterns you're tracking help you catch it sooner.`,
+        `High activation + caregiving means your system is managing two full-time jobs simultaneously. That's exhausting in ways sleep alone won't fix.`,
+        `Fight state isn't anger — it's your nervous system mobilizing resources. The challenge is that children mirror it. Your regulation is their regulation.`,
+      ]),
       chip: { emoji: "🧠", label: "Nervous System" },
+      trend: note,
     };
   } else if (topState?.[0] === "Freeze" && topState[1] >= 2) {
     meaningMaker = {
-      quote: `Freeze state ${topState[1]}× this week → your system hit its limit.`,
-      body: `Freeze isn't laziness or checked-out parenting. It's your nervous system's last resort protection. Recovery needs safety, rest, and tiny moments of connection — not more effort.`,
+      quote: pick([
+        `Freeze state ${topState[1]}x this week — your system hit its limit.`,
+        `Freeze is protection, not weakness. Your system needed to conserve.`,
+        `When the system can't fight or flee, it freezes. That's biology, not failure.`,
+      ]),
+      body: pick([
+        `Freeze isn't laziness or checked-out parenting. It's your nervous system's last resort protection. Recovery needs safety, rest, and tiny moments of connection — not more effort.`,
+        `When the system freezes, it's not giving up — it's conserving. The path back isn't pushing harder. It's small, safe moments that signal: the threat has passed.`,
+        `Freeze happens when fight and flight feel impossible. It's not a character flaw. It's your nervous system doing exactly what it's designed to do under pressure.`,
+      ]),
       chip: { emoji: "🧠", label: "Nervous System" },
+      trend: note,
     };
   } else if (topState?.[0] === "Shutdown" && topState[1] >= 2) {
     meaningMaker = {
-      quote: `Shutdown is the body saying: I have nothing left right now.`,
-      body: `When shutdown happens repeatedly, it's a signal the load has been too high for too long. The fact that you're tracking it means you're already doing the most important thing.`,
+      quote: pick([
+        `Shutdown is the body saying: I have nothing left right now.`,
+        `Dorsal shutdown ${topState[1]}x this week. Your system needed to go offline.`,
+        `Shutdown this week: your body did what it had to do. Now it needs recovery.`,
+      ]),
+      body: pick([
+        `When shutdown happens repeatedly, it's a signal the load has been too high for too long. The fact that you're tracking it means you're already doing the most important thing.`,
+        `Shutdown is the deepest dorsal vagal response — the body going offline to protect itself. Coming back from it requires safety, not effort.`,
+        `Repeated shutdown is your nervous system's way of saying: something needs to change. Not you — the conditions.`,
+      ]),
       chip: { emoji: "🧠", label: "Nervous System" },
+      trend: note,
     };
   } else if (realCheckins.length >= 3 && steadyCount >= activationCount) {
     meaningMaker = {
-      quote: `More steady than activated this week — that's real regulation.`,
-      body: `Steady doesn't mean easy. It means your nervous system has some capacity available. The check-ins you're doing are part of why.`,
+      quote: pick([
+        `More steady than activated this week — that's real regulation.`,
+        `Your system is finding capacity. Steady shows up in the small moments.`,
+        `A regulated week. Your nervous system had room to breathe.`,
+      ]),
+      body: trend === "improving"
+        ? pick([
+            `Steady doesn't mean easy. It means your nervous system has some capacity available. And this is an improvement on last week — that's momentum.`,
+            `More regulated than activated — and better than last week. That's not luck. That's the result of noticing and adjusting.`,
+          ])
+        : pick([
+            `Steady doesn't mean easy. It means your nervous system has some capacity available. The check-ins you're doing are part of why.`,
+            `More regulated than activated — that's not luck. It's the result of noticing, adjusting, and showing up. Keep going.`,
+            `Steady state means your window of tolerance is open. You have more access to your prefrontal cortex — which means parenting from intention, not reaction.`,
+          ]),
       chip: { emoji: "🌿", label: "Regulation" },
+      trend: note,
     };
   } else if (avgSleepHrs && avgSleepHrs < 7 && realCheckins.length > 0) {
     meaningMaker = {
-      quote: `Short sleep windows + check-in patterns tell the same story.`,
-      body: `Less than 7 hours of average sleep significantly reduces emotional regulation capacity. This isn't personal. It's physiological.`,
+      quote: pick([
+        `Short sleep windows + check-in patterns tell the same story.`,
+        `Under 7 hours of average sleep changes everything downstream.`,
+        `Sleep and regulation aren't separate systems — they're the same system.`,
+      ]),
+      body: pick([
+        `Less than 7 hours of average sleep significantly reduces emotional regulation capacity. This isn't personal. It's physiological.`,
+        `Sleep debt compounds. Each short night narrows your window of tolerance a little more. The data you're logging is helping us see the full picture.`,
+        `Your check-ins and your sleep windows are telling the same story. When sleep improves, regulation follows — not the other way around.`,
+      ]),
       chip: { emoji: "💤", label: "Sleep + Regulation" },
+      trend: note,
     };
   } else if (realCheckins.length >= 1) {
     meaningMaker = {
-      quote: `${realCheckins.length} check-in${realCheckins.length === 1 ? "" : "s"} logged. Your patterns are starting to form.`,
-      body: `The more you check in, the clearer the picture gets — not just for you, but for how we can support you. Keep going.`,
+      quote: pick([
+        `${realCheckins.length} check-in${realCheckins.length === 1 ? "" : "s"} logged. Your patterns are starting to form.`,
+        `Every check-in is a data point. The picture is building.`,
+        `You showed up and noticed. That's the whole practice.`,
+      ]),
+      body: pick([
+        `The more you check in, the clearer the picture gets — not just for you, but for how we can support you. Keep going.`,
+        `Patterns take time to emerge. You're building something real here. Each check-in adds resolution to the picture.`,
+        `Noticing is the first step in regulation. You're already doing it.`,
+      ]),
       chip: { emoji: "🌱", label: "Pattern Building" },
+      trend: note,
     };
   }
 
+  // ── Behavior Pattern ──────────────────────────────────────────────────────
   let behaviorPattern = null;
   if (activationCount >= 2) {
     if ((topState?.[0] === "Shutdown" || topState?.[0] === "Freeze") && topState[1] >= 2) {
       behaviorPattern = {
-        quote: `Withdrawal isn't weakness — it's a protective response.`,
-        body: `When the system shuts down, it's protecting itself from overload. Connection and gentle movement are the way back — not willpower.`,
+        quote: pick([
+          `Withdrawal isn't weakness — it's a protective response.`,
+          `Going offline is the nervous system's way of saying: I need safety, not more.`,
+          `Freeze and shutdown are protection strategies. They work — until they don't.`,
+        ]),
+        body: pick([
+          `When the system shuts down, it's protecting itself from overload. Connection and gentle movement are the way back — not willpower.`,
+          `Dorsal vagal states feel like collapse, but they're actually regulation — the deepest kind. What brings you back is safety, rhythm, and small moments of connection.`,
+          `When shutdown is frequent, it's worth asking: what is the system protecting against? The answer is usually load — not weakness.`,
+        ]),
         chip: { emoji: "🌿", label: "Polyvagal" },
+        trend: note,
       };
     } else if (topState?.[0] === "Flight" && topState[1] >= 2) {
       behaviorPattern = {
-        quote: `More boundary pushing = seeking control, not defiance.`,
-        body: `Boundary-testing spikes when a child's world feels unpredictable. They're not pushing your buttons — they're looking for the edges to feel safe.`,
+        quote: pick([
+          `More boundary pushing = seeking control, not defiance.`,
+          `Flight state in parenting often looks like avoidance — yours or theirs.`,
+          `The urge to escape is survival. What is your system trying to escape from?`,
+        ]),
+        body: pick([
+          `Boundary-testing spikes when a child's world feels unpredictable. They're not pushing your buttons — they're looking for the edges to feel safe.`,
+          `Flight activation is mobilized energy with nowhere to go. Discharge it safely — movement, breath, shaking it out — before re-engaging.`,
+          `When you're in flight state, connection feels threatening. But connection is exactly what brings the system back. Start tiny.`,
+        ]),
         chip: { emoji: "🌿", label: "Attachment" },
+        trend: note,
       };
     } else if (topState?.[0] === "Fight" && topState[1] >= 2) {
       behaviorPattern = {
-        quote: `Meltdowns cluster when the tank is empty.`,
-        body: `High-activation states in parents and children are contagious — not because of bad parenting, but because nervous systems mirror each other. Your regulation is your child's regulation.`,
+        quote: pick([
+          `Meltdowns cluster when the tank is empty.`,
+          `High activation is contagious. Your state sets the temperature in the room.`,
+          `Fight state + parenting: two activated systems. Someone has to go first.`,
+        ]),
+        body: pick([
+          `High-activation states in parents and children are contagious — not because of bad parenting, but because nervous systems mirror each other. Your regulation is your child's regulation.`,
+          `When you're in fight state, the part of your brain that parents intentionally goes partially offline. That's not a flaw — it's physiology. The repair matters more than the reaction.`,
+          `Fight activation means your system sensed threat. Parenting from that state is hard. Naming it — even just to yourself — starts to bring the cortex back online.`,
+        ]),
         chip: { emoji: "🌿", label: "Co-regulation" },
+        trend: note,
       };
     } else if (topState?.[0] === "Stretched" && topState[1] >= 2) {
       behaviorPattern = {
-        quote: `Running on fumes changes how everything lands.`,
-        body: `When you're stretched, your window of tolerance narrows — what would normally roll off you sticks. That's not a character flaw. That's biology asking for a reset.`,
+        quote: pick([
+          `Running on fumes changes how everything lands.`,
+          `Stretched means your tolerance window is narrow. Small things feel large.`,
+          `Consistently stretched: managing more than you're recovering from.`,
+        ]),
+        body: pick([
+          `When you're stretched, your window of tolerance narrows — what would normally roll off you sticks. That's not a character flaw. That's biology asking for a reset.`,
+          `Stretched state isn't as loud as fight or flight, but it's just as costly. Your system is working hard to stay in the window. It can't do that indefinitely.`,
+          `Being stretched consistently is a signal, not a verdict. It means the input is exceeding the recovery. Something in the equation needs to shift.`,
+        ]),
         chip: { emoji: "🌿", label: "Nervous System" },
+        trend: note,
       };
     }
   }
 
+  // ── Your Pattern (peak time) ───────────────────────────────────────────────
   let yourPattern = null;
   if (peakTimeStr && alertTimeStr) {
     const peakHr = parseInt(peakHour[0]);
@@ -235,42 +402,12 @@ function analyzePatterns(checkins, sleepSessions) {
     };
   }
 
-  const today = new Date().toDateString();
-  const todayCheckins = realCheckins.filter(c => new Date(c.checked_in_at).toDateString() === today);
-  const hadEvening = eveningCheckins.some(c => new Date(c.checked_in_at).toDateString() === today);
-  const endOfDay = {
-    checkinsToday: todayCheckins.length,
-    sleepLoggedToday: sleepSessions.some(s => new Date(s.ts).toDateString() === today),
-    eveningDone: hadEvening,
-    quote: todayCheckins.length >= 3
-      ? `"You had a hard day — and you showed up anyway. That's the whole thing."`
-      : todayCheckins.length >= 1
-      ? `"Every check-in is data. You're learning your own system."`
-      : `"Even one moment of noticing is the practice."`,
-  };
-
-  // 7-day streak — if today has no check-in yet, start counting from yesterday
-  let streak = 0;
-  const todayHasLog = checkins.some(c => new Date(c.checked_in_at).toDateString() === new Date().toDateString());
-  const startOffset = todayHasLog ? 0 : 1;
-  for (let i = startOffset; i < 7 + startOffset; i++) {
-    const d = new Date(Date.now() - i * 86400000).toDateString();
-    const hasLog = checkins.some(c => new Date(c.checked_in_at).toDateString() === d);
-    if (hasLog) streak++;
-    else break;
-  }
-  const streakDays = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date(Date.now() - (6 - i) * 86400000).toDateString();
-    return checkins.some(c => new Date(c.checked_in_at).toDateString() === d);
-  });
-
   return {
     days, weekNarrative, meaningMaker, behaviorPattern, yourPattern,
-    endOfDay, topState, realCheckins, avgSleepHrs, morningCheckins, eveningCheckins,
-    roughNights, shortNapCount, sessionsWithDuration, streak, streakDays,
+    topState, realCheckins, avgSleepHrs, morningCheckins, eveningCheckins,
+    roughNights, shortNapCount, sessionsWithDuration, trend,
   };
 }
-
 // ─── SHARED SUB-COMPONENTS ────────────────────────────────────────────────────
 function InsightCard({ eyebrow, quote, body, chip, accentColor }) {
   const T = useT();
@@ -313,28 +450,25 @@ function SectionLabel({ text }) {
 function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, setTab, onScripts }) {
   const T = useT();
   const {
-    meaningMaker, behaviorPattern, yourPattern, endOfDay,
-    realCheckins, streak, streakDays,
+    meaningMaker, behaviorPattern, yourPattern,
+    realCheckins, trend,
   } = patterns;
 
   const total = profile?.total_ns_logs ?? 0;
   const ventral = ventralCount ?? 0;
   const leaves = profile?.leaves ?? 0;
-  const resilience = Math.min(Math.round((total / 120) * 100), 100);
-  const visualProgress = Math.min(Math.round((weekCount / 22) * 100), 100);
   const stabilityRate = total > 0 ? Math.round((ventral / total) * 100) : 0;
-  const capacityLabel = resilience >= 75 ? "Deeply anchored" : resilience >= 45 ? "Structure stabilizing" : "Foundation building";
+  const capacityLabel = stabilityRate >= 60 ? "Deeply anchored" : stabilityRate >= 35 ? "Structure stabilizing" : "Foundation building";
 
   let nsQuote = null;
-  if (weekCount <= 3) {
-    nsQuote = `Your nervous system has been checked in ${total} time${total === 1 ? "" : "s"}. You are noticing — and the roots are real, even when you can't see them yet.`;
-  } else if (weekCount <= 7) {
-    nsQuote = `${ventral} of your ${total} check-ins have been ventral — a ${stabilityRate}% stability rate. Your trunk is rising. The work below ground is starting to show.`;
-  } else if (weekCount <= 12) {
-    const direction = resilience >= 50 ? "climbing" : "building";
-    nsQuote = `Your system stability is at ${stabilityRate}% and ${direction}. You've been showing up for ${weekCount} weeks. That's ${total} moments of noticing — each one a ring in your trunk.`;
+  if (total === 0) {
+    nsQuote = `Your first check-in starts the map. Everything you log from here becomes data your system can learn from.`;
+  } else if (stabilityRate >= 60) {
+    nsQuote = `${stabilityRate}% regulated. You've been in a steady state more than you haven't — that's not luck, that's practice. ${total} check-ins logged over ${weekCount} weeks.`;
+  } else if (stabilityRate >= 35) {
+    nsQuote = `${ventral} regulated moments out of ${total} check-ins — ${stabilityRate}% of the time, your system found steady ground. ${weekCount} weeks of showing up.`;
   } else {
-    nsQuote = `Something is shifting. ${stabilityRate}% stability, ${leaves} leaves banked. Your branches are reaching because your roots earned it.`;
+    nsQuote = `${stabilityRate}% of your ${total} check-ins have been regulated. Your nervous system has been under load — the fact that you're tracking it is the first step toward changing it.`;
   }
 
   const hasData = realCheckins.length >= 1;
@@ -357,9 +491,9 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
       {/* ── STATS ROW ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {[
-          { label: "CHECK-INS", value: total },
-          { label: "LEAVES",    value: leaves },
-          { label: "WEEK",      value: weekCount },
+          { label: "LEAVES",   value: leaves },
+          { label: "VENTRAL",  value: `${stabilityRate}%` },
+          { label: "WEEK",     value: weekCount },
         ].map(s => (
           <div key={s.label} style={{
             flex: 1, borderRadius: 14, padding: "14px 10px 12px",
@@ -382,38 +516,21 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
           "{nsQuote}"
         </div>
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
-          System resilience
+          Ventral ratio
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <div style={{ fontFamily: font, fontSize: 13, color: T.headingText }}>{capacityLabel}</div>
-          <div style={{ fontFamily: serif, fontSize: 15, color: T.teal, fontWeight: 700 }}>{resilience}%</div>
+          <div style={{ fontFamily: serif, fontSize: 15, color: T.teal, fontWeight: 700 }}>{stabilityRate}%</div>
         </div>
         <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", marginBottom: 10 }}>
-          <div style={{ height: "100%", width: `${resilience}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
+          <div style={{ height: "100%", width: `${stabilityRate}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
         </div>
         <div style={{ fontFamily: font, fontSize: 12, color: T.muted, fontStyle: "italic", lineHeight: 1.6 }}>
-          Visual progress is {visualProgress}% — but your foundation is at {resilience}%. The canopy is coming.
+          {stabilityRate}% of your check-ins have been in a regulated state. Every ventral moment builds your foundation.
         </div>
       </div>
 
-      {/* ── 7-DAY STREAK ── */}
-      <SectionLabel text="7-day streak" />
-      <div style={{ borderRadius: 16, padding: "16px 18px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          {streakDays.map((filled, i) => (
-            <div key={i} style={{
-              flex: 1, height: 10, borderRadius: 5,
-              background: filled ? T.teal : T.border,
-              transition: "background 0.3s",
-            }} />
-          ))}
-        </div>
-        <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
-          {streak >= 7
-            ? "7-day streak complete — your roots are locked in 🌳"
-            : `${streak} of 7 days — ${7 - streak} more day${7 - streak === 1 ? "" : "s"} locks in this progress permanently`}
-        </div>
-      </div>
+
 
       {/* ── EMPTY STATE ── */}
       {!hasData && !loading && (
@@ -431,12 +548,26 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
 
       {/* ── MEANING MAKER ── */}
       {meaningMaker && (
-        <InsightCard eyebrow="Meaning Maker" quote={meaningMaker.quote} body={meaningMaker.body} chip={meaningMaker.chip} accentColor={T.warm} />
+        <>
+          <InsightCard eyebrow="Meaning Maker" quote={meaningMaker.quote} body={meaningMaker.body} chip={meaningMaker.chip} accentColor={T.warm} />
+          {meaningMaker.trend && (
+            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, fontStyle: "italic", marginTop: -6, marginBottom: 12, paddingLeft: 4 }}>
+              {meaningMaker.trend}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── BEHAVIOR PATTERN ── */}
       {behaviorPattern && (
-        <InsightCard eyebrow="Behavior Pattern" quote={behaviorPattern.quote} body={behaviorPattern.body} chip={behaviorPattern.chip} accentColor={T.teal} />
+        <>
+          <InsightCard eyebrow="Behavior Pattern" quote={behaviorPattern.quote} body={behaviorPattern.body} chip={behaviorPattern.chip} accentColor={T.teal} />
+          {behaviorPattern.trend && (
+            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, fontStyle: "italic", marginTop: -6, marginBottom: 12, paddingLeft: 4 }}>
+              {behaviorPattern.trend}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── YOUR PATTERN ── */}
@@ -451,26 +582,6 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
         </div>
       )}
 
-      {/* ── END OF DAY ── */}
-      {(endOfDay.checkinsToday > 0 || endOfDay.sleepLoggedToday) && (
-        <div style={{ borderRadius: 16, padding: "18px 20px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 12 }}>
-          <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 12 }}>End of Day</div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-            {[
-              { done: endOfDay.checkinsToday >= 1 },
-              { done: endOfDay.sleepLoggedToday },
-              { done: endOfDay.checkinsToday >= 2 },
-              { done: endOfDay.eveningDone },
-            ].map((item, i) => (
-              <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: item.done ? T.tealMid : T.border, transition: "background 0.3s" }} />
-            ))}
-          </div>
-          <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.6 }}>
-            {endOfDay.quote}
-          </div>
-        </div>
-      )}
-
       {/* ── NO INSIGHTS YET ── */}
       {hasData && !meaningMaker && !behaviorPattern && !yourPattern && (
         <div style={{ borderRadius: 16, padding: "16px 18px", marginBottom: 12, background: T.card2, border: `1px solid ${T.border}` }}>
@@ -479,16 +590,6 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
           </div>
         </div>
       )}
-
-      {/* ── SCRIPTS LINK ── */}
-      <button onClick={() => onScripts ? onScripts() : setTab("library")} style={{ width: "100%", padding: "16px 18px", borderRadius: 16, background: T.card2, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: 14, cursor: "pointer", textAlign: "left", marginBottom: 8 }}>
-        <span style={{ fontSize: 24 }}>💬</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: font, fontSize: 14, fontWeight: 700, color: T.headingText }}>Scripts for right now</div>
-          <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginTop: 2 }}>What to say in hard parenting moments</div>
-        </div>
-        <span style={{ color: T.muted, fontSize: 16 }}>›</span>
-      </button>
     </div>
   );
 }
@@ -536,14 +637,14 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
       <SectionLabel text="Ventral capacity score" />
       <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
-          <div style={{ fontFamily: serif, fontSize: 38, color: T.headingText, lineHeight: 1 }}>{resilience}%</div>
+          <div style={{ fontFamily: serif, fontSize: 38, color: T.headingText, lineHeight: 1 }}>{stabilityRate}%</div>
           <div style={{ fontFamily: font, fontSize: 13, color: T.muted, textAlign: "right", paddingTop: 6 }}>{capacityLabel}</div>
         </div>
         <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ height: "100%", width: `${resilience}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
+          <div style={{ height: "100%", width: `${stabilityRate}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
         </div>
         <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
-          Every regulated check-in adds to your rolling system stability average. Visual progress is {visualProgress}% — but your foundation is at {resilience}%. The canopy is coming.
+          Every regulated check-in adds to your rolling system stability average. {stabilityRate}% of your check-ins have been in a regulated state. Every ventral moment builds your foundation.
         </div>
       </div>
 
@@ -553,7 +654,7 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
         {[
           { label: "Regulated check-ins", sub: "Ventral (Steady/Regulated) states", value: `${ventral} of ${total}` },
           { label: "Leaves banked",        sub: "Deep forest green — hard earned", value: String(leaves) },
-          { label: "Repair blooms",        sub: "Worth 3× root depth each",        value: "0" },
+          { label: "Repair moments",       sub: "SOS flows completed with repair",  value: String(profile?.repair_count ?? 0) },
           { label: "Anchor strength",      sub: "Meltdown resistance rating",       value: anchorStrength, useSerif: true },
         ].map((row, i, arr) => (
           <div key={row.label}>
@@ -750,7 +851,7 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
     if (!currentUser?.id) return;
     supabase
       .from("profiles")
-      .select("created_at, total_ns_logs, ventral_points, latest_ns_state, leaves, streak_milestones")
+      .select("created_at, total_ns_logs, ventral_points, latest_ns_state, leaves, streak_milestones, repair_count")
       .eq("id", currentUser.id)
       .single()
       .then(({ data }) => setProfile(data));

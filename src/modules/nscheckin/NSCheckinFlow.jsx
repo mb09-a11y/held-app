@@ -574,6 +574,28 @@ export function NSCheckinFlow({ onClose, onCheckinSaved, sleepSessionId = null }
         RecentCheckinCache.invalidate(currentUser.id);
         FamilyStateCache.invalidateFamily?.(activeFamily.id) ||
           FamilyStateCache.invalidate(activeFamily.id, null, currentUser.id);
+
+        // Re-fetch profile.leaves to check for milestones
+        // (trigger has already incremented it by now)
+        try {
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("leaves")
+            .eq("id", currentUser.id)
+            .single();
+          const newLeaves = prof?.leaves ?? 0;
+          // Fire milestone callback if we just crossed a 10-leaf boundary
+          // or hit the 50-leaf reward
+          const prevLeaves = newLeaves - 1;
+          if (newLeaves === 50) {
+            onMilestone?.({ type: "fifty_leaves", leaves: newLeaves });
+          } else if (newLeaves > 0 && newLeaves % 10 === 0 && prevLeaves % 10 !== 0) {
+            onMilestone?.({ type: "ten_leaves", leaves: newLeaves });
+          }
+        } catch (e) {
+          // Non-critical — milestone check failed silently
+        }
+
         onCheckinSaved?.();
       }
     } catch (err) {
