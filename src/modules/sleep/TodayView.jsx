@@ -189,9 +189,7 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
     return new Date(l.ts).getHours() >= 6;
   }).length;
 
-  const lastNapWakeUp = completedSessions.find(l => l.session_type === "nap");
-  const lastNightWakeUp = completedSessions.find(l => l.session_type === "night");
-  const lastWakeUp = napCount > 0 ? (lastNapWakeUp || completedSessions[0]) : (lastNightWakeUp || completedSessions[0]);
+  const lastWakeUp = completedSessions[0] || null; // most recent wake regardless of type
   const window_ = effectiveWindows[napCount] ?? effectiveWindows[effectiveWindows.length - 1];
 
   const ageBasedNapDuration = ageMonthsForWindow !== null ? defaultNapDurationsForAge(ageMonthsForWindow) : [60, 70, 90];
@@ -391,74 +389,9 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
       <Toast message={toast.message} icon={toast.icon} visible={toast.visible} />
       {sheet && <InputSheet title={sheet.title} fields={sheet.fields} onConfirm={(vals) => { sheet.onConfirm(vals); closeSheet(); }} onCancel={closeSheet} />}
 
-      {/* ── Meaning Maker ── */}
-      {yesterdayMM && (
-        <div style={{ borderRadius: 16, padding: "14px 16px", background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <span style={{ fontSize: 18, flexShrink: 0 }}>🧠</span>
-          <div>
-            <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: "rgba(255,255,255,0.88)", lineHeight: 1.55, margin: 0 }}>"{yesterdayMM}"</p>
-            <p style={{ fontFamily: font, fontSize: 11, color: "rgba(255,255,255,0.4)", margin: "6px 0 0" }}>↑ From your sleep log · See full insight →</p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Next Sleep Window — compact ── */}
-      {!session ? (
-        <div style={{ borderRadius: 14, padding: "14px 18px", background: `${T.sage}18`, border: `1px solid ${T.sage}40` }}>
-          <div style={{ fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase", color: T.sage, fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
-            Next Sleep Window
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 700, color: T.sage, lineHeight: 1 }}>{suggestedTime}</div>
-              <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 4 }}>based on last wake + {window_}h window</div>
-            </div>
-            {minsUntil !== null && (
-              <div style={{
-                padding: "6px 14px", borderRadius: 20,
-                background: minsUntil < 0 ? `${C.rose}20` : T.bark,
-                fontFamily: font, fontSize: 13, fontWeight: 700,
-                color: minsUntil < 0 ? C.rose : "white",
-              }}>
-                {minsUntil < 0 ? `${fmtDuration(Math.abs(minsUntil))} ago` : `in ${fmtDuration(minsUntil)}`}
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div style={{ borderRadius: 14, padding: "14px 18px", background: `${C.sage}12`, border: `1px solid ${C.sage}30` }}>
-          <div style={{ fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase", color: C.sage, fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
-            {session.sessionType === "night" ? "Target Morning Wake" : "Suggested Wake-Up"}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 700, color: C.sage, lineHeight: 1 }}>
-                {suggestedWakeUpTime ? suggestedWakeUpTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "---"}
-              </div>
-              <div style={{ fontFamily: font, fontSize: 11, color: T.muted, marginTop: 4 }}>
-                {session.sessionType === "night" ? (config.targetMorningWake ? `target: ${config.targetMorningWake}` : "11–12 hours night sleep") : `target: ${napTargetMins}min`}
-              </div>
-            </div>
-            {suggestedWakeUpTime && (() => {
-              const minsToWake = Math.round((suggestedWakeUpTime.getTime() - Date.now()) / 60000);
-              return (
-                <div style={{
-                  padding: "6px 14px", borderRadius: 20,
-                  background: minsToWake < 0 ? `${C.rose}20` : T.bark,
-                  fontFamily: font, fontSize: 13, fontWeight: 700,
-                  color: minsToWake < 0 ? C.rose : "white",
-                }}>
-                  {minsToWake < 0 ? `${fmtDuration(Math.abs(minsToWake))} past` : `in ${fmtDuration(minsToWake)}`}
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
-
       {/* ── Sleep Tracker ── */}
       <Card>
-        <SectionLabel>Sleep Tracker</SectionLabel>
+        <SectionLabel>Sleep</SectionLabel>
 
         {/* Nap / Night toggle */}
         {!session && (
@@ -505,58 +438,6 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
         </div>
       </Card>
 
-      {/* ── Today's Sleep Timeline ── */}
-      <Card>
-        <SectionLabel>Today's Sleep Timeline</SectionLabel>
-        <div style={{ position: "relative", height: 26, borderRadius: 6, background: T.faint, overflow: "hidden", marginBottom: 10 }}>
-          {todaySessions.length === 0 && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <span style={{ fontFamily: font, fontSize: 10, color: T.muted }}>No sessions logged yet today</span>
-            </div>
-          )}
-          {todaySessions.map(s => {
-            const sp = toPct(s.ts), ep = s.end_ts ? toPct(s.end_ts) : toPct(new Date().toISOString());
-            return <div key={s.id} style={{ position: "absolute", top: 3, height: 20, left: `${sp}%`, width: `${Math.max(ep-sp,1.5)}%`, background: s.session_type==="night"?T.bark:C.sage, opacity: s.end_ts?0.85:0.5, borderRadius: 4 }} />;
-          })}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-          {["7am","10am","1pm","4pm","7pm"].map(t=><span key={t} style={{ fontFamily: font, fontSize: 10, color: T.muted }}>{t}</span>)}
-        </div>
-        <div style={{ height: 1, background: T.border, margin: "0 0 12px" }} />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: font, fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, marginBottom: 4 }}>Daytime Sleep So Far</div>
-            <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 600, color: C.sage, lineHeight: 1 }}>
-              {todayDaytimeSleepH > 0 ? fmtHLocal(todayDaytimeSleepH) : <span style={{ fontSize: 18, color: T.muted }}>0h 0m</span>}
-            </div>
-            <div style={{ fontFamily: font, fontSize: 11.5, color: T.muted, marginTop: 4 }}>
-              Goal for {ageMonthsForWindow!==null?`${ageMonthsForWindow}mo`:"this age"}: <strong>{fmtHLocal(napTgtH*0.8)}–{fmtHLocal(napTgtH)}</strong>
-            </div>
-          </div>
-          <div style={{ width: 58, height: 58, position: "relative", flexShrink: 0 }}>
-            <svg width="58" height="58" viewBox="0 0 58 58">
-              <circle cx="29" cy="29" r="23" fill="none" stroke={T.border} strokeWidth="5" />
-              <circle cx="29" cy="29" r="23" fill="none" stroke={C.sage} strokeWidth="5"
-                strokeDasharray={`${2*Math.PI*23}`} strokeDashoffset={`${2*Math.PI*23*(1-napProgress)}`}
-                strokeLinecap="round" transform="rotate(-90 29 29)" />
-            </svg>
-            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font, fontSize: 10, fontWeight: 700, color: C.sage }}>
-              {Math.round(napProgress*100)}%
-            </div>
-          </div>
-        </div>
-        {napProgress < 0.6 && todayDaytimeSleepH > 0 && (
-          <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: `${C.amber}10`, border: `1px solid ${C.amber}25`, display: "flex", gap: 8, alignItems: "flex-start" }}>
-            <span style={{ fontSize: 14 }}>🧠</span>
-            <span style={{ fontFamily: font, fontSize: 12, color: T.text, lineHeight: 1.55 }}>
-              <strong>~{fmtHLocal(napTgtH-todayDaytimeSleepH)} to go.</strong> If the next nap runs short, move bedtime earlier — aim for 15–20 min sooner than usual.
-            </span>
-          </div>
-        )}
-      </Card>
-
-      {/* ── Weather Card ── */}
-      <WeatherCard childName={sleepActiveChild?.name ?? "your little one"} suggestedBedtime={suggestedTime} />
 
       {/* ── Feeding ── */}
       {(showFeeding || showSolids) && (

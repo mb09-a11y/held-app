@@ -8,7 +8,7 @@ import {
   THEMES, ThemeCtx, AppCtx, useT, useApp,
   useStorage, font, serif
 } from "./core/shared.jsx";
-import { supabase, clearStaleAuthTokens, clearStaleLocks } from "./lib/supabase.js";
+import { supabase, clearStaleAuthTokens, clearStaleLocks, onPasswordRecovery } from "./lib/supabase.js";
 import { warmAI } from "./lib/ai.js";
 
 // ── Layout (held nav + SOS FAB)
@@ -64,7 +64,7 @@ const isAdmin = role => role === ROLES.admin;
 const SAFE_CACHE_FIELDS = [
   "id", "name", "email", "role", "subscription_tier",
   "ai_messages_used", "ai_messages_reset_at",
-  "child_name", "dob",
+  "child_name", "dob", "notification_prompt_seen",
 ];
 
 function buildSafeCache(userObj) {
@@ -98,7 +98,7 @@ function clearDataCache() {
 // ─── TAB DEFINITIONS ─────────────────────────────────────────────────────────
 const PARENT_TABS = [
   { id: "home",     label: "Home",     icon: "🏡" },
-  { id: "sleep",    label: "Sleep",    icon: "🌙" },
+  { id: "sleep",    label: "Track",    icon: "📝" },
   { id: "sos",      sos: true                     }, // center SOS slot
   { id: "messages", label: "Messages", icon: "💬" },
   { id: "insights", label: "Insights", icon: "✦"  },
@@ -134,7 +134,35 @@ export default function RCCShell() {
 
   const [session, setSession] = useState(null);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [isRecovery, setIsRecovery] = useState(false);
+  const [isRecovery, setIsRecovery] = useState(() => {
+    try {
+      const hash = window.location.hash || "";
+      const search = window.location.search || "";
+
+      // A PKCE `code` param in the URL means Supabase's automatic
+      // exchangeCodeForSession will (or already did) create a session in
+      // the background. Right now the only flow that produces ?code=... is
+      // password recovery, so treat its presence as "show reset screen" —
+      // this avoids depending on catching the PASSWORD_RECOVERY event at
+      // the right moment. (If magic-link or OAuth login is added later,
+      // this will need to get smarter.)
+      const params = new URLSearchParams(search);
+      if (params.has("code")) return true;
+
+      if (hash.includes("type=recovery") || search.includes("type=recovery")) return true;
+      // On error (e.g. expired/already-used reset link), Supabase redirects to
+      // the default Site URL with error params and drops our ?type=recovery —
+      // so also catch that signature directly. This pattern (error + error_code)
+      // is specific to Supabase auth redirects.
+      const hasAuthError = (str) => str.includes("error_code=") && str.includes("error=");
+      return hasAuthError(hash) || hasAuthError(search);
+    } catch {
+      return false;
+    }
+  });
+  // Mirrors isRecovery, but readable synchronously inside boot() before the
+  // PASSWORD_RECOVERY-triggered re-render happens.
+  const isRecoveryRef = useRef(isRecovery);
   const [currentUser, setCurrentUser] = useState(() => {
     try { const c = localStorage.getItem("rcc_user"); return c ? JSON.parse(c) : null; } catch { return null; }
   });
@@ -179,6 +207,7 @@ export default function RCCShell() {
   // ── Overlays
   const [showSOS, setShowSOS] = useState(false);
   const [showNSCheckin, setShowNSCheckin] = useState(false);
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
   const [checkinRefreshKey, setCheckinRefreshKey] = useState(0);
   const [showMorningMoment, setShowMorningMoment] = useState(false);
   const [showEveningClose, setShowEveningClose] = useState(false);
@@ -253,8 +282,21 @@ export default function RCCShell() {
 
   // ── BOOT
   const bootInFlightRef = useRef(false);
+  const promptCheckedRef = useRef(false); // ensures notification prompt evaluated once per session
+  const initialDataBumpRef = useRef(false); // ensures checkinRefreshKey only bumps once on first load
   useEffect(() => {
     let mounted = true;
+
+    // Catch a PASSWORD_RECOVERY event that may have already fired (during
+    // client creation, before this effect ran) or that fires shortly after.
+    // Runs first so isRecoveryRef is set before boot()'s getSession() resolves.
+    onPasswordRecovery((recoverySession) => {
+      if (!mounted) return;
+      isRecoveryRef.current = true;
+      setIsRecovery(true);
+      setSession(recoverySession);
+      setAuthLoading(false);
+    });
 
     // ── FAST BOOT: read session directly from localStorage ────────────────
     //
@@ -301,11 +343,30 @@ export default function RCCShell() {
       if (bootInFlightRef.current) return;
       bootInFlightRef.current = true;
       try {
+        // If isRecovery was already true on initial render (e.g. from the
+        // ?code= check) or set by the early onPasswordRecovery subscription
+        // above, don't bother with getSession()/loadProfile() at all — the
+        // recovery screen is taking over regardless, and those calls would
+        // just compete for the same auth lock that exchangeCodeForSession
+        // is using, slowing everything down.
+        if (isRecoveryRef.current) {
+          setAuthLoading(false);
+          return;
+        }
+
         // getSession() may queue behind the resume handler lock — that's fine
         // now because the app is already rendered from cache above.
         // This just background-validates the session is still good.
         const { data, error } = await supabase.auth.getSession();
         if (!mounted) return;
+
+        // If a PASSWORD_RECOVERY event arrived (just now, or while we were
+        // awaiting getSession), let the recovery screen take over — don't
+        // load the profile and render the normal app underneath it.
+        if (isRecoveryRef.current) {
+          setAuthLoading(false);
+          return;
+        }
 
         if (error) {
           const msg = error.message || "";
@@ -353,6 +414,7 @@ export default function RCCShell() {
 
       // ── Password reset flow ──
       if (event === "PASSWORD_RECOVERY") {
+        isRecoveryRef.current = true;
         setIsRecovery(true);
         setSession(newSession);
         setAuthLoading(false);
@@ -653,7 +715,7 @@ export default function RCCShell() {
     try {
       const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
         supabase.auth.getUser(),
-        supabase.from("profiles").select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin").eq("id", userId).maybeSingle(),
+        supabase.from("profiles").select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin, notification_prompt_seen").eq("id", userId).maybeSingle(),
       ]);
       if (profileError) throw profileError;
 
@@ -676,6 +738,46 @@ export default function RCCShell() {
       // ── SECURITY: Only cache safe, non-sensitive fields ───────────────────
       try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache(merged))); } catch {}
       setProfileReady(true);
+
+      // Bump checkinRefreshKey once on first load so HeldHome's hooks re-fetch
+      // with confirmed-fresh context. Gated behind a ref so subsequent loadProfile
+      // calls (tab resume, visibility change) don't trigger a full re-fetch cascade
+      // of 6-7 parallel Supabase queries — which was causing the slow loading.
+      if (!initialDataBumpRef.current) {
+        initialDataBumpRef.current = true;
+        setCheckinRefreshKey(k => k + 1);
+      }
+
+      // ── NOTIFICATION PROMPT — show once, parents/co-caregivers only ───────
+      // Guard: skip if already seen, already subscribed, or already checked this session.
+      const isParentRole = merged.role === "parent" || merged.role === "co_caregiver";
+      if (isParentRole && merged.notification_prompt_seen === false && !promptCheckedRef.current) {
+        promptCheckedRef.current = true;
+
+        // sessionStorage guard — survives hot reloads within the same browser
+        // session, preventing the prompt from flashing on every dev reload even
+        // before the DB write completes.
+        if (sessionStorage.getItem("held_notif_prompt_seen")) {
+          return;
+        }
+
+        const { data: existingSub } = await supabase
+          .from("push_subscriptions")
+          .select("id")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (existingSub) {
+          // Already subscribed — just mark seen so we never check again
+          await supabase.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
+          setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
+          try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...merged, notification_prompt_seen: true }))); } catch {}
+        } else {
+          setShowNotificationPrompt(true);
+        }
+      } else if (merged.notification_prompt_seen === true) {
+        promptCheckedRef.current = true; // already done, no need to ever check again
+      }
 
       if (isAdmin(merged.role)) {
         setTab("dashboard");
@@ -861,8 +963,10 @@ export default function RCCShell() {
     if (!currentUser?.id) throw new Error("No signed-in parent found.");
     setChildSaving(true);
     try {
+      const family = activeFamily || families[0];
       const payload = {
         parent_id: currentUser.id,
+        family_id: family?.id ?? null,
         name: child.name,
         dob: child.dob || null,
         weight_lbs: child.weight_lbs ? Number(child.weight_lbs) : null,
@@ -878,17 +982,24 @@ export default function RCCShell() {
       }).eq("id", currentUser.id);
       if (profileError) throw profileError;
       const { data: kids } = await supabase.from("children").select("*").eq("parent_id", currentUser.id).order("created_at", { ascending: true });
-      setChildren(kids || []);
-      if (kids?.length > 0 && !activeChildId) setActiveChildId(kids[0].id);
-      const family = families[0];
-      if (family?.require_intake && !family?.intake_complete) setOnboardingStep("intake");
-      else {
-        setOnboardingStep(null);
-        setTab("home");
-        clearInviteFromUrl();
-      }
+      const kidList = kids || [];
+      setChildren(kidList);
+      if (kidList.length > 0 && !activeChildId) setActiveChildId(kidList[0].id);
     } finally {
       setChildSaving(false);
+    }
+  }
+
+  // Called once the parent is done adding children during onboarding —
+  // advances to the intake step if required, otherwise lands on home.
+  function finishChildOnboarding() {
+    const family = activeFamily || families[0];
+    if (family?.require_intake && !family?.intake_complete) {
+      setOnboardingStep("intake");
+    } else {
+      setOnboardingStep(null);
+      setTab("home");
+      clearInviteFromUrl();
     }
   }
 
@@ -911,6 +1022,85 @@ export default function RCCShell() {
       const url = new URL(window.location.href);
       ["invite", "consultant_invite", "co_invite"].forEach(k => url.searchParams.delete(k));
       window.history.replaceState({}, "", url.toString());
+    } catch {}
+  }
+
+  // ── NOTIFICATION PROMPT HANDLERS ─────────────────────────────────────────
+  async function dismissNotificationPrompt(didAllow) {
+    setShowNotificationPrompt(false);
+
+    // Capture userId immediately — currentUser state may be stale in closure
+    const userId = currentUser?.id;
+    if (!userId) return;
+
+    // Write sessionStorage guard immediately so reloads don't re-show the prompt
+    // while the DB write is in flight
+    sessionStorage.setItem("held_notif_prompt_seen", "1");
+
+    if (didAllow) {
+      // Inline subscribe — avoids mounting usePushNotifications at the shell
+      // level (which calls serviceWorker.ready on every load and causes slowness).
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm === "granted") {
+          const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+          function urlBase64ToUint8Array(base64String) {
+            const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+            const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+            return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+          }
+          const reg = await navigator.serviceWorker.register("/sw.js");
+          await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          });
+          const subJson = sub.toJSON();
+          const ua = navigator.userAgent;
+          const deviceLabel = /iPhone|iPad|iPod/.test(ua) ? "iPhone"
+            : /Android/.test(ua) ? "Android"
+            : /Mac/.test(ua) ? "Mac"
+            : /Windows/.test(ua) ? "Windows" : "Browser";
+          await supabase.from("push_subscriptions").upsert({
+            user_id: userId,
+            subscription: subJson,
+            device_label: deviceLabel,
+          }, { onConflict: "user_id,endpoint" });
+        }
+      } catch (e) {
+        console.warn("Push subscribe failed:", e);
+        // Non-fatal — continue to mark prompt as seen
+      }
+
+      // Upsert sensible defaults into notification_preferences so the cron
+      // function doesn't skip this user on its very first pass.
+      await supabase.from("notification_preferences").upsert({
+        user_id: userId,
+        regulation_checkin: true,
+        messages: true,
+        intake_completed: true,
+        am_enabled: false,
+        pm_enabled: false,
+        am_time: "08:00",
+        pm_time: "20:00",
+        quiet_hours_start: "22:00",
+        quiet_hours_end: "07:00",
+        nap_lead_mins: 10,
+        bedtime_lead_mins: 10,
+      }, { onConflict: "user_id" });
+    }
+
+    // Mark seen regardless of choice — never show again
+    const { error } = await supabase.from("profiles")
+      .update({ notification_prompt_seen: true })
+      .eq("id", userId);
+    if (error) {
+      console.error("[held] Failed to mark notification_prompt_seen:", error);
+    }
+    setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
+    try {
+      const cached = JSON.parse(localStorage.getItem("rcc_user") || "{}");
+      localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...cached, notification_prompt_seen: true })));
     } catch {}
   }
 
@@ -1030,7 +1220,20 @@ export default function RCCShell() {
           isCo: true,
         },
       });
-      if (error) console.warn("[RCCShell] co-caregiver email send failed but DB record was created:", error);
+      if (error) {
+        console.warn("[RCCShell] co-caregiver email send failed but DB record was created:", error);
+        setCoInviteError(
+          <>
+            Something went wrong sending this invite. Please{" "}
+            <a href="mailto:hello@rootedconnectionscollective.com" style={{ color: "inherit", textDecoration: "underline" }}>
+              contact support
+            </a>{" "}
+            and we'll get it sorted.
+          </>
+        );
+        setCoInviteEmail("");
+        return;
+      }
       setCoInviteSuccess(`Invite sent to ${normalizedEmail}!`);
       setCoInviteEmail("");
     } catch (e) {
@@ -1080,6 +1283,13 @@ export default function RCCShell() {
       <ThemeCtx.Provider value={T}>
         <ResetPasswordScreen onDone={() => {
           setIsRecovery(false);
+          // Clear the recovery token from the URL so a refresh doesn't
+          // re-trigger the reset screen with a stale token.
+          try {
+            const url = new URL(window.location.href);
+            url.hash = "";
+            window.history.replaceState({}, "", url.toString());
+          } catch {}
           // onAuthStateChange will fire SIGNED_IN after password update
         }} />
       </ThemeCtx.Provider>
@@ -1125,7 +1335,7 @@ export default function RCCShell() {
     return (
       <ThemeCtx.Provider value={T}>
         <AppCtx.Provider value={appCtx}>
-          <ChildInfoStep onSave={saveChildInfo} loading={childSaving} />
+          <ChildInfoStep onSave={saveChildInfo} onFinish={finishChildOnboarding} loading={childSaving} />
         </AppCtx.Provider>
       </ThemeCtx.Provider>
     );
@@ -1200,6 +1410,63 @@ export default function RCCShell() {
               busy={coInviteBusy} error={coInviteError} success={coInviteSuccess}
               T={T}
             />
+          )}
+
+          {/* ── NOTIFICATION PROMPT (one-time, first login) ── */}
+          {showNotificationPrompt && (
+            <div style={{
+              position: "fixed", inset: 0, zIndex: 600,
+              background: "rgba(0,0,0,0.45)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "0 24px",
+            }}>
+              <div style={{
+                background: T.card || T.bg,
+                borderRadius: 20,
+                padding: "32px 28px 28px",
+                maxWidth: 360,
+                width: "100%",
+                boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+                textAlign: "center",
+              }}>
+                <div style={{ fontSize: 36, marginBottom: 14 }}>🌿</div>
+                <div style={{
+                  fontFamily: serif, fontSize: 19, fontWeight: 700,
+                  color: T.text, marginBottom: 12, lineHeight: 1.35,
+                }}>
+                  Allow Held to send you notifications?
+                </div>
+                <div style={{
+                  fontFamily: font, fontSize: 14, color: T.muted,
+                  lineHeight: 1.65, marginBottom: 28,
+                }}>
+                  Get gentle reminders for sleep routines, bedtime wind-downs, and check-ins when you need them most.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <button
+                    onClick={() => dismissNotificationPrompt(true)}
+                    style={{
+                      width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+                      background: T.teal, color: "#fff",
+                      fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >
+                    Allow
+                  </button>
+                  <button
+                    onClick={() => dismissNotificationPrompt(false)}
+                    style={{
+                      width: "100%", padding: "11px 0", borderRadius: 12,
+                      border: `1px solid ${T.border}`, background: "transparent",
+                      color: T.muted, fontFamily: font, fontSize: 14,
+                      fontWeight: 500, cursor: "pointer",
+                    }}
+                  >
+                    Not Now
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ── SOS OVERLAY ── */}

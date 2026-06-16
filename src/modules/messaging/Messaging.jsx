@@ -395,6 +395,7 @@ async function callRCCAI(messages, familyContext) {
   const systemPrompt = RCC_SYSTEM_PROMPT + (familyContext || "");
   try {
     return await callAI({
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 600,
       system: systemPrompt,
       messages: messages

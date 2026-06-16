@@ -176,7 +176,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
   }
 
   const planTabs = [
-    { id: "log",  label: "Sleep Log",  icon: "🌙" },
+    { id: "log",  label: "Logs",  icon: "📝" },
     ...(canAccessSleepPlan ? [{ id: "plan", label: "Sleep Plan", icon: "📋" }] : []),
   ];
 
@@ -217,7 +217,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
         {/* ── HEADER ── */}
         <div style={{ marginTop: 14, marginBottom: 16 }}>
           <div style={{ fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 4 }}>
-            {sleepTab === "wellness" && view === "log" ? "Sleep · Wellness" : "Sleep"}
+            {sleepTab === "wellness" && view === "log" ? "Wellness" : sleepTab === "patterns" && view === "log" ? "Patterns" : "Track"}
           </div>
           <div style={{ fontFamily: serif, fontSize: 32, color: T.headingText, lineHeight: 1.1, marginBottom: 2 }}>
             {sleepTab === "wellness" && view === "log"
@@ -255,7 +255,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
             </div>
 
             {/* ── MM BANNER — Today only; Patterns/Wellness have their own ── */}
-            {sleepTab === "today" && <MMBanner text={MM_BANNERS[sleepTab]} T={T} />}
+            {sleepTab === "today" && null}
 
             {/* ── SLEEP LOG ── */}
             <SleepLog

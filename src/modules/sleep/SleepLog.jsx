@@ -8,7 +8,7 @@ import { useT, useApp, genId } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 import { C, MOODS, font, serif,
   fetchLogs, insertLog, updateLog, deleteLog, fetchConfig, upsertConfig,
-  calcAgeMonths, calculateAge, localDateStr, fmtTime, fmtDateTime, fmtDuration,
+  calcAgeMonths, calculateAge, localDateStr, fmtDateTime, fmtDuration,
   defaultWakeWindowsForAge, defaultNapDurationsForAge,
 } from "./sleepHelpers.js";
 import { Card, Btn, Pill, Divider, SectionLabel, StatCard } from "./sleepUI.jsx";
@@ -977,11 +977,19 @@ function ConsultantView({ config, setConfig, dbPin, isConsultant }) {
 }
 
 // ─── EDIT LOG MODAL ───────────────────────────────────────────────────────────
+// Converts an ISO timestamp to the "HH:MM" (24-hour) format <input type="time"> expects.
+function toTimeInputValue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function EditLogModal({ log, onSave, onDelete, onClose }) {
   const T = useT();
   const [date, setDate] = useState(localDateStr(new Date(log.ts)));
-  const [time, setTime] = useState(fmtTime(log.ts).replace(" AM","").replace(" PM","").replace(/(\d):(\d\d)/, (_,h,m)=>`${h.padStart(2,"0")}:${m}`));
-  const [endTime, setEndTime] = useState(log.end_ts ? fmtTime(log.end_ts).replace(" AM","").replace(" PM","").replace(/(\d):(\d\d)/,(_,h,m)=>`${h.padStart(2,"0")}:${m}`) : "");
+  const [time, setTime] = useState(toTimeInputValue(log.ts));
+  const [endTime, setEndTime] = useState(toTimeInputValue(log.end_ts));
   const [mood, setMood] = useState(log.mood || "");
   const [diaperType, setDiaperType] = useState(log.sub_type || "wet");
   const [saving, setSaving] = useState(false);

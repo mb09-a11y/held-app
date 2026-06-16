@@ -127,6 +127,23 @@ function ThemeProvider({ mode, children }) {
   return <ThemeCtx.Provider value={T}>{children}</ThemeCtx.Provider>;
 }
 
+// ─── ICONS ─────────────────────────────────────────────────────────────────
+function EyeIcon({ open, size = 16, color = "currentColor" }) {
+  return open ? (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 4.22-5.06" />
+      <path d="M9.9 4.24A10.94 10.94 0 0 1 12 5c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19" />
+      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 // ─── SHARED UI PRIMITIVES ─────────────────────────────────────────────────────
 function Card({ children, style, onClick }) {
   const T = useT();
@@ -167,6 +184,9 @@ function Btn({ children, onClick, color, style, disabled }) {
 function Input({ label, value, onChange, type = "text", required, placeholder }) {
   const T = useT();
   const [focused, setFocused] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === "password";
+  const inputType = isPassword && showPassword ? "text" : type;
   return (
     <div style={{ marginBottom: 14 }}>
       {label && (
@@ -178,19 +198,36 @@ function Input({ label, value, onChange, type = "text", required, placeholder })
           {label}{required && <span style={{ color: T.rose, marginLeft: 4 }}>*</span>}
         </div>
       )}
-      <input type={type} value={value} placeholder={placeholder || ""}
-        onChange={e => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={{
-          width: "100%", padding: "11px 13px", borderRadius: 12,
-          fontFamily: font, fontSize: 13.5,
-          background: T.inputBg, color: T.text,
-          outline: "none", boxSizing: "border-box",
-          border: `1.5px solid ${focused ? T.teal : T.border}`,
-          transition: "border .2s",
-        }}
-      />
+      <div style={{ position: "relative" }}>
+        <input type={inputType} value={value} placeholder={placeholder || ""}
+          onChange={e => onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            width: "100%", padding: isPassword ? "11px 40px 11px 13px" : "11px 13px", borderRadius: 12,
+            fontFamily: font, fontSize: 13.5,
+            background: T.inputBg, color: T.text,
+            outline: "none", boxSizing: "border-box",
+            border: `1.5px solid ${focused ? T.teal : T.border}`,
+            transition: "border .2s",
+          }}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setShowPassword(s => !s)}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            style={{
+              position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+              background: "none", border: "none", padding: 4, margin: 0,
+              cursor: "pointer", display: "flex", alignItems: "center",
+              color: T.muted, lineHeight: 0,
+            }}
+          >
+            <EyeIcon open={showPassword} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -225,5 +262,6 @@ export {
   Card,
   Btn,
   Input,
+  EyeIcon,
   ThemeToggle,
 };

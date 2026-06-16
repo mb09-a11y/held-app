@@ -1,5 +1,5 @@
 // views/consultant/ConsultantShell.jsx
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { useFamilies, useMessages } from "./data/consultantStore.js";
 import { NotificationSettings } from "../../views/shared/NotificationSettings.jsx";
@@ -7,21 +7,22 @@ import { InAppPDFViewer } from "../../modules/library/InAppPDFViewer.jsx";
 import { supabase } from "../../lib/supabase.js";
 
 import ConsultantHome   from "./ConsultantHome.jsx";
-import FamiliesView     from "./FamiliesView.jsx";
 import FamilyDetail     from "./FamilyDetail.jsx";
 import MethodMatching   from "./MethodMatching.jsx";
-import RegulationLayer  from "./RegulationLayer.jsx";
+import DistressIntercept from "./DistressIntercept.jsx";
+import { ConsultantNSCheckin } from "./ConsultantNSCheckin.jsx";
 import ResponseBuilder  from "./ResponseBuilder.jsx";
-import CoPilotWorkspace from "./CoPilotWorkspace.jsx";
+import SelahTab          from "./SelahTab.jsx";
+import selahOrb from "../../assets/Selah-orb.png";
 import RedFlags         from "./RedFlags.jsx";
 
 // ── Bottom nav ────────────────────────────────────────────────────────────────
 const NAV_TABS = [
   { id: "home",     icon: "🏠", label: "Home"     },
   { id: "families", icon: "👪", label: "Families" },
-  { id: "plans",    icon: "📋", label: "Plans"    },
-  { id: "messages", icon: "💬", label: "Messages" },
-  { id: "copilot",  icon: "🧠", label: "Co-Pilot" },
+  { id: "selah",    selah: true, label: "Selah"   },
+  { id: "library",  icon: "📖", label: "Library"  },
+  { id: "settings", icon: "⚙️", label: "Settings" },
 ];
 
 // ── Consultant Sleep Library ───────────────────────────────────────────────────
@@ -119,7 +120,7 @@ function ConsultantAccount({ currentUser, logout, onClose }) {
     setPwError(null);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(pwEmail, {
-        redirectTo: window.location.origin,
+        redirectTo: `${window.location.origin}/?type=recovery`,
       });
       if (error) throw error;
       setPwSent(true);
@@ -472,15 +473,43 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
   const { currentUser: appUser } = useApp();
   const currentUser = currentUserProp || appUser;
 
-  // ── Log regulation check-in to Supabase ──────────────────────────────────
-  const logRegulationCheckin = async ({ familyId, state, skipped }) => {
+  // ── Track the consultant's most recent NS check-in ───────────────────────
+  // Drives the Distress Intercept's 1-hour gate (and, later, Home variants +
+  // Families/Home filtering by today's state).
+  const [lastNSCheckin, setLastNSCheckin] = useState(null); // { created_at, inferred_state } | null
+
+  const refreshLastNSCheckin = async () => {
+    if (!currentUser?.id) return;
+    try {
+      const { data } = await supabase
+        .from("consultant_ns_checkins")
+        .select("created_at, inferred_state")
+        .eq("consultant_id", currentUser.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      setLastNSCheckin(data || null);
+    } catch {
+      // Silent — gate just defaults to "not fresh"
+    }
+  };
+
+  useEffect(() => { refreshLastNSCheckin(); }, [currentUser?.id]);
+
+  const isCheckinFresh = () => {
+    if (!lastNSCheckin?.created_at) return false;
+    return Date.now() - new Date(lastNSCheckin.created_at).getTime() < 60 * 60 * 1000;
+  };
+
+  // ── Log a skipped pre-reply check-in (no NS card data to save) ───────────
+  const logCheckinSkip = async (familyId) => {
     if (!currentUser?.id) return;
     try {
       await supabase.from("consultant_checkins").insert({
         consultant_id: currentUser.id,
-        arrival_state: skipped ? "skipped" : (state?.label?.toLowerCase() || "unknown"),
-        is_regulated: !skipped && state?.label === "Grounded",
-        source: "pre_reply",
+        arrival_state: "skipped",
+        is_regulated: false,
+        source: "pre_reply_skip",
         family_id: familyId,
         created_at: new Date().toISOString(),
       });
@@ -492,29 +521,18 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
   const [activeTab,  setActiveTab]  = useState("home");
   const [navStack,   setNavStack]   = useState([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [showLibrary, setShowLibrary] = useState(false);
-  const [showAccount, setShowAccount] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showNSCheckin, setShowNSCheckin] = useState(false);
 
-  // Show "before you reply" regulation screen for distressed families
-  // once per family, resets every 2 hours (sessionStorage)
-  const shouldShowRegulation = (familyId) => {
-    const family = families?.find(f => f.id === familyId);
-    const isDistressed = family?.nsState === "overwhelmed" || family?.nsState === "activated" || family?.urgency === "urgent";
-    if (!isDistressed) return false;
-    const key = `reg_shown_${familyId}`;
-    const last = sessionStorage.getItem(key);
-    if (!last) return true;
-    return Date.now() - parseInt(last) > 2 * 60 * 60 * 1000;
-  };
-
+  // ── Distress Intercept gating ─────────────────────────────────────────────
+  // Surfaces before EVERY reply, regardless of the family's NS state — unless
+  // the consultant checked in with themselves within the last hour.
   const navigate = (view, params = {}) => {
-    if (view === "responseBuilder" && params.familyId && shouldShowRegulation(params.familyId)) {
-      sessionStorage.setItem(`reg_shown_${params.familyId}`, String(Date.now()));
+    if (view === "responseBuilder" && params.familyId && !isCheckinFresh()) {
       const fam = families?.find(f => f.id === params.familyId);
       setNavStack(prev => [...prev, {
-        view: "regulation",
-        params: { familyId: params.familyId, familyName: fam?.name },
+        view: "distressIntercept",
+        params: { familyId: params.familyId, familyName: fam?.name, familyNsState: fam?.nsState },
       }]);
       return;
     }
@@ -545,15 +563,17 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
     if (view === "methodMatching") return (
       <MethodMatching familyId={params.familyId} childId={params.childId} onNavigate={navigate} onBack={goBack} />
     );
-    if (view === "regulation") return (
-      <RegulationLayer
+    if (view === "distressIntercept") return (
+      <DistressIntercept
+        familyId={params.familyId}
         familyName={params.familyName}
-        onRegulated={({ state, skipped }) => {
-          logRegulationCheckin({ familyId: params.familyId, state, skipped });
+        familyNsState={params.familyNsState}
+        onCheckinComplete={(result) => {
+          setLastNSCheckin({ created_at: new Date().toISOString(), inferred_state: result?.state });
           setNavStack(prev => [...prev.slice(0, -1), { view: "responseBuilder", params: { familyId: params.familyId } }]);
         }}
-        onSkip={({ state, skipped }) => {
-          logRegulationCheckin({ familyId: params.familyId, state, skipped });
+        onSkip={() => {
+          logCheckinSkip(params.familyId);
           setNavStack(prev => [...prev.slice(0, -1), { view: "responseBuilder", params: { familyId: params.familyId } }]);
         }}
       />
@@ -567,11 +587,11 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
 
   // ── Base tab views ────────────────────────────────────────────────────────
   const renderBaseTab = () => {
-    if (activeTab === "home")     return <ConsultantHome   onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} />;
-    if (activeTab === "families") return <FamiliesView     onNavigate={navigate} onInviteFamily={onInviteFamily} />;
-    if (activeTab === "plans")    return <FamiliesView     onNavigate={navigate} onInviteFamily={onInviteFamily} />;
-    if (activeTab === "copilot")  return <CoPilotWorkspace onNavigate={navigate} />;
-    if (activeTab === "messages") return <MessagesTab onNavigate={navigate} />;
+    if (activeTab === "home")     return <ConsultantHome   onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} lastNSCheckin={lastNSCheckin} onCheckin={() => setShowNSCheckin(true)} />;
+    if (activeTab === "families") return <RedFlags onNavigate={navigate} onInviteFamily={onInviteFamily} />;
+    if (activeTab === "selah")    return <SelahTab onNavigate={navigate} onCheckin={() => setShowNSCheckin(true)} />;
+    if (activeTab === "library")  return <ConsultantLibrary onClose={() => handleTabChange("home")} />;
+    if (activeTab === "settings") return <ConsultantAccount currentUser={currentUser} logout={logout} onClose={() => handleTabChange("home")} />;
     return null;
   };
 
@@ -619,6 +639,30 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
       }}>
         {NAV_TABS.map(tab => {
           const isOn = !isDrilledDown && activeTab === tab.id;
+
+          if (tab.selah) {
+            return (
+              <button key={tab.id} onClick={() => handleTabChange(tab.id)} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                background: "none", border: "none", cursor: "pointer",
+              }}>
+                <div style={{
+                  width: 52, height: 52, borderRadius: "50%",
+                  background: `url(${selahOrb}) center / cover, ${T.bg2}`,
+                  border: `3px solid ${T.bg2}`,
+                  boxShadow: isOn ? "0 2px 16px rgba(168,128,64,0.45), 0 1px 6px rgba(0,0,0,0.18)" : "0 2px 12px rgba(0,0,0,0.15)",
+                  transform: "translateY(-10px)",
+                  marginBottom: -6,
+                  transition: "box-shadow 0.18s",
+                }} />
+                <span style={{
+                  fontSize: 9, letterSpacing: "0.05em", textTransform: "uppercase",
+                  color: isOn ? T.teal : T.muted, fontWeight: 500, fontFamily: font,
+                }}>{tab.label}</span>
+              </button>
+            );
+          }
+
           return (
             <button key={tab.id} onClick={() => handleTabChange(tab.id)} style={{
               display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
@@ -640,31 +684,29 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onNavigateFlag={() => navigate("flags")}
-        onOpenLibrary={() => setShowLibrary(true)}
+        onOpenLibrary={() => { setDrawerOpen(false); handleTabChange("library"); }}
         onOpenNotifications={() => setShowNotifications(true)}
-        onOpenAccount={() => setShowAccount(true)}
+        onOpenAccount={() => { setDrawerOpen(false); handleTabChange("settings"); }}
         currentUser={currentUser}
         logout={logout}
         T={T}
       />
 
-      {/* ── Consultant Library overlay ── */}
-      {showLibrary && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 350, display: "flex", flexDirection: "column" }}>
-          <ConsultantLibrary onClose={() => setShowLibrary(false)} />
-        </div>
-      )}
-
-      {/* ── Account overlay ── */}
-      {showAccount && (
-        <div style={{ position: "absolute", inset: 0, zIndex: 350, display: "flex", flexDirection: "column" }}>
-          <ConsultantAccount currentUser={currentUser} logout={logout} onClose={() => setShowAccount(false)} />
-        </div>
-      )}
-
       {/* ── Notifications overlay ── */}
       {showNotifications && (
         <NotificationSettings onClose={() => setShowNotifications(false)} />
+      )}
+
+      {/* ── Daily NS check-in overlay (Selah "Check in" / well journey CTA) ── */}
+      {showNSCheckin && (
+        <ConsultantNSCheckin
+          checkinContext="daily"
+          onClose={() => setShowNSCheckin(false)}
+          onCheckinSaved={(result) => {
+            setLastNSCheckin({ created_at: new Date().toISOString(), inferred_state: result?.state });
+            setShowNSCheckin(false);
+          }}
+        />
       )}
     </div>
   );

@@ -2,7 +2,7 @@
 import { useT, font, serif } from "../../core/shared.jsx";
 import { useFamilies } from "./data/consultantStore.js";
 
-export default function RedFlags({ onNavigate }) {
+export default function RedFlags({ onNavigate, onInviteFamily }) {
   const T = useT();
   const { families } = useFamilies();
 
@@ -12,9 +12,26 @@ export default function RedFlags({ onNavigate }) {
 
   return (
     <div style={{ background: T.gradientBg, flex: 1, overflowY: "auto" }}>
-      <div style={{ padding: "14px 18px 2px" }}>
-        <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: T.headingText, marginBottom: 4 }}>Flags</div>
-        <div style={{ fontSize: 12, color: T.muted, fontFamily: font }}>When to intervene, adjust, or refer</div>
+      <div style={{ padding: "14px 18px 2px", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, color: T.headingText, marginBottom: 4 }}>Families</div>
+          <div style={{ fontSize: 12, color: T.muted, fontFamily: font }}>When to intervene, adjust, or refer</div>
+        </div>
+        {onInviteFamily && (
+          <button
+            onClick={onInviteFamily}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "9px 16px", borderRadius: 20,
+              background: "#5C7A5E", border: "none",
+              color: "#fff", fontFamily: font, fontSize: 13,
+              fontWeight: 600, cursor: "pointer", flexShrink: 0,
+              marginTop: 6,
+            }}
+          >
+            + Invite family
+          </button>
+        )}
       </div>
 
       {/* Red flags */}
@@ -138,15 +155,17 @@ export default function RedFlags({ onNavigate }) {
             ✅ All clear
           </div>
           {goodFamilies.map(fam => (
-            <div key={fam.id} style={{
+            <div key={fam.id} onClick={() => onNavigate("family", { familyId: fam.id })} style={{
               margin: "0 18px 8px", background: "rgba(92,122,94,0.15)",
               border: "1.5px solid #C4D2C2", borderRadius: 14,
               padding: "11px 14px", display: "flex", alignItems: "center", gap: 10,
+              cursor: "pointer",
             }}>
               <span style={{ fontSize: 16 }}>✅</span>
               <span style={{ fontSize: 12, color: T.text, lineHeight: 1.45, flex: 1, fontFamily: font }}>
                 <strong>{fam.name}</strong> — {fam.insight}
               </span>
+              <span style={{ fontSize: 14, color: T.muted }}>›</span>
             </div>
           ))}
         </>

@@ -502,6 +502,7 @@ function RepairComplete({ childName, userId, familyId, onClose }) {
         await supabase.from("regulation_checkins").insert({
           user_id:       userId,
           family_id:     familyId,
+          type:          new Date().getHours() < 12 ? "am" : "pm",
           state:         "Regulated",
           source:        "sos_repair",
           checkin_type:  "sos",

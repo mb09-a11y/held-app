@@ -26,7 +26,7 @@ export async function warmAI() {
   }
 }
 
-export async function callAI({ system, messages, model = "claude-sonnet-4-20250514", max_tokens = 1000 }) {
+export async function callAI({ system, messages, model = "claude-sonnet-4-6", max_tokens = 1000 }) {
   // Get the current session token so Supabase allows the edge function call
   const { data: { session } } = await supabase.auth.getSession();
 

@@ -38,10 +38,12 @@ export function SharedReward({ childName, userId, familyId, onClose }) {
       if (!userId || !familyId) return;
       try {
         const now = new Date().toISOString();
+        const type = new Date().getHours() < 12 ? "am" : "pm";
         await supabase.from("regulation_checkins").insert([
           {
             user_id:       userId,
             family_id:     familyId,
+            type:          type,
             state:         "Regulated",
             source:        "sos_coregulation",
             checkin_type:  "sos",
@@ -52,6 +54,7 @@ export function SharedReward({ childName, userId, familyId, onClose }) {
           {
             user_id:       userId,
             family_id:     familyId,
+            type:          type,
             state:         "Regulated",
             source:        "sos_coregulation",
             checkin_type:  "sos",

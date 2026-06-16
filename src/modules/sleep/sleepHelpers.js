@@ -267,10 +267,12 @@ export function useNextSleep(familyId, childId, childDob, timezone = null) {
         return tzHour(l.ts) >= 6;
       }).length;
 
-      // Last wake reference
-      const lastNap = completed.find(l => l.session_type === "nap");
-      const lastNight = completed.find(l => l.session_type === "night");
-      const lastWakeUp = napCount > 0 ? (lastNap || completed[0]) : (lastNight || completed[0]);
+      // Last wake reference — always use the most recently completed session
+      // regardless of type. The previous logic (lastNight when napCount===0)
+      // caused wildly incorrect windows when night sleep wasn't logged recently
+      // but a nap was (e.g. showed 103h overdue because it anchored to a
+      // Wednesday night instead of Sunday's nap).
+      const lastWakeUp = completed[0] || null;
 
       // Wake windows — consultant config first, then age-based
       const ageMonths = childDob

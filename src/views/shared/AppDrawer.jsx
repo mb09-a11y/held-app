@@ -10,7 +10,7 @@
 //   - Cormorant Garamond for headings via serif font token
 
 import { useState, useEffect } from "react";
-import { useT, useApp, font, serif } from "../../core/shared.jsx";
+import { useT, useApp, font, serif, EyeIcon } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
 
 const SUBSTACK_URL = "https://substack.com/@manu142886/notes?utm_campaign=profile&utm_medium=profile-page";
@@ -156,6 +156,7 @@ function AccountPanel({ onClose, onLogout, T }) {
   const { currentUser } = useApp();
   const [form, setForm] = useState({ name: currentUser?.name || "", email: currentUser?.email || "" });
   const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -211,11 +212,18 @@ function AccountPanel({ onClose, onLogout, T }) {
 
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6, fontFamily: font }}>New password</div>
-          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Leave blank to keep current"
-            style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: font, fontSize: 13.5, background: T.inputBg, color: T.text, border: `1.5px solid ${T.border}`, outline: "none", boxSizing: "border-box" }}
-            onFocus={e => e.target.style.borderColor = T.teal}
-            onBlur={e => e.target.style.borderColor = T.border}
-          />
+          <div style={{ position: "relative" }}>
+            <input type={showPassword ? "text" : "password"} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Leave blank to keep current"
+              style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 12, fontFamily: font, fontSize: 13.5, background: T.inputBg, color: T.text, border: `1.5px solid ${T.border}`, outline: "none", boxSizing: "border-box" }}
+              onFocus={e => e.target.style.borderColor = T.teal}
+              onBlur={e => e.target.style.borderColor = T.border}
+            />
+            <button type="button" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? "Hide password" : "Show password"}
+              style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 4, margin: 0, cursor: "pointer", display: "flex", alignItems: "center", color: T.muted, lineHeight: 0 }}
+            >
+              <EyeIcon open={showPassword} />
+            </button>
+          </div>
         </div>
 
         {error && <div style={{ fontSize: 12.5, color: T.rose, marginBottom: 10, fontFamily: font }}>{error}</div>}

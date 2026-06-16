@@ -432,16 +432,41 @@ export function PatternsView({ logs, onPatch, onDelete }) {
           })()}
         </Card>
 
-        {/* MM banner — after stats, before chart */}
-        {meaningMaker && (
-          <div style={{ borderRadius: 16, padding: "14px 16px", background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-            <span style={{ fontSize: 18, flexShrink: 0 }}>🧠</span>
-            <div>
-              <p style={{ fontFamily: serif, fontSize: 14, fontStyle: "italic", color: "rgba(255,255,255,0.88)", lineHeight: 1.55, margin: "0 0 6px" }}>{meaningMaker}</p>
-              <span style={{ fontFamily: font, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>See full insight →</span>
-            </div>
-          </div>
-        )}
+        {/* ── Today's Sleep Timeline (moved from Today tab) ── */}
+        {(() => {
+          const nowMs = Date.now();
+          const toPct = ts => {
+            const d = new Date(ts);
+            const dayStart = new Date(d); dayStart.setHours(7, 0, 0, 0);
+            const dayEnd = new Date(d); dayEnd.setHours(19, 0, 0, 0);
+            return Math.min(100, Math.max(0, (d - dayStart) / (dayEnd - dayStart) * 100));
+          };
+          const todaySessions = (logs || []).filter(l => {
+            if (l.type !== "sleep_session") return false;
+            const d = new Date(l.ts);
+            const today = new Date();
+            return d.toDateString() === today.toDateString();
+          });
+          return (
+            <Card>
+              <SectionLabel>Today's Sleep Timeline</SectionLabel>
+              <div style={{ position: "relative", height: 26, borderRadius: 6, background: T.faint, overflow: "hidden", marginBottom: 10 }}>
+                {todaySessions.length === 0 && (
+                  <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontFamily: font, fontSize: 10, color: T.muted }}>No sessions logged yet today</span>
+                  </div>
+                )}
+                {todaySessions.map(s => {
+                  const sp = toPct(s.ts), ep = s.end_ts ? toPct(s.end_ts) : toPct(new Date().toISOString());
+                  return <div key={s.id} style={{ position: "absolute", top: 3, height: 20, left: `${sp}%`, width: `${Math.max(ep-sp,1.5)}%`, background: s.session_type==="night"?T.bark:C.sage, opacity: s.end_ts?0.85:0.5, borderRadius: 4 }} />;
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                {["7am","10am","1pm","4pm","7pm"].map(t=><span key={t} style={{ fontFamily: font, fontSize: 10, color: T.muted }}>{t}</span>)}
+              </div>
+            </Card>
+          );
+        })()}
 
         {/* Bar / Line chart */}
         <Card>
@@ -751,6 +776,9 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                 const isSolids = s.type === "solids";
                 const durH = isSleep && s.end_ts ? Math.max(0,(new Date(s.end_ts)-new Date(s.ts))/3600000) : null;
                 const settle = isSleep && s.fall_asleep_secs != null ? Math.round(s.fall_asleep_secs/60) : null;
+                const wakeTimeStr = isSleep && s.end_ts
+                  ? new Date(s.end_ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+                  : null;
                 const icon = isSleep
                   ? (s.session_type === "night" ? "🌙" : "☀️")
                   : isDiaper ? (s.sub_type === "dirty" ? "💩" : "💦")
@@ -763,7 +791,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                             : isFeed   ? (s.mode === "nursing" ? `Nursing${s.side ? ` · ${s.side}` : ""}` : s.mode === "pump" ? `Pump${s.amount ? ` · ${s.amount}oz` : ""}` : `Bottle · ${s.amount || "—"}oz`)
                             : `Solids${s.food ? ` · ${s.food}` : ""}`;
                 const sub = isSleep
-                  ? [durH != null ? fmtHm2(durH) : "in progress", settle != null ? `settled in ${settle}m` : null, s.mood ? MOODS.find(m=>m.id===s.mood)?.emoji ?? "" : null].filter(Boolean).join(" · ")
+                  ? [durH != null ? fmtHm2(durH) : (s.end_ts ? null : "in progress"), settle != null ? `settled in ${settle}m` : null, s.mood ? MOODS.find(m=>m.id===s.mood)?.emoji ?? "" : null].filter(Boolean).join(" · ")
                   : isWaking ? [s.duration ? `${s.duration}m awake` : null, s.description || null].filter(Boolean).join(" · ")
                   : isSolids && s.reaction ? s.reaction
                   : "";
@@ -774,7 +802,9 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
                         <span style={{ fontSize:13 }}>{icon}</span>
                         <span style={{ fontFamily:font, fontSize:13, fontWeight:600, color:T.text }}>{label}</span>
-                        <span style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{fmtDateTime(s.ts)}</span>
+                        <span style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>
+                          {fmtDateTime(s.ts)}{isSleep && wakeTimeStr ? ` – ${wakeTimeStr}` : ""}
+                        </span>
                       </div>
                       {sub ? <div style={{ fontFamily:font, fontSize:11.5, color:T.muted }}>{sub}</div> : null}
                     </div>

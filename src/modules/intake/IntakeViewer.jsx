@@ -337,7 +337,11 @@ export function IntakeViewer({ family, onBack }) {
   ];
 
   return (
-    <div style={{ fontFamily: font, color: T.text, paddingBottom: 80 }}>
+    <div style={{
+      fontFamily: font, color: T.text,
+      flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch",
+      padding: "0 0 80px", boxSizing: "border-box",
+    }}>
 
       {/* ── HEADER ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>

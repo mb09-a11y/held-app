@@ -1012,11 +1012,13 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
             ) : nextSleepStr ? (
               <>
                 <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: T.headingText, lineHeight: 1 }}>
-                  {nextSleepStr}
+                  {minsUntilSleep < -720 ? "––" : nextSleepStr}
                 </div>
                 <div style={{ fontFamily: font, fontSize: 11, color: minsUntilSleep < 0 ? "#A87B8A" : T.muted, marginTop: 4 }}>
-                  {minsUntilSleep < 0
-                    ? `${Math.abs(minsUntilSleep)}m overdue`
+                  {minsUntilSleep < -720
+                    ? "No sleep logged today"
+                    : minsUntilSleep < 0
+                    ? (() => { const m = Math.abs(minsUntilSleep); return m < 60 ? `${m}m overdue` : `${Math.floor(m/60)}h ${m%60}m overdue`; })()
                     : minsUntilSleep < 60
                     ? `in ${minsUntilSleep}m`
                     : `in ${Math.floor(minsUntilSleep/60)}h ${minsUntilSleep%60}m`}
@@ -1172,7 +1174,13 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           const napTimes = napSessions.map(s => new Date(s.ts).getHours() * 60 + new Date(s.ts).getMinutes());
           const avgNapStart = napTimes.length > 0 ? napTimes.reduce((a, b) => a + b, 0) / napTimes.length : null;
           const napTimeStr = avgNapStart !== null
-            ? (() => { const h = Math.floor(avgNapStart / 60); const m = Math.round(avgNapStart % 60); return `${h}:${m.toString().padStart(2, "0")}${h >= 12 ? "pm" : "am"}`; })()
+            ? (() => {
+                const h = Math.floor(avgNapStart / 60);
+                const m = Math.round(avgNapStart % 60);
+                const h12 = h % 12 || 12;
+                const ampm = h >= 12 ? "pm" : "am";
+                return `${h12}:${m.toString().padStart(2, "0")}${ampm}`;
+              })()
             : null;
           const steadyDominant = ["Regulated"].includes(familyState?.parentState?.nervousSystemTrend);
           const patternText = napTimeStr && steadyDominant

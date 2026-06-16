@@ -114,13 +114,13 @@ function analyzePatterns(checkins, sleepSessions) {
   const roughNights = sleepSessions.filter(s => {
     const hrs = getSleepMs(s) / 3600000;
     if (hrs <= 0 || new Date(s.ts) < since7) return false;
-    return s.session_type === "night" ? hrs < 8 : hrs < 6;
+    return s.session_type === "night" && hrs < 8;
   }).length;
   const lastWeekRoughNights = sleepSessions.filter(s => {
     const hrs = getSleepMs(s) / 3600000;
     const ts = new Date(s.ts);
     if (hrs <= 0 || ts < since14 || ts >= since7) return false;
-    return s.session_type === "night" ? hrs < 8 : hrs < 6;
+    return s.session_type === "night" && hrs < 8;
   }).length;
   const shortNapCount = sleepSessions.filter(s => {
     const hrs = getSleepMs(s) / 3600000;
@@ -193,7 +193,7 @@ function analyzePatterns(checkins, sleepSessions) {
   const note = trendNote();
 
   const sleepAndActivation = roughNights >= 2 && activationCount >= 3;
-  const sleepDebt = roughNights >= 2 || shortNapCount >= 3;
+  const sleepDebt = roughNights >= 2;
 
   if (sleepAndActivation || (sleepDebt && realCheckins.length >= 2)) {
     const napNote = shortNapCount >= 2 ? ` + ${shortNapCount} short nap${shortNapCount > 1 ? "s" : ""}` : "";
@@ -399,6 +399,8 @@ function analyzePatterns(checkins, sleepSessions) {
       quote: `You tend to feel 'on edge' around ${peakTimeStr}.`,
       body: `This is predictable — which means it's workable. A 2-minute reset at ${alertTimeStr} could change your whole ${timeOfDay}.`,
       alertLabel: `${alertTimeStr} Reminder`,
+      alertHour: peakHr > 0 ? peakHr - 1 : 23,
+      peakTimeLabel: peakTimeStr,
     };
   }
 
@@ -449,6 +451,7 @@ function SectionLabel({ text }) {
 // ─── YOUR STORY TAB ───────────────────────────────────────────────────────────
 function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, setTab, onScripts }) {
   const T = useT();
+  const { currentUser, activeFamily } = useApp();
   const {
     meaningMaker, behaviorPattern, yourPattern,
     realCheckins, trend,
@@ -459,6 +462,56 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
   const leaves = profile?.leaves ?? 0;
   const stabilityRate = total > 0 ? Math.round((ventral / total) * 100) : 0;
   const capacityLabel = stabilityRate >= 60 ? "Deeply anchored" : stabilityRate >= 35 ? "Structure stabilizing" : "Foundation building";
+
+  // ── Tension-reset reminder state ─────────────────────────────────────────
+  const [resetReminderActive, setResetReminderActive] = useState(false);
+  const [resetReminderChecked, setResetReminderChecked] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+    supabase
+      .from("insight_reminders")
+      .select("status, end_date")
+      .eq("user_id", currentUser.id)
+      .eq("reminder_key", "tension_reset")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const todayISO = new Date().toISOString().slice(0, 10);
+        setResetReminderActive(!!data && data.status === "active" && data.end_date >= todayISO);
+        setResetReminderChecked(true);
+      });
+    return () => { cancelled = true; };
+  }, [currentUser?.id]);
+
+  async function handleSetResetReminder() {
+    if (!currentUser?.id || !activeFamily?.id || !yourPattern || resetReminderActive) return;
+    setResetReminderActive(true); // optimistic
+
+    const toISO = (d) => d.toISOString().slice(0, 10);
+    const start = new Date();
+    const end = new Date(start);
+    end.setDate(end.getDate() + 11); // 12 days inclusive
+
+    const { error } = await supabase.from("insight_reminders").upsert({
+      user_id: currentUser.id,
+      family_id: activeFamily.id,
+      reminder_key: "tension_reset",
+      target_time: `${String(yourPattern.alertHour).padStart(2, "0")}:00:00`,
+      peak_time_label: yourPattern.peakTimeLabel,
+      start_date: toISO(start),
+      end_date: toISO(end),
+      last_sent_date: null,
+      status: "active",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,reminder_key" });
+
+    if (error) {
+      console.error("Failed to set tension-reset reminder:", error);
+      setResetReminderActive(false);
+    }
+  }
 
   let nsQuote = null;
   if (total === 0) {
@@ -576,8 +629,11 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
           <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>Your Pattern</div>
           <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.55, marginBottom: 10 }}>"{yourPattern.quote}"</div>
           <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 14 }}>{yourPattern.body}</div>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, background: T.tealLight, border: `1px solid ${T.teal}40`, fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal, cursor: "pointer" }}>
-            ⏰ {yourPattern.alertLabel}
+          <div
+            onClick={resetReminderActive ? undefined : handleSetResetReminder}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, background: T.tealLight, border: `1px solid ${T.teal}40`, fontFamily: font, fontSize: 12, fontWeight: 600, color: T.teal, cursor: resetReminderActive ? "default" : "pointer", opacity: resetReminderChecked ? 1 : 0.6 }}
+          >
+            {resetReminderActive ? "✓ Reminder set · 12 days" : `⏰ ${yourPattern.alertLabel}`}
           </div>
         </div>
       )}
@@ -602,6 +658,7 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
   const total = profile?.total_ns_logs ?? 0;
   const ventral = ventralCount ?? 0;
   const leaves = profile?.leaves ?? 0;
+  const stabilityRate = total > 0 ? Math.round((ventral / total) * 100) : 0;
   const milestones = profile?.streak_milestones || {};
   const resilience = Math.min(Math.round((total / 120) * 100), 100);
   const visualProgress = Math.min(Math.round((weekCount / 22) * 100), 100);

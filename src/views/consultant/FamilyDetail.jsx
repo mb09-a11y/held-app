@@ -1,5 +1,6 @@
 // views/consultant/FamilyDetail.jsx
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useT, font, serif } from "../../core/shared.jsx";
 import { useFamilies, useNSLog, useMessages } from "./data/consultantStore.js";
 import NSBanner from "./shared/NSBanner.jsx";
@@ -110,7 +111,7 @@ function FamilyMessagesTab({ family, triggerCoPilot, onNavigate }) {
 // ── End Relationship confirm dialog ───────────────────────────────────────────
 function EndRelationshipDialog({ family, onConfirm, onCancel, loading }) {
   const T = useT();
-  return (
+  return createPortal(
     <div style={{
       position: "fixed", inset: 0, zIndex: 999,
       background: "rgba(0,0,0,0.45)", display: "flex",
@@ -182,7 +183,8 @@ function EndRelationshipDialog({ family, onConfirm, onCancel, loading }) {
           Cancel
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -232,16 +234,7 @@ export default function FamilyDetail({ familyId, family: familyProp, params, onN
     setEndingRelationship(true);
     setEndError(null);
     try {
-      const downgradeAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
-
-      const { error } = await supabase
-        .from("families")
-        .update({
-          consultant_id: null,
-          relationship_status: "ended",
-          downgrade_scheduled_at: downgradeAt,
-        })
-        .eq("id", family.id);
+      const { error } = await supabase.rpc("end_family_relationship", { p_family_id: family.id });
 
       if (error) throw error;
 

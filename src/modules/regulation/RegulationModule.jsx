@@ -601,9 +601,27 @@ export function ExerciseScreen({ exerciseId, preState, onComplete, onBack, onLog
       </div>
 
       {/* Description */}
-      <div style={{ padding: "13px 16px", borderRadius: 13, background: T.card, border: `1px solid ${T.border}`, marginBottom: 20 }}>
+      <div style={{ padding: "13px 16px", borderRadius: 13, background: T.card, border: `1px solid ${T.border}`, marginBottom: ex.pdfUrl ? 10 : 20 }}>
         <div style={{ fontSize: 13.5, color: T.muted, lineHeight: 1.7, fontStyle: "italic" }}>{ex.desc}</div>
       </div>
+
+      {/* PDF guide, if provided */}
+      {ex.pdfUrl && (
+        <a
+          href={ex.pdfUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            padding: "12px 16px", borderRadius: 13, marginBottom: 20,
+            background: T.card, border: `1px solid ${T.border}`,
+            color: accentColor, fontFamily: font, fontSize: 13.5, fontWeight: 600,
+            textDecoration: "none",
+          }}
+        >
+          📄 View PDF guide
+        </a>
+      )}
 
       {/* Audio error — preview sandbox blocks cross-origin audio; works fine when deployed */}
       {audioError && (

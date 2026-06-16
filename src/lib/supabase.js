@@ -40,8 +40,54 @@ function createSupabaseClient() {
 // We also export a stable `supabase` proxy object so existing import statements
 // (import { supabase } from '...') work without any changes in other files.
 
+// Clear any orphaned GoTrue locks before creating the client.
+// These accumulate from hot-reloads, React Strict Mode double-mounts, and
+// tab restores — and cause "Lock was stolen by another request" errors that
+// abort auth calls and leave the app in a broken state.
+try {
+  Object.keys(localStorage)
+    .filter(k => k.startsWith("lock:"))
+    .forEach(k => localStorage.removeItem(k));
+} catch {}
+
 let _client = createSupabaseClient();
 let _lastVisible = Date.now();
+
+// ── PASSWORD RECOVERY CAPTURE ─────────────────────────────────────────────────
+//
+// When a user clicks a "reset password" link, Supabase's PKCE code exchange
+// (triggered automatically by detectSessionInUrl) happens as soon as this
+// client is created — which is at module-load time, before React mounts and
+// before RCCShell's useEffect can call onAuthStateChange. If we wait until
+// then to listen for the PASSWORD_RECOVERY event, it has already fired and
+// is lost, and the recovery session just looks like a normal sign-in.
+//
+// Registering this listener synchronously, right here, wins that race —
+// JS won't yield to the async exchange until after this line runs.
+let _recoverySession = null;
+let _recoveryCallbacks = [];
+
+_client.auth.onAuthStateChange((event, session) => {
+  if (event === "PASSWORD_RECOVERY") {
+    _recoverySession = session;
+    const callbacks = _recoveryCallbacks;
+    _recoveryCallbacks = [];
+    callbacks.forEach((cb) => cb(session));
+  }
+});
+
+/**
+ * Subscribe to the password-recovery event. If it already fired before this
+ * was called, the callback runs immediately (synchronously) with the cached
+ * session. Otherwise it runs whenever the event eventually fires.
+ */
+export function onPasswordRecovery(cb) {
+  if (_recoverySession) {
+    cb(_recoverySession);
+  } else {
+    _recoveryCallbacks.push(cb);
+  }
+}
 
 // Proxy that always delegates to the current client instance.
 // This means existing code using `supabase.from(...)` etc. works unchanged.

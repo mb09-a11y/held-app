@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useT, Card, Btn, Input, font, serif } from "../core/shared.jsx";
+import { useT, Card, Btn, Input, EyeIcon, font, serif } from "../core/shared.jsx";
 import { supabase } from "../lib/supabase.js";
 
 function LoadingScreen({ label = "Loading…" }) {
@@ -19,6 +19,7 @@ function LoginScreen({ onLogin, onGoRegister }) {
   const T = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
@@ -48,7 +49,7 @@ function LoginScreen({ onLogin, onGoRegister }) {
     setResetLoading(true);
     setError("");
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
+      redirectTo: `${window.location.origin}/?type=recovery`,
     });
     setResetLoading(false);
     if (error) {
@@ -101,11 +102,18 @@ function LoginScreen({ onLogin, onGoRegister }) {
           </div>
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Password *</div>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
-              onFocus={e => e.target.style.borderColor = "#5C7A5E"}
-              onBlur={e => e.target.style.borderColor = "#E8DDD0"}
-            />
+            <div style={{ position: "relative" }}>
+              <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                onFocus={e => e.target.style.borderColor = "#5C7A5E"}
+                onBlur={e => e.target.style.borderColor = "#E8DDD0"}
+              />
+              <button type="button" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? "Hide password" : "Show password"}
+                style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 4, margin: 0, cursor: "pointer", display: "flex", alignItems: "center", color: "#9A8878", lineHeight: 0 }}
+              >
+                <EyeIcon open={showPassword} />
+              </button>
+            </div>
           </div>
           {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 12 }}>{error}</div>}
           <button onClick={handleLogin} disabled={loading} style={{ background: loading ? "#C4D2C2" : "#5C7A5E", color: "#fff", border: "none", borderRadius: 12, padding: "11px 16px", width: "100%", fontSize: 13.5, fontWeight: 600, cursor: loading ? "default" : "pointer" }}>
@@ -327,7 +335,7 @@ function RegisterScreen({
 }
 
 
-function ChildInfoStep({ onSave, loading }) {
+function ChildInfoStep({ onSave, onFinish, loading }) {
   const T = useT();
   const [child, setChild] = useState({
     name: "",
@@ -336,6 +344,8 @@ function ChildInfoStep({ onSave, loading }) {
     weight_oz: "",
   });
   const [error, setError] = useState("");
+  const [addedChildren, setAddedChildren] = useState([]);
+  const [justAdded, setJustAdded] = useState(false);
 
   async function submit() {
     if (!child.name || !child.dob) {
@@ -347,9 +357,16 @@ function ChildInfoStep({ onSave, loading }) {
 
     try {
       await onSave(child);
+      setAddedChildren((prev) => [...prev, child.name]);
+      setChild({ name: "", dob: "", weight_lbs: "", weight_oz: "" });
+      setJustAdded(true);
     } catch (e) {
       setError(e.message || "Unable to save child info.");
     }
+  }
+
+  function addAnother() {
+    setJustAdded(false);
   }
 
   return (
@@ -371,55 +388,135 @@ function ChildInfoStep({ onSave, loading }) {
           We'll use this to personalize your experience and calculate age-appropriate guidance.
         </div>
 
-        <Card>
-          <Input
-            label="Child's name"
-            value={child.name}
-            onChange={(v) => setChild((c) => ({ ...c, name: v }))}
-            required
-          />
-          <Input
-            label="Date of birth"
-            value={child.dob}
-            onChange={(v) => setChild((c) => ({ ...c, dob: v }))}
-            type="date"
-            required
-          />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Input
-              label="Weight (lbs)"
-              value={child.weight_lbs}
-              onChange={(v) => setChild((c) => ({ ...c, weight_lbs: v }))}
-              type="number"
-            />
-            <Input
-              label="Weight (oz)"
-              value={child.weight_oz}
-              onChange={(v) => setChild((c) => ({ ...c, weight_oz: v }))}
-              type="number"
-            />
+        {addedChildren.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            {addedChildren.map((name) => (
+              <div
+                key={name}
+                style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  fontSize: 13.5, color: T.headingText, fontFamily: font,
+                  marginBottom: 6,
+                }}
+              >
+                <span style={{ color: T.teal }}>✓</span>
+                <span>{name} added</span>
+              </div>
+            ))}
           </div>
+        )}
 
-          {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{error}</div>}
+        {justAdded ? (
+          <Card>
+            <div style={{ fontSize: 13.5, color: T.muted, lineHeight: 1.6, marginBottom: 16, fontFamily: font }}>
+              Got it! Have another child you'd like to add?
+            </div>
+            <Btn onClick={addAnother} style={{ marginBottom: 10 }}>
+              + Add another child
+            </Btn>
+            <Btn
+              onClick={onFinish}
+              color="transparent"
+              style={{ border: `1.5px solid ${T.border}`, color: T.text }}
+            >
+              Continue →
+            </Btn>
+          </Card>
+        ) : (
+          <Card>
+            <Input
+              label="Child's name"
+              value={child.name}
+              onChange={(v) => setChild((c) => ({ ...c, name: v }))}
+              required
+            />
+            <Input
+              label="Date of birth"
+              value={child.dob}
+              onChange={(v) => setChild((c) => ({ ...c, dob: v }))}
+              type="date"
+              required
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Input
+                label="Weight (lbs)"
+                value={child.weight_lbs}
+                onChange={(v) => setChild((c) => ({ ...c, weight_lbs: v }))}
+                type="number"
+              />
+              <Input
+                label="Weight (oz)"
+                value={child.weight_oz}
+                onChange={(v) => setChild((c) => ({ ...c, weight_oz: v }))}
+                type="number"
+              />
+            </div>
 
-          <Btn onClick={submit} disabled={loading}>
-            {loading ? "Saving…" : "Continue →"}
-          </Btn>
-        </Card>
+            {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{error}</div>}
+
+            <Btn onClick={submit} disabled={loading}>
+              {loading ? "Saving…" : "Continue →"}
+            </Btn>
+          </Card>
+        )}
       </div>
     </div>
   );
 }
 
 // ─── RESET PASSWORD SCREEN ───────────────────────────────────────────────────
-// Shown when user lands on the app with type=recovery in the URL hash
+// Shown when user lands on the app with type=recovery in the URL.
+// Also handles the common case where an email security scanner (Gmail, etc.)
+// has already "clicked" the one-time link before the person did — Supabase
+// redirects back with an error param instead of a valid code/session.
 function ResetPasswordScreen({ onDone }) {
   const T = useT();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+
+  // Check the URL for an error param (hash or query string) — this means
+  // the recovery link was already used/expired before the person clicked it.
+  const [linkError] = useState(() => {
+    try {
+      const hash = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+      const search = new URLSearchParams(window.location.search || "");
+      const desc = hash.get("error_description") || search.get("error_description");
+      const code = hash.get("error_code") || search.get("error_code");
+      if (desc || code) {
+        return (desc || "").replace(/\+/g, " ") || code;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [resendEmail, setResendEmail] = useState("");
+  const [resendSent, setResendSent] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendError, setResendError] = useState("");
+
+  async function handleResend() {
+    if (!resendEmail) {
+      setResendError("Enter your email address.");
+      return;
+    }
+    setResendLoading(true);
+    setResendError("");
+    const { error } = await supabase.auth.resetPasswordForEmail(resendEmail, {
+      redirectTo: `${window.location.origin}/?type=recovery`,
+    });
+    setResendLoading(false);
+    if (error) {
+      setResendError(error.message);
+    } else {
+      setResendSent(true);
+    }
+  }
 
   async function handleReset() {
     if (!password || password.length < 6) {
@@ -452,14 +549,44 @@ function ResetPasswordScreen({ onDone }) {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 36, marginBottom: 6 }}>🌿</div>
           <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 34, color: "#2D4A35", lineHeight: 1.1, marginBottom: 4 }}>
-            Set new password
+            {linkError ? "Link expired" : "Set new password"}
           </h1>
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#9A8878", margin: 0 }}>
-            Choose a new password for your account.
+            {linkError
+              ? "This reset link is no longer valid — it may have already been used, or your email app opened it before you clicked."
+              : "Choose a new password for your account."}
           </p>
         </div>
         <div style={{ background: "#FFFFFF", borderRadius: 20, padding: "20px 18px", boxShadow: "0 4px 28px rgba(45,74,53,0.10)", border: "1px solid #E8DDD0" }}>
-          {done ? (
+          {linkError ? (
+            resendSent ? (
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
+                <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: "#5C7A5E", margin: 0, lineHeight: 1.6 }}>
+                  New reset email sent! Open it directly from your inbox — if your email app shows a "verify this link" preview, that's expected, but try to click the link itself only once.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Email *</div>
+                  <input type="email" value={resendEmail} onChange={e => setResendEmail(e.target.value)}
+                    style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                    onKeyDown={e => e.key === "Enter" && handleResend()}
+                  />
+                </div>
+                {resendError && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{resendError}</div>}
+                <button onClick={handleResend} disabled={resendLoading} style={{
+                  width: "100%", padding: "13px", borderRadius: 12, border: "none",
+                  background: "#5C7A5E", color: "white", fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 14, fontWeight: 600, cursor: resendLoading ? "not-allowed" : "pointer",
+                  opacity: resendLoading ? 0.7 : 1,
+                }}>
+                  {resendLoading ? "Sending…" : "Send new reset link →"}
+                </button>
+              </>
+            )
+          ) : done ? (
             <div style={{ textAlign: "center", padding: "20px 0" }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
               <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: "#5C7A5E", margin: 0 }}>
@@ -470,16 +597,30 @@ function ResetPasswordScreen({ onDone }) {
             <>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>New Password *</div>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
-                />
+                <div style={{ position: "relative" }}>
+                  <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                    style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                  />
+                  <button type="button" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? "Hide password" : "Show password"}
+                    style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 4, margin: 0, cursor: "pointer", display: "flex", alignItems: "center", color: "#9A8878", lineHeight: 0 }}
+                  >
+                    <EyeIcon open={showPassword} />
+                  </button>
+                </div>
               </div>
               <div style={{ marginBottom: 14 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#9A8878", letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6 }}>Confirm Password *</div>
-                <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
-                  style={{ width: "100%", padding: "11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
-                  onKeyDown={e => e.key === "Enter" && handleReset()}
-                />
+                <div style={{ position: "relative" }}>
+                  <input type={showPassword ? "text" : "password"} value={confirm} onChange={e => setConfirm(e.target.value)}
+                    style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 12, fontFamily: "inherit", fontSize: 13.5, background: "#FAF6F0", color: "#3A2E28", border: "1.5px solid #E8DDD0", outline: "none", boxSizing: "border-box" }}
+                    onKeyDown={e => e.key === "Enter" && handleReset()}
+                  />
+                  <button type="button" onClick={() => setShowPassword(s => !s)} aria-label={showPassword ? "Hide password" : "Show password"}
+                    style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", padding: 4, margin: 0, cursor: "pointer", display: "flex", alignItems: "center", color: "#9A8878", lineHeight: 0 }}
+                  >
+                    <EyeIcon open={showPassword} />
+                  </button>
+                </div>
               </div>
               {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{error}</div>}
               <button onClick={handleReset} disabled={loading} style={{
