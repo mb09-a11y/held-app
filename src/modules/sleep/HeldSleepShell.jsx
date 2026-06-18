@@ -242,7 +242,7 @@ export function HeldSleepShell({ canAccessSleepPlan, onOpenDrawer }) {
             <span style={{ fontSize: 18 }}>📋</span>
             <div>
               <div style={{ fontFamily: font, fontSize: 13, fontWeight: 600, color: T.headingText, marginBottom: 2 }}>Want a personalized sleep plan?</div>
-              <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>Plus members get an AI-generated plan — starting at $10/mo.</div>
+              <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>Premium members get an AI-generated plan — starting at $30/mo.</div>
             </div>
           </div>
         )}

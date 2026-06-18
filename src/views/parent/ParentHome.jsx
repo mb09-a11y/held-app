@@ -107,7 +107,7 @@ function UpgradeModal({ onClose, T, currentUser }) {
           </div>
         ))}
         <div style={{ marginTop: 24, textAlign: "center" }}>
-          <div style={{ fontFamily: serif, fontSize: 22, color: T.teal, marginBottom: 4 }}>$10/month</div>
+          <div style={{ fontFamily: serif, fontSize: 22, color: T.teal, marginBottom: 4 }}>$15/month</div>
           <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 20 }}>Cancel anytime</div>
           {error && <div style={{ fontFamily: font, fontSize: 12.5, color: T.rose, marginBottom: 12 }}>{error}</div>}
           <button onClick={handleUpgrade} disabled={loading}

@@ -404,10 +404,39 @@ function analyzePatterns(checkins, sleepSessions) {
     };
   }
 
+  // ── Streak calculation ────────────────────────────────────────────────────
+  // Count consecutive days with at least one check-in, going back from today.
+  let streak = 0;
+  if (checkins.length > 0) {
+    const sortedDates = [...new Set(
+      checkins
+        .filter(c => c.checked_in_at)
+        .map(c => new Date(c.checked_in_at).toLocaleDateString("en-CA")) // YYYY-MM-DD
+    )].sort().reverse();
+
+    const today = new Date().toLocaleDateString("en-CA");
+    const yesterday = new Date(Date.now() - 86400000).toLocaleDateString("en-CA");
+
+    // Only count streak if there's a check-in today or yesterday
+    if (sortedDates[0] === today || sortedDates[0] === yesterday) {
+      let expected = sortedDates[0];
+      for (const date of sortedDates) {
+        if (date === expected) {
+          streak++;
+          const d = new Date(expected);
+          d.setDate(d.getDate() - 1);
+          expected = d.toLocaleDateString("en-CA");
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
   return {
     days, weekNarrative, meaningMaker, behaviorPattern, yourPattern,
     topState, realCheckins, avgSleepHrs, morningCheckins, eveningCheckins,
-    roughNights, shortNapCount, sessionsWithDuration, trend,
+    roughNights, shortNapCount, sessionsWithDuration, trend, streak,
   };
 }
 // ─── SHARED SUB-COMPONENTS ────────────────────────────────────────────────────
@@ -653,7 +682,8 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
 // ─── FOUNDATION TAB ───────────────────────────────────────────────────────────
 function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
   const T = useT();
-  const { streak } = patterns;
+  const { streak: rawFoundationStreak } = patterns;
+  const streak = rawFoundationStreak ?? 0;
 
   const total = profile?.total_ns_logs ?? 0;
   const ventral = ventralCount ?? 0;
@@ -801,7 +831,9 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
 // ─── ROOT CELLAR TAB ──────────────────────────────────────────────────────────
 function RootCellarTab({ profile, patterns }) {
   const T = useT();
-  const { streak } = patterns;
+  const { canAccessFoundationTab, currentUser } = useApp();
+  const { streak: rawStreak } = patterns;
+  const streak = rawStreak ?? 0; // guard against undefined causing NaN
   const total = profile?.total_ns_logs ?? 0;
   const leaves = profile?.leaves ?? 0;
   const jarFill = Math.min(leaves / 40, 1);

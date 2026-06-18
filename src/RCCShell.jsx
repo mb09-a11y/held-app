@@ -819,9 +819,9 @@ export default function RCCShell() {
       setTab("home");
 
       const [{ data: byId }, { data: byEmail }] = await Promise.all([
-        supabase.from("families").select("*").eq("parent_id", userId).maybeSingle(),
+        supabase.from("families").select("*").eq("parent_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         resolvedEmail
-          ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).maybeSingle()
+          ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).order("consultant_id", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1).maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
 
@@ -831,13 +831,29 @@ export default function RCCShell() {
         supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
       }
 
-      if (!familyData && resolvedEmail) {
-        const { data: coRecord } = await supabase
+      if (!familyData) {
+        // Check co_caregivers — try user_id first (reliable after password reset),
+        // then fall back to email. Two separate queries avoids .or() syntax issues.
+        let coRecord = null;
+
+        const { data: byUserId } = await supabase
           .from("co_caregivers")
           .select("family_id")
-          .eq("email", resolvedEmail)
+          .eq("user_id", userId)
           .in("status", ["pending", "active"])
           .maybeSingle();
+
+        if (byUserId) {
+          coRecord = byUserId;
+        } else if (resolvedEmail) {
+          const { data: byCoEmail } = await supabase
+            .from("co_caregivers")
+            .select("family_id")
+            .eq("email", resolvedEmail)
+            .in("status", ["pending", "active"])
+            .maybeSingle();
+          if (byCoEmail) coRecord = byCoEmail;
+        }
 
         if (coRecord) {
           const { data: coFamily } = await supabase
@@ -852,14 +868,13 @@ export default function RCCShell() {
             setCurrentUser(prev => ({ ...(prev || merged), role: "co_caregiver" }));
             try {
               const cached = JSON.parse(localStorage.getItem("rcc_user") || "{}");
-              // ── SECURITY: Only cache safe, non-sensitive fields ─────────────
               localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...cached, ...merged, role: "co_caregiver" })));
             } catch {}
             supabase
               .from("co_caregivers")
-              .update({ status: "active" })
+              .update({ status: "active", user_id: userId })
               .eq("family_id", coRecord.family_id)
-              .eq("email", resolvedEmail);
+              .eq("user_id", userId);
           }
         }
       }
@@ -888,6 +903,8 @@ export default function RCCShell() {
 
         const alreadyHasChildren = kidList.length > 0;
         if (merged.role === "co_caregiver") {
+          // Co-caregivers never go through child onboarding — they join an
+          // existing family. Even if children fail to load, don't show onboarding.
           setOnboardingStep(null);
         } else if (!alreadyHasChildren) {
           // Never re-trigger onboarding if this is a post-upgrade redirect.
@@ -906,7 +923,10 @@ export default function RCCShell() {
         setChildren([]); cacheChildren([]);
         setConsultants([]); cacheConsultants([]);
         const isUpgradeRedirect = (() => { try { return new URLSearchParams(window.location.search).get("upgrade_success") === "true"; } catch { return false; } })();
-        if (!isUpgradeRedirect) {
+        const isCoCaregiverRole = merged.role === "co_caregiver";
+        // Co-caregivers and upgrade redirects should never trigger child onboarding —
+        // co-caregivers join an existing family, they don't create one.
+        if (!isUpgradeRedirect && !isCoCaregiverRole) {
           setOnboardingStep(coInviteToken ? null : (inviteToken ? "register" : "child"));
         }
       }

@@ -1208,8 +1208,8 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
                       Your data is starting to show a pattern worth knowing about.
                     </p>
                     <button onClick={async (e) => {
-                      e.currentTarget.textContent = "Opening Stripe…";
-                      e.currentTarget.disabled = true;
+                      const btn = e.currentTarget;
+                      if (btn) { btn.textContent = "Opening Stripe…"; btn.disabled = true; }
                       try {
                         const { data: { session } } = await supabase.auth.getSession();
                         const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
@@ -1229,13 +1229,12 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
                         const data = await res.json();
                         if (data.url) {
                           window.open(data.url, "_blank");
+                          if (btn) { btn.textContent = "Unlock with Plus — $15/mo →"; btn.disabled = false; }
                         } else {
-                          e.currentTarget.textContent = "Try again →";
-                          e.currentTarget.disabled = false;
+                          if (btn) { btn.textContent = "Try again →"; btn.disabled = false; }
                         }
                       } catch {
-                        e.currentTarget.textContent = "Try again →";
-                        e.currentTarget.disabled = false;
+                        if (btn) { btn.textContent = "Try again →"; btn.disabled = false; }
                       }
                     }} style={{
                       background: "none", border: `1px solid ${T.warm}`, padding: "5px 12px",

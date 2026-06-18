@@ -185,8 +185,8 @@ export function AdminDashboard({ consultants, families }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {[
               { label: "VIP", color: "#AA9B7B", count: byTier.vip },
-              { label: "Premium · $50/mo", color: "#7BAA8A", count: byTier.premium },
-              { label: "Plus · $10/mo", color: T.teal, count: byTier.plus },
+              { label: "Premium · $30/mo", color: "#7BAA8A", count: byTier.premium },
+              { label: "Plus · $15/mo", color: T.teal, count: byTier.plus },
               { label: "Free", color: T.muted, count: byTier.free },
             ].map(row => (
               <div key={row.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>

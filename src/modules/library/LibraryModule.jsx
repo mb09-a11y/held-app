@@ -554,7 +554,7 @@ export function LibraryModule({ defaultTab, onOpenDrawer }) {
           <div style={{ fontSize: 24, flexShrink: 0 }}>🌿</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: font, fontSize: 13, fontWeight: 700, color: T.headingText, marginBottom: 3 }}>Some resources are Plus features</div>
-            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6 }}>Upgrade to Plus for $10/mo to unlock all courses, masterclasses, and troubleshooting guides.</div>
+            <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6 }}>Upgrade to Plus for $15/mo to unlock all courses, masterclasses, and troubleshooting guides.</div>
           </div>
           <button style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Upgrade</button>
         </div>

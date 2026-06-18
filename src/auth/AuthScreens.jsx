@@ -424,6 +424,19 @@ function ChildInfoStep({ onSave, onFinish, loading }) {
           </Card>
         ) : (
           <Card>
+            {addedChildren.length > 0 && (
+              <button
+                onClick={onFinish}
+                style={{
+                  background: "none", border: "none", padding: 0,
+                  fontFamily: font, fontSize: 13, color: T.muted,
+                  cursor: "pointer", marginBottom: 16, display: "block",
+                  textDecoration: "underline",
+                }}
+              >
+                ← Actually, I'm done adding children
+              </button>
+            )}
             <Input
               label="Child's name"
               value={child.name}
