@@ -451,7 +451,7 @@ function SectionLabel({ text }) {
 // ─── YOUR STORY TAB ───────────────────────────────────────────────────────────
 function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, setTab, onScripts }) {
   const T = useT();
-  const { currentUser, activeFamily } = useApp();
+  const { currentUser, activeFamily, canAccessFoundationTab } = useApp();
   const {
     meaningMaker, behaviorPattern, yourPattern,
     realCheckins, trend,
@@ -600,7 +600,7 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
       )}
 
       {/* ── MEANING MAKER ── */}
-      {meaningMaker && (
+      {meaningMaker && canAccessFoundationTab && (
         <>
           <InsightCard eyebrow="Meaning Maker" quote={meaningMaker.quote} body={meaningMaker.body} chip={meaningMaker.chip} accentColor={T.warm} />
           {meaningMaker.trend && (
@@ -612,7 +612,7 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
       )}
 
       {/* ── BEHAVIOR PATTERN ── */}
-      {behaviorPattern && (
+      {behaviorPattern && canAccessFoundationTab && (
         <>
           <InsightCard eyebrow="Behavior Pattern" quote={behaviorPattern.quote} body={behaviorPattern.body} chip={behaviorPattern.chip} accentColor={T.teal} />
           {behaviorPattern.trend && (
@@ -624,7 +624,7 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
       )}
 
       {/* ── YOUR PATTERN ── */}
-      {yourPattern && (
+      {yourPattern && canAccessFoundationTab && (
         <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, borderLeft: `4px solid ${T.teal}`, marginBottom: 12 }}>
           <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 10 }}>Your Pattern</div>
           <div style={{ fontFamily: serif, fontSize: 17, fontStyle: "italic", color: T.headingText, lineHeight: 1.55, marginBottom: 10 }}>"{yourPattern.quote}"</div>
@@ -889,14 +889,154 @@ function RootCellarTab({ profile, patterns }) {
           </div>
         </div>
       </div>
+      {!canAccessFoundationTab && (
+        <UpgradeToFoundationCard T={T} currentUser={currentUser} />
+      )}
+    </div>
+  );
+}
+
+// ─── UPGRADE TO FOUNDATION CARD (bottom of Your Story for free users) ─────────
+function UpgradeToFoundationCard({ T, currentUser }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleUpgrade() {
+    setLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          name: currentUser?.name,
+          user_id: currentUser?.id,
+          tier: "plus",
+        }),
+      });
+      const data = await res.json();
+      if (data.url) window.open(data.url, "_blank");
+    } catch {}
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div style={{
+      margin: "24px 0 8px",
+      borderRadius: 16,
+      background: `linear-gradient(135deg, ${T.teal}12, ${T.warm}10)`,
+      border: `1px solid ${T.teal}30`,
+      padding: "20px 20px 24px",
+      textAlign: "center",
+    }}>
+      <div style={{ fontSize: 28, marginBottom: 10 }}>🌳</div>
+      <div style={{ fontFamily: serif, fontSize: 18, color: T.headingText, marginBottom: 8 }}>
+        Your pattern is becoming clearer
+      </div>
+      <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 16, maxWidth: 280, margin: "0 auto 16px" }}>
+        Foundation gives you the full picture — your ventral capacity score, growth rings, and what it all means for your nervous system.
+      </p>
+      <button onClick={handleUpgrade} disabled={loading} style={{
+        background: loading ? T.faint : T.teal,
+        border: "none", borderRadius: 12,
+        padding: "12px 24px",
+        fontFamily: font, fontSize: 14, fontWeight: 700,
+        color: loading ? T.muted : "#fff",
+        cursor: loading ? "default" : "pointer",
+        width: "100%", maxWidth: 300,
+      }}>
+        {loading ? "Opening Stripe…" : "Unlock Foundation — Plus →"}
+      </button>
+      <div style={{ fontFamily: font, fontSize: 11.5, color: T.muted, marginTop: 8 }}>
+        $15/month · Cancel anytime
+      </div>
     </div>
   );
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+// ─── FOUNDATION PAYWALL ───────────────────────────────────────────────────────
+function FoundationPaywall({ T }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const { currentUser } = useApp();
+
+  async function handleUpgrade() {
+    setLoading(true); setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          name: currentUser?.name,
+          user_id: currentUser?.id,
+          tier: "plus",
+        }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, "_blank");
+      } else {
+        setError(data.error || "Something went wrong. Please try again.");
+      }
+    } catch (e) {
+      setError(e.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div style={{ paddingTop: 24, textAlign: "center" }}>
+      <div style={{ fontSize: 40, marginBottom: 16 }}>🌳</div>
+      <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 10 }}>
+        Your foundation is growing
+      </div>
+      <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.7, maxWidth: 300, margin: "0 auto 24px" }}>
+        Your ventral capacity score, growth rings, and foundation status report — the interpretation layer behind everything you're tracking.
+      </p>
+      {[
+        { icon: "📊", label: "Ventral capacity score" },
+        { icon: "🌀", label: "Growth rings — week by week" },
+        { icon: "⚓", label: "Foundation status report" },
+        { icon: "🔢", label: "By the numbers breakdown" },
+      ].map(f => (
+        <div key={f.label} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, textAlign: "left", maxWidth: 280, margin: "0 auto 10px" }}>
+          <span style={{ fontSize: 18, width: 28, textAlign: "center", flexShrink: 0 }}>{f.icon}</span>
+          <span style={{ fontFamily: font, fontSize: 13.5, color: T.text }}>{f.label}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 28 }}>
+        <div style={{ fontFamily: serif, fontSize: 20, color: T.teal, marginBottom: 4 }}>$15/month</div>
+        <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 16 }}>Cancel anytime</div>
+        {error && <div style={{ fontFamily: font, fontSize: 12.5, color: T.rose, marginBottom: 12 }}>{error}</div>}
+        <button onClick={handleUpgrade} disabled={loading} style={{
+          display: "block", width: "100%", maxWidth: 320, margin: "0 auto",
+          padding: "14px", borderRadius: 12, border: "none",
+          background: loading ? T.faint : T.teal, color: loading ? T.muted : "#fff",
+          fontFamily: font, fontSize: 15, fontWeight: 700,
+          cursor: loading ? "default" : "pointer",
+        }}>
+          {loading ? "Opening Stripe…" : "Unlock Foundation — Plus →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
   const T = useT();
-  const { currentUser, activeFamily, activeChild, checkinRefreshKey } = useApp();
+  const { currentUser, activeFamily, activeChild, checkinRefreshKey, canAccessFoundationTab } = useApp();
   const [insightTab, setInsightTab] = useState("story");
 
   const { checkins, sleepSessions, ventralCount, loading } = useInsightsData(
@@ -974,13 +1114,16 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
             onScripts={onScripts}
           />
         )}
-        {insightTab === "foundation" && (
+        {insightTab === "foundation" && canAccessFoundationTab && (
           <FoundationTab
             profile={profile}
             weekCount={weekCount}
             patterns={patterns}
             ventralCount={ventralCount}
           />
+        )}
+        {insightTab === "foundation" && !canAccessFoundationTab && (
+          <FoundationPaywall T={T} />
         )}
         {insightTab === "cellar" && (
           <RootCellarTab

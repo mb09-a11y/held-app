@@ -552,7 +552,7 @@ function HeldCheckinInline({ familyState, patterns, saveCheckin }) {
 
 export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, setTab, onScripts, onOpenDrawer, onNotifications, onGrounding, checkinRefreshKey = 0, familyStateProp = null }) {
   const T = useT();
-  const { currentUser, activeChild, activeFamily } = useApp();
+  const { currentUser, activeChild, activeFamily, canAccessFullPattern } = useApp();
 
   // ── Checkin flow data ──
   const { familyState: fetchedFamilyState, refresh: refreshFamilyState } = useFamilyState(activeFamily?.id, activeChild?.id, currentUser?.id);
@@ -1186,6 +1186,70 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
           const patternText = napTimeStr && steadyDominant
             ? `"You tend to feel steadier on days when ${childName}'s first nap lands before ${napTimeStr}. Want to see why?"`
             : `"${childName}'s nap timing and your regulation patterns are connected. The data is starting to show it."`;
+
+          if (!canAccessFullPattern) {
+            // Free tier — teaser only
+            return (
+              <div style={{
+                borderRadius: 16, padding: "14px 16px", marginBottom: 10,
+                background: T.card, border: `1px solid ${T.border}`,
+                borderLeft: `3px solid ${T.warm}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <span style={{ fontSize: 18, flexShrink: 0, marginTop: 2 }}>🔍</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: 9, letterSpacing: ".12em", textTransform: "uppercase",
+                      color: T.warm, fontFamily: font, fontWeight: 700, marginBottom: 6,
+                    }}>
+                      Pattern I'm Noticing
+                    </div>
+                    <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.6, marginBottom: 8, fontStyle: "italic" }}>
+                      Your data is starting to show a pattern worth knowing about.
+                    </p>
+                    <button onClick={async (e) => {
+                      e.currentTarget.textContent = "Opening Stripe…";
+                      e.currentTarget.disabled = true;
+                      try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${session?.access_token}`,
+                            "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+                          },
+                          body: JSON.stringify({
+                            email: currentUser?.email,
+                            name: currentUser?.name,
+                            user_id: currentUser?.id,
+                            tier: "plus",
+                          }),
+                        });
+                        const data = await res.json();
+                        if (data.url) {
+                          window.open(data.url, "_blank");
+                        } else {
+                          e.currentTarget.textContent = "Try again →";
+                          e.currentTarget.disabled = false;
+                        }
+                      } catch {
+                        e.currentTarget.textContent = "Try again →";
+                        e.currentTarget.disabled = false;
+                      }
+                    }} style={{
+                      background: "none", border: `1px solid ${T.warm}`, padding: "5px 12px",
+                      borderRadius: 20, fontFamily: font, fontSize: 12, color: T.warm,
+                      fontWeight: 600, cursor: "pointer",
+                    }}>
+                      Unlock with Plus — $15/mo →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div style={{
               borderRadius: 16, padding: "14px 16px", marginBottom: 10,
@@ -1282,24 +1346,33 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
 
         {/* ── WONDER WEEKS / STATE SHIFT ── */}
         {leap && (
-          <div style={{
-            borderRadius: 16, padding: "14px 16px", marginBottom: 14,
-            background: `${T.teal}10`, border: `1px solid ${T.teal}25`,
-          }}>
+          <a
+            href="https://www.thewonderweeks.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textDecoration: "none", display: "block", marginBottom: 14 }}
+          >
             <div style={{
-              fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",
-              color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
+              borderRadius: 16, padding: "14px 16px",
+              background: `${T.teal}10`, border: `1px solid ${T.teal}25`,
             }}>
-              {leap.status === "active" ? "🌀 Wonder Weeks leap active" : "🔭 Leap approaching"}
+              <div style={{
+                fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase",
+                color: T.teal, fontFamily: font, fontWeight: 700, marginBottom: 6,
+              }}>
+                {leap.status === "active" ? "🌀 Wonder Weeks leap active" : "🔭 Leap approaching"}
+              </div>
+              <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, fontWeight: 600, marginBottom: 4 }}>
+                {leap.title}
+              </div>
+              <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.6, marginBottom: 8 }}>
+                {leap.what_baby_is_learning}
+              </div>
+              <div style={{ fontFamily: font, fontSize: 11.5, color: T.teal, fontWeight: 600 }}>
+                Learn more at thewonderweeks.com →
+              </div>
             </div>
-            <div style={{ fontFamily: font, fontSize: 13.5, color: T.text, lineHeight: 1.6, fontWeight: 600, marginBottom: 4 }}>
-              {leap.title}
-            </div>
-            <div style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.6 }}>
-              {leap.what_baby_is_learning?.slice(0, 120)}
-              {(leap.what_baby_is_learning?.length || 0) > 120 ? "…" : ""}
-            </div>
-          </div>
+          </a>
         )}
 
 

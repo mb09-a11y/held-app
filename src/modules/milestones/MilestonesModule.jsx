@@ -39,6 +39,41 @@ function ageLabel(months) {
 
 // ─── UPGRADE MODAL ────────────────────────────────────────────────────────────
 function UpgradeModal({ onClose, T, currentUser }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleUpgrade() {
+    setLoading(true); setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          name: currentUser?.name,
+          user_id: currentUser?.id,
+          tier: "plus",
+        }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, "_blank");
+        onClose();
+      } else {
+        setError(data.error || "Something went wrong. Please try again.");
+      }
+    } catch (e) {
+      setError(e.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div style={{
       position: "fixed", inset: 0,
@@ -65,10 +100,10 @@ function UpgradeModal({ onClose, T, currentUser }) {
 
         {[
           { icon: "🌿", label: "Nervous system context for every milestone" },
-          { icon: "🌀", label: "Full Wonder Weeks leap details + NS framing" },
+          { icon: "🌀", label: "Wonder Weeks leap details + NS framing" },
           { icon: "🌱", label: "Your child's nervous system story" },
           { icon: "🧠", label: "Brain development context cards" },
-          { icon: "✦",  label: "Held proactively surfaces age-specific insights" },
+          { icon: "✦",  label: "Foundation tab — your ventral capacity score" },
         ].map(f => (
           <div key={f.label} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <span style={{ fontSize: 18, width: 28, textAlign: "center", flexShrink: 0 }}>{f.icon}</span>
@@ -77,16 +112,17 @@ function UpgradeModal({ onClose, T, currentUser }) {
         ))}
 
         <div style={{ marginTop: 24, textAlign: "center" }}>
-          <div style={{ fontFamily: serif, fontSize: 22, color: T.teal, marginBottom: 4 }}>$10/month</div>
+          <div style={{ fontFamily: serif, fontSize: 22, color: T.teal, marginBottom: 4 }}>$15/month</div>
           <div style={{ fontFamily: font, fontSize: 12, color: T.muted, marginBottom: 20 }}>Cancel anytime</div>
-          <button onClick={onClose} style={{
+          {error && <div style={{ fontFamily: font, fontSize: 12.5, color: T.rose, marginBottom: 12 }}>{error}</div>}
+          <button onClick={handleUpgrade} disabled={loading} style={{
             display: "block", width: "100%", padding: "14px",
             borderRadius: 12, border: "none",
-            background: T.teal, color: "#fff",
-            fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer",
-            marginBottom: 12,
+            background: loading ? T.faint : T.teal, color: loading ? T.muted : "#fff",
+            fontFamily: font, fontSize: 15, fontWeight: 700,
+            cursor: loading ? "default" : "pointer", marginBottom: 12,
           }}>
-            Upgrade to Plus →
+            {loading ? "Opening Stripe…" : "Upgrade to Plus →"}
           </button>
           <button onClick={onClose} style={{
             background: "none", border: "none",

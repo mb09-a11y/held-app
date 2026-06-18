@@ -277,6 +277,10 @@ export default function RCCShell() {
     canAccessDashboardInsights, canAccessRegulationInsights,
     canAccessConsultantReviewedPlan, canAccessCustomHumanPlan,
     canAccessZoomPhone, canAccessNSPulse, canAccessRegulationTrends,
+    canAccessFoundationTab, canAccessRootCellar,
+    canAccessFullPattern,
+    canAccessMilestoneList, canAccessMilestoneNSContext,
+    canSaveCoachHistory,
     asyncSupportCopy, zoomPhoneCopy,
   } = useTier({ currentUser, families, consultants });
 
@@ -446,6 +450,13 @@ export default function RCCShell() {
       if (newSession?.user) {
         // Always load profile on SIGNED_IN so authLoading clears and the app renders.
         // On other events (TOKEN_REFRESHED etc.) skip if we already have the user loaded.
+        // IMPORTANT: Skip loadProfile entirely during password recovery — the PKCE
+        // exchangeCodeForSession fires SIGNED_IN after the code exchange, but we must
+        // not compete for the GoTrue lock or render the normal app under the reset screen.
+        if (isRecoveryRef.current) {
+          setAuthLoading(false);
+          return;
+        }
         if (event === "SIGNED_IN" || !currentUser) {
           setSessionExpired(false);
           await loadProfile(newSession.user.id, newSession.user.email);
@@ -758,22 +769,25 @@ export default function RCCShell() {
         // session, preventing the prompt from flashing on every dev reload even
         // before the DB write completes.
         if (sessionStorage.getItem("held_notif_prompt_seen")) {
-          return;
-        }
-
-        const { data: existingSub } = await supabase
-          .from("push_subscriptions")
-          .select("id")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (existingSub) {
-          // Already subscribed — just mark seen so we never check again
+          // Already seen this session — mark in DB so it never shows again on next login
           await supabase.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
           setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
           try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...merged, notification_prompt_seen: true }))); } catch {}
         } else {
-          setShowNotificationPrompt(true);
+          const { data: existingSub } = await supabase
+            .from("push_subscriptions")
+            .select("id")
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          if (existingSub) {
+            // Already subscribed — just mark seen so we never check again
+            await supabase.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
+            setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
+            try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...merged, notification_prompt_seen: true }))); } catch {}
+          } else {
+            setShowNotificationPrompt(true);
+          }
         }
       } else if (merged.notification_prompt_seen === true) {
         promptCheckedRef.current = true; // already done, no need to ever check again
@@ -876,7 +890,12 @@ export default function RCCShell() {
         if (merged.role === "co_caregiver") {
           setOnboardingStep(null);
         } else if (!alreadyHasChildren) {
-          setOnboardingStep("child");
+          // Never re-trigger onboarding if this is a post-upgrade redirect.
+          // The upgrade_success param means the user just came back from Stripe
+          // and loadProfile is re-running to refresh their tier — they already
+          // completed onboarding, so don't send them back through child info.
+          const isUpgradeRedirect = (() => { try { return new URLSearchParams(window.location.search).get("upgrade_success") === "true"; } catch { return false; } })();
+          if (!isUpgradeRedirect) setOnboardingStep("child");
         } else if (!intake && familyData.require_intake) {
           setOnboardingStep("intake");
         } else {
@@ -886,7 +905,10 @@ export default function RCCShell() {
         setFamilies([]); cacheFamilies([]);
         setChildren([]); cacheChildren([]);
         setConsultants([]); cacheConsultants([]);
-        setOnboardingStep(coInviteToken ? null : (inviteToken ? "register" : "child"));
+        const isUpgradeRedirect = (() => { try { return new URLSearchParams(window.location.search).get("upgrade_success") === "true"; } catch { return false; } })();
+        if (!isUpgradeRedirect) {
+          setOnboardingStep(coInviteToken ? null : (inviteToken ? "register" : "child"));
+        }
       }
     } catch (err) {
       console.error("[RCCShell] loadProfile error:", err);
@@ -1258,6 +1280,10 @@ export default function RCCShell() {
     canAccessDashboardInsights, canAccessRegulationInsights,
     canAccessConsultantReviewedPlan, canAccessCustomHumanPlan,
     canAccessZoomPhone, canAccessNSPulse, canAccessRegulationTrends,
+    canAccessFoundationTab, canAccessRootCellar,
+    canAccessFullPattern,
+    canAccessMilestoneList, canAccessMilestoneNSContext,
+    canSaveCoachHistory,
     asyncSupportCopy, zoomPhoneCopy,
     logout,
     checkinRefreshKey,
