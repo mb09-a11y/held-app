@@ -124,6 +124,12 @@ export function InputSheet({ title, fields, onConfirm, onCancel }) {
   const T = useT();
   const [vals, setVals] = useState(() => Object.fromEntries(fields.map(f => [f.key, f.default ?? ""])));
 
+  // A sheet can be a pure yes/no confirmation by passing a single field of
+  // type "confirm" instead of normal input fields. Existing sheets (date,
+  // time, select, text, number fields) are unaffected — this only changes
+  // rendering when a field explicitly opts into type "confirm".
+  const isConfirmOnly = fields.length === 1 && fields[0].type === "confirm";
+
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
@@ -138,27 +144,48 @@ export function InputSheet({ title, fields, onConfirm, onCancel }) {
           <h3 style={{ fontFamily: serif, fontSize: 18, color: T.headingText, margin: 0 }}>{title}</h3>
           <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: T.muted }}>✕</button>
         </div>
-        {fields.map(f => (
-          <div key={f.key} style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 5, fontFamily: font }}>
-              {f.label}
-            </label>
-            {f.type === "select" ? (
-              <select value={vals[f.key]} onChange={e => setVals(v => ({ ...v, [f.key]: e.target.value }))}
-                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.inputBg || T.faint, color: T.text, fontFamily: font, fontSize: 14, outline: "none" }}>
-                {f.options.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            ) : (
-              <input type={f.type} value={vals[f.key]}
-                onChange={e => setVals(v => ({ ...v, [f.key]: e.target.value }))}
-                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.inputBg || T.faint, color: T.text, fontFamily: font, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-            )}
-          </div>
-        ))}
-        <button onClick={() => onConfirm(vals)}
-          style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
-          Save →
-        </button>
+
+        {isConfirmOnly ? (
+          <>
+            <p style={{ fontFamily: font, fontSize: 14.5, color: T.text, lineHeight: 1.55, margin: "0 0 22px" }}>
+              {fields[0].message}
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={onCancel}
+                style={{ flex: 1, padding: 14, borderRadius: 12, border: `1px solid ${T.border}`, background: "transparent", color: T.text, fontFamily: font, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+                Cancel
+              </button>
+              <button onClick={() => onConfirm(vals)}
+                style={{ flex: 1, padding: 14, borderRadius: 12, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                Yes, update it
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {fields.map(f => (
+              <div key={f.key} style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", display: "block", marginBottom: 5, fontFamily: font }}>
+                  {f.label}
+                </label>
+                {f.type === "select" ? (
+                  <select value={vals[f.key]} onChange={e => setVals(v => ({ ...v, [f.key]: e.target.value }))}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.inputBg || T.faint, color: T.text, fontFamily: font, fontSize: 14, outline: "none" }}>
+                    {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input type={f.type} value={vals[f.key]}
+                    onChange={e => setVals(v => ({ ...v, [f.key]: e.target.value }))}
+                    style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.inputBg || T.faint, color: T.text, fontFamily: font, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                )}
+              </div>
+            ))}
+            <button onClick={() => onConfirm(vals)}
+              style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
+              Save →
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

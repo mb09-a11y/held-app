@@ -158,7 +158,12 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
 
   function updateSession(_next) {}
 
-  const [sessionType, setSessionType] = useState("nap");
+  // Default the nap/night toggle based on time of day — after 7 PM local
+  // time, default to "night" since that's almost always correct (this is
+  // exactly what would have caught tonight's late-bedtime mislabeled as a
+  // nap). Still fully overridable via the toggle buttons below before
+  // logging, so this is a smart default, not a hard rule.
+  const [sessionType, setSessionType] = useState(() => (new Date().getHours() >= 19 ? "night" : "nap"));
 
   const age = calculateAge(sleepActiveChild?.dob || activeFamily?.birth_date || activeFamily?.birthDate);
   const totalMonths = age.years * 12 + age.months;
@@ -255,7 +260,17 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
   const handlePutDown = async (vals) => {
     const putDownTime = (vals?.date && vals?.time) ? dateTimeToISO(vals.date, vals.time) : new Date().toISOString();
     showToast("Put down logged", "🛏️");
-    await onLog("sleep_session", { ts: putDownTime, fell_asleep_ts: null, end_ts: null, session_type: sessionType });
+    if (session?.sessionId) {
+      // A session is already open for this child — update its put-down time
+      // instead of inserting a second sleep_session row. Without this check,
+      // tapping "Put Down" more than once (e.g. a second tap after the UI
+      // didn't visually confirm fast enough) silently created duplicate open
+      // sessions, which then made the later "Wake Up" step ambiguous about
+      // which session it should close.
+      await onPatch(session.sessionId, { ts: putDownTime });
+    } else {
+      await onLog("sleep_session", { ts: putDownTime, fell_asleep_ts: null, end_ts: null, session_type: sessionType });
+    }
   };
 
   const handleAsleep = async (vals) => {
@@ -424,8 +439,41 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
 
         {/* Step rows — wireframe style */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <StepRow icon="🛏️" label="Put Down" sub={putDownDisplay ? `Logged · tap to update` : "Tap to log"} isLogged={putDownDisplay} color={C.amber}
-            onClick={() => openSheet({ title: "🛏️ Put Down", fields: [{ key: "date", label: "Date", type: "date", default: nowDateStr() }, { key: "time", label: "Time put down", type: "time", default: nowTimeStr() }], onConfirm: handlePutDown })} />
+          <StepRow
+            icon={session ? "💤" : "🛏️"}
+            label={session ? (session.sessionType === "night" ? "Night Sleep in Progress" : "Nap in Progress") : "Put Down"}
+            sub={session ? "Tap to update put-down time" : "Tap to log"}
+            isLogged={session ? (sleepingMins !== null ? fmtDuration(sleepingMins) : putDownDisplay) : false}
+            color={C.amber}
+            onClick={() => {
+              if (session?.sessionId) {
+                // A nap/night sleep is already in progress. Show a real
+                // yes/no confirmation first — only on "Yes" do we open the
+                // actual put-down time editor. This prevents an accidental
+                // tap from changing a meaningfully-in-progress session's
+                // start time.
+                const label = session.sessionType === "night" ? "night sleep" : "nap";
+                openSheet({
+                  title: session.sessionType === "night" ? "🌙 Night Sleep in Progress" : "☀️ Nap in Progress",
+                  fields: [{
+                    key: "confirm",
+                    type: "confirm",
+                    message: `A ${label} is currently in progress${putDownDisplay ? ` (started at ${putDownDisplay})` : ""}. Do you want to update its put-down time?`,
+                  }],
+                  onConfirm: () => setTimeout(() => openSheet({
+                    title: "🛏️ Update Put Down",
+                    fields: [
+                      { key: "date", label: "Date", type: "date", default: nowDateStr() },
+                      { key: "time", label: "Time put down", type: "time", default: nowTimeStr() },
+                    ],
+                    onConfirm: handlePutDown,
+                  }), 0),
+                });
+              } else {
+                openSheet({ title: "🛏️ Put Down", fields: [{ key: "date", label: "Date", type: "date", default: nowDateStr() }, { key: "time", label: "Time put down", type: "time", default: nowTimeStr() }], onConfirm: handlePutDown });
+              }
+            }}
+          />
           <StepRow icon="💤" label="Fell Asleep" sub={asleepDisplay ? `Logged · tap to update` : session?.putDownTime ? "Tap to log" : "Log put down first, or tap to log directly"} isLogged={asleepDisplay} color={C.purple}
             onClick={() => openSheet({ title: "💤 Fell Asleep", fields: [{ key: "date", label: "Date", type: "date", default: nowDateStr() }, { key: "time", label: "Time fell asleep", type: "time", default: nowTimeStr() }], onConfirm: handleAsleep })} />
           <StepRow icon="☀️" label="Woke Up" sub="Log even without prior steps" color={T.sage}
