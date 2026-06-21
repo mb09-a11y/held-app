@@ -89,13 +89,13 @@ export default function ResponseBuilder({ familyId, onBack, onSent }) {
       )}
 
       {/* NS context */}
-      {family?.nsState !== "regulated" && (
+      {family?.nsState && family.nsState !== "Regulated" && family.nsState !== "no_data" && (
         <div style={{
           margin: "0 18px 10px", background: "#FAF3E6",
           border: "1px solid #D4AE72", borderRadius: 12, padding: "8px 12px",
           fontSize: 11, color: "#B8924A", fontFamily: font,
         }}>
-          🧠 Parent NS: {family?.nsState} — validate emotion before data
+          🧠 Parent NS: {family.nsState} — validate emotion before data
         </div>
       )}
 

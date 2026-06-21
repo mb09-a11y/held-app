@@ -173,6 +173,52 @@ export function isTodayTz(ts, tz) {
   const fmt = d => new Date(d).toLocaleDateString("en-CA", opts); // YYYY-MM-DD
   return fmt(ts) === fmt(new Date());
 }
+
+// ─── PLAN DAY ─────────────────────────────────────────────────────────────────
+// Single source of truth for "what day of the sleep plan is this family on."
+// Replaces 4 previously-duplicated, disagreeing implementations.
+//
+// IMPORTANT: this counts CALENDAR days, not 24-hour periods. A plan that
+// started yesterday at 11pm and is being viewed at 1am today is on Day 2,
+// not Day 0 — millisecond-difference math (`(now - start) / 86400000`) gets
+// this wrong because it doesn't respect calendar boundaries or the family's
+// local timezone. Always evaluated in the FAMILY's timezone (falls back to
+// America/New_York if the family has no timezone set, since most existing
+// families predate timezone collection).
+//
+// @param {string|null} startDate - 'YYYY-MM-DD' or ISO string, from
+//   family.sleep_plan_profile.startDate. This is the calendar date training
+//   begins (Day 1), as set when the consultant builds/sends the plan.
+// @param {string|null} timezone - IANA timezone string, e.g. "America/Chicago".
+// @returns {number|null} 1-indexed plan day (Day 1 = start date itself), or
+//   null if there's no start date to calculate from.
+const DEFAULT_PLAN_TZ = "America/New_York";
+
+export function getPlanDay(startDate, timezone) {
+  if (!startDate) return null;
+  const tz = timezone || DEFAULT_PLAN_TZ;
+  const opts = { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" };
+
+  // A bare 'YYYY-MM-DD' string (no time component) IS the calendar date —
+  // it must NOT be run through a timezone conversion. Doing so reinterprets
+  // it as UTC midnight, which shifts it a calendar day backward in any zone
+  // west of UTC (exactly the kind of bug this function exists to fix). Only
+  // full timestamps (which represent a specific instant) need tz conversion
+  // to find out which calendar date they fall on for this family.
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(startDate);
+  const startStr = isDateOnly
+    ? startDate
+    : new Date(startDate).toLocaleDateString("en-CA", opts);
+  const todayStr = new Date().toLocaleDateString("en-CA", opts);
+
+  // Compare as UTC-midnight Date objects of the calendar strings themselves,
+  // so the day-count is a pure calendar diff with no further timezone re-entry.
+  const startUTC = new Date(`${startStr}T00:00:00Z`);
+  const todayUTC = new Date(`${todayStr}T00:00:00Z`);
+
+  const dayDiff = Math.round((todayUTC - startUTC) / 86400000);
+  return Math.max(1, dayDiff + 1); // Day 1 = the start date itself
+}
 export function fmtDuration(mins) {
   const m = Math.abs(Math.round(mins));
   if (m < 60) return `${m}m`;

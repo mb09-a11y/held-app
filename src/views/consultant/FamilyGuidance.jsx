@@ -14,6 +14,7 @@ import { callAI } from "../../lib/ai.js";
 import { IntakeViewer } from "../../modules/intake/IntakeViewer.jsx";
 import { ResponseDraftGenerator } from "../../modules/consultant/ResponseDraftGenerator.jsx";
 import { ClientMemoryEngine } from "../../modules/consultant/ClientMemoryEngine.jsx";
+import { getPlanDay } from "../../modules/sleep/sleepHelpers.js";
 
 // ─── TIER COLORS ──────────────────────────────────────────────────────────────
 const TIERS = {
@@ -39,9 +40,15 @@ function timeAgo(iso) {
   return `${Math.round(mins / 1440)}d ago`;
 }
 
-function planDay(planStartDate) {
-  if (!planStartDate) return null;
-  return Math.max(1, Math.floor((Date.now() - new Date(planStartDate)) / 86400000));
+// Wraps the shared, timezone-correct getPlanDay helper. Kept as a local
+// function (rather than inlining the import at each call site) so the two
+// call sites below don't need to change their call shape.
+//
+// NOTE: this used to read family.plan_start_date, which is not a real
+// column on the families table — that lookup was always undefined, so this
+// always returned NaN. The real field is family.sleep_plan_profile.startDate.
+function planDay(family) {
+  return getPlanDay(family?.sleep_plan_profile?.startDate, family?.timezone);
 }
 
 // ─── AI SYSTEM PROMPT ─────────────────────────────────────────────────────────
@@ -114,7 +121,7 @@ async function buildGuidanceContext(clientData, family, intake) {
   const child = clientData.children?.[0];
   const childName = child?.name || "the child";
   const age = child?.dob ? ageLabel(child.dob) : "age unknown";
-  const day = planDay(family.plan_start_date);
+  const day = planDay(family);
 
   const recentMsgs = (clientData.recentMessages || [])
     .map(m => `- ${m.sender_id ? "Parent" : "Consultant"}: "${m.content?.slice(0, 120)}"`)
@@ -716,7 +723,7 @@ export function FamilyGuidance({ clientData, onBack, onOpenTab }) {
     return <IntakeViewer family={family} onBack={() => setViewingIntake(false)} />;
   }
 
-  const day = planDay(family.plan_start_date);
+  const day = planDay(family);
 
   // Child status tier — first child gets family tier, rest default stable
   function childTier(idx) {

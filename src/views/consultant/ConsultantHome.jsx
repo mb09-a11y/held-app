@@ -214,7 +214,7 @@ function WellJourneyModal({ stage, totalCheckins, onClose, onCheckin, T }) {
 // Used for the "needs attention" family cards. `tone` controls framing copy
 // for shutdown's softer "Response needed" override vs. the normal flooded framing.
 function AlertCard({ family, tone, onDraft, onView, T }) {
-  const isFlooded = family.nsState === "overwhelmed";
+  const isFlooded = family.nsState === "Fight" || family.nsState === "Shutdown";
 
   let dot, typeLabel, typeColor, selahText, primaryLabel;
   if (tone === "shutdown") {
@@ -271,7 +271,7 @@ function AlertCard({ family, tone, onDraft, onView, T }) {
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 
-export default function ConsultantHome({ onNavigate, onOpenDrawer, lastNSCheckin, onCheckin }) {
+export default function ConsultantHome({ onNavigate, onChangeTab, onOpenDrawer, lastNSCheckin, onCheckin }) {
   const T = useT();
   const { currentUser } = useApp();
   const { families } = useFamilies();
@@ -426,11 +426,18 @@ export default function ConsultantHome({ onNavigate, onOpenDrawer, lastNSCheckin
         {/* ── Stats row ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7, margin: "0 18px 14px" }}>
           {[
-            { num: urgent,          lbl: "Urgent",       color: urgent > 0 ? "#C0543A" : T.teal },
-            { num: unread,          lbl: "Unread",       color: unread > 0 ? "#C08A3A" : T.teal },
-            { num: families.length, lbl: "Active plans", color: T.teal },
+            { num: urgent,          lbl: "Urgent",       color: urgent > 0 ? "#C0543A" : T.teal, target: "urgent" },
+            { num: unread,          lbl: "Unread",       color: unread > 0 ? "#C08A3A" : T.teal, target: "unread" },
+            { num: families.length, lbl: "Active plans", color: T.teal,                           target: null },
           ].map(s => (
-            <div key={s.lbl} style={{ background: T.card, borderRadius: 14, padding: "12px 10px", textAlign: "center", boxShadow: T.shadow }}>
+            <div
+              key={s.lbl}
+              onClick={() => onChangeTab?.("families", s.target)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === "Enter" || e.key === " ") onChangeTab?.("families", s.target); }}
+              style={{ background: T.card, borderRadius: 14, padding: "12px 10px", textAlign: "center", boxShadow: T.shadow, cursor: "pointer" }}
+            >
               <div style={{ fontFamily: serif, fontSize: 26, fontWeight: 600, color: s.color, lineHeight: 1 }}>{s.num}</div>
               <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: T.muted, fontWeight: 600, marginTop: 3, fontFamily: font }}>{s.lbl}</div>
             </div>
@@ -496,7 +503,7 @@ export default function ConsultantHome({ onNavigate, onOpenDrawer, lastNSCheckin
           const watchFam = sorted.find(f => f.urgency === "watch" || f.urgency === "urgent");
           if (!watchFam) return null;
           const text = watchFam.urgency === "urgent"
-            ? `${watchFam.name} is in distress — ${watchFam.nsState === "overwhelmed" ? "parent overwhelmed" : "child needs attention"}. Prepare a regulated response before tonight.`
+            ? `${watchFam.name} is in distress — ${watchFam.nsState === "Fight" || watchFam.nsState === "Shutdown" ? "parent in distress" : "child needs attention"}. Prepare a regulated response before tonight.`
             : `${watchFam.name}'s parent may reach out tonight. ${watchFam.insight} Prepare your response now.`;
           return (
             <ProactiveCard

@@ -665,8 +665,13 @@ export function useMessages() {
 export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null) {
   const { sessions } = useSessions(familyId, rangeDays, timezone);
   const childSessions = sessions[childId] || [];
-  const nights  = childSessions.filter(s => s.type === "night");
-  const naps    = childSessions.filter(s => s.type === "nap");
+  // Exclude still-open (in-progress) sessions from averaging — an open session has
+  // no end_ts, so its durationMs falls back to 0 in normalizeSleepLog, which would
+  // otherwise count an in-progress night/nap as a completed 0-minute session and
+  // drag the average toward zero.
+  const closedSessions = childSessions.filter(s => s.raw?.end_ts);
+  const nights  = closedSessions.filter(s => s.type === "night");
+  const naps    = closedSessions.filter(s => s.type === "nap");
 
   // Timezone-aware helpers — always interpret timestamps in the family's timezone
   const tzOpts = timezone ? { timeZone: timezone } : {};
@@ -716,8 +721,9 @@ export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null
     : 0;
 
   const fmtMin = m => {
-    const h = Math.floor(m / 60);
-    const min = m % 60;
+    const rounded = Math.round(m);
+    const h = Math.floor(rounded / 60);
+    const min = rounded % 60;
     return h > 0 ? `${h}h ${min}m` : `${min}m`;
   };
 
@@ -730,7 +736,7 @@ export function useSleepStats(childId, familyId, rangeDays = 30, timezone = null
     return Math.max(0, s.durationMin - wakingMinsThisNight);
   });
 
-  const avgNight    = nightActualMins.length ? nightActualMins.reduce((a,b)=>a+b,0) / nightActualMins.length : 0;
+  const avgNight    = nightActualMins.length ? Math.round(nightActualMins.reduce((a,b)=>a+b,0) / nightActualMins.length) : 0;
   const avgNap      = naps.length ? Math.round(naps.reduce((a,s)=>a+s.durationMin,0) / naps.length) : 0;
   const avgSettling = nights.filter(s=>s.settlingMin>0).length
     ? Math.round(nights.filter(s=>s.settlingMin>0).reduce((a,s)=>a+s.settlingMin,0) / nights.filter(s=>s.settlingMin>0).length)

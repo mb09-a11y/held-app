@@ -18,7 +18,7 @@
 //   "log_good"   — After logging a win or positive moment
 //
 // NS States (from regulation_checkins):
-//   "overwhelmed" | "activated" | "shutdown" | "regulated" | null
+//   "Regulated" | "Stretched" | "Flight" | "Freeze" | "Fight" | "Shutdown" | null
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── MORNING PRACTICES ───────────────────────────────────────────────────────
@@ -233,9 +233,9 @@ export function getPractice(surface, nsState, seed = new Date().getDate()) {
 
   const pool = pools[surface] || INVITATION;
 
-  // If parent is overwhelmed/activated, weight toward grounding practices
+  // If parent is activated/depleted, weight toward grounding practices
   // (those starting with m0x or e1x). Simple: pick from first half of pool.
-  if (nsState === "overwhelmed" || nsState === "activated") {
+  if (nsState === "Fight" || nsState === "Shutdown" || nsState === "Freeze" || nsState === "Flight" || nsState === "Stretched") {
     const groundingPool = pool.slice(0, Math.ceil(pool.length / 2));
     return groundingPool[seed % groundingPool.length];
   }

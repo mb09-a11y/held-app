@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap');
+
+:root {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  background: #FDFAF6;
+}
+
+body {
+  display: block;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* ── PRINT STYLES — for chart PDF export ── */
+@media print {
+  /* Hide app chrome */
+  .rcc-bottom-nav,
+  .rcc-sos-fab,
+  .rcc-app-drawer,
+  button[aria-label="SOS — I need help right now"] {
+    display: none !important;
+  }
+
+  /* Remove fixed positioning so content flows */
+  body > div {
+    position: static !important;
+    max-width: 100% !important;
+  }
+
+  /* Make SVG charts print at full width */
+  svg {
+    max-width: 100%;
+    page-break-inside: avoid;
+  }
+
+  /* Clean white background */
+  body, #root {
+    background: white !important;
+    color: #2D2D2D !important;
+  }
+
+  /* Avoid breaking cards across pages */
+  .card, [class*="card"] {
+    page-break-inside: avoid;
+  }
+}

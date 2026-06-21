@@ -1,14 +1,44 @@
 // views/consultant/RedFlags.jsx
+import { useEffect, useRef, useState } from "react";
 import { useT, font, serif } from "../../core/shared.jsx";
 import { useFamilies } from "./data/consultantStore.js";
 
-export default function RedFlags({ onNavigate, onInviteFamily }) {
+// scrollTarget: 'urgent' | 'unread' | null — set when arriving here from a
+// Home screen stat tile that implies a specific section. Scrolls to and
+// briefly highlights that section once on mount.
+export default function RedFlags({ onNavigate, onInviteFamily, scrollTarget = null }) {
   const T = useT();
   const { families } = useFamilies();
 
   const urgentFamilies = families.filter(f => f.urgency === "urgent");
   const watchFamilies  = families.filter(f => f.urgency === "watch");
   const goodFamilies   = families.filter(f => f.urgency === "good");
+  const unreadFamilies = families.filter(f => f.unread);
+
+  const urgentRef = useRef(null);
+  const unreadRef = useRef(null);
+  const [highlight, setHighlight] = useState(null); // 'urgent' | 'unread' | null
+
+  useEffect(() => {
+    if (!scrollTarget) return;
+    const ref = scrollTarget === "urgent" ? urgentRef : scrollTarget === "unread" ? unreadRef : null;
+    if (!ref?.current) return;
+    ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlight(scrollTarget);
+    const t = setTimeout(() => setHighlight(null), 1800);
+    return () => clearTimeout(t);
+    // Only run once per arrival — intentionally not re-running on every
+    // families/refs change, just when the target itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTarget]);
+
+  const sectionHeaderStyle = (isHighlighted) => ({
+    padding: "8px 18px 4px", fontSize: 10, letterSpacing: "0.12em",
+    textTransform: "uppercase", color: T.muted, fontWeight: 600, fontFamily: font,
+    borderRadius: 8,
+    background: isHighlighted ? "rgba(192,138,58,0.18)" : "transparent",
+    transition: "background 0.6s ease",
+  });
 
   return (
     <div style={{ background: T.gradientBg, flex: 1, overflowY: "auto" }}>
@@ -35,9 +65,9 @@ export default function RedFlags({ onNavigate, onInviteFamily }) {
       </div>
 
       {/* Red flags */}
-      {urgentFamilies.map(fam => (
-        <div key={fam.id}>
-          <div style={{ padding: "8px 18px 4px", fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: T.muted, fontWeight: 600, fontFamily: font }}>
+      {urgentFamilies.map((fam, i) => (
+        <div key={fam.id} ref={i === 0 ? urgentRef : null}>
+          <div style={sectionHeaderStyle(i === 0 && highlight === "urgent")}>
             🚨 Urgent
           </div>
           <div style={{ margin: "0 18px 10px", background: "rgba(192,84,58,0.12)", border: "1.5px solid rgba(192,84,58,0.2)", borderRadius: 16, padding: "13px 15px" }}>
@@ -51,7 +81,7 @@ export default function RedFlags({ onNavigate, onInviteFamily }) {
               {fam.name} — {fam.children.filter(c => c.status === "urgent").map(c => c.name).join(" & ")}
             </div>
             <div style={{ fontSize: 12, color: T.muted, lineHeight: 1.5, marginBottom: 9, fontFamily: font }}>
-              {fam.insight} Parent NS: {fam.nsState}.
+              {fam.insight} Parent NS: {fam.nsState === "no_data" ? "No check-in yet" : fam.nsState}.
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={() => onNavigate("family", { familyId: fam.id })} style={{
@@ -79,7 +109,7 @@ export default function RedFlags({ onNavigate, onInviteFamily }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <div style={{ fontSize: 18 }}>⚠️</div>
               <div style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 600, color: "#C08A3A", fontFamily: font }}>
-                {fam.nsState !== "regulated" ? "Parent distress increasing" : "Regression window"}
+                {fam.nsState !== "Regulated" ? "Parent distress increasing" : "Regression window"}
               </div>
             </div>
             <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 4, fontFamily: font }}>{fam.name}</div>
@@ -99,6 +129,40 @@ export default function RedFlags({ onNavigate, onInviteFamily }) {
           </div>
         </div>
       ))}
+
+      {/* Unread — families with an unread message waiting */}
+      {unreadFamilies.length > 0 && (
+        <>
+          {unreadFamilies.map((fam, i) => (
+            <div key={fam.id} ref={i === 0 ? unreadRef : null}>
+              <div style={sectionHeaderStyle(i === 0 && highlight === "unread")}>
+                ✉️ Unread
+              </div>
+              <div
+                onClick={() => onNavigate("family", { familyId: fam.id })}
+                style={{
+                  margin: "0 18px 10px", background: "rgba(123,143,170,0.12)",
+                  border: "1.5px solid rgba(123,143,170,0.25)", borderRadius: 16,
+                  padding: "13px 15px", cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 10,
+                }}
+              >
+                <span style={{ fontSize: 18 }}>✉️</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 2, fontFamily: font }}>{fam.name}</div>
+                  <div style={{
+                    fontSize: 12, color: T.muted, fontFamily: font,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {fam.lastMessage || "New message waiting"}
+                  </div>
+                </div>
+                <span style={{ fontSize: 14, color: T.muted, flexShrink: 0 }}>›</span>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
 
       {/* Engagement drop — families with no recent messages */}
       {(() => {

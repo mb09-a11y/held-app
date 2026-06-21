@@ -20,8 +20,8 @@ import { ConsultantNSCheckin } from "./ConsultantNSCheckin.jsx";
 
 function familyStateLine(nsState, familyName) {
   const name = familyName || "This family";
-  if (nsState === "overwhelmed") return `${name} is flooded right now. Respond with care.`;
-  if (nsState === "activated")   return `${name}'s nervous system is activated right now. Take your time.`;
+  if (nsState === "Fight" || nsState === "Shutdown") return `${name} is flooded right now. Respond with care.`;
+  if (nsState === "Freeze" || nsState === "Flight" || nsState === "Stretched") return `${name}'s nervous system is activated right now. Take your time.`;
   return `Take a moment with yourself before you respond${familyName ? ` to ${familyName}` : ""}.`;
 }
 

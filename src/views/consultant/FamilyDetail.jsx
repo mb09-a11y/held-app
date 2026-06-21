@@ -37,7 +37,7 @@ function FamilyMessagesTab({ family, triggerCoPilot, onNavigate }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 400 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {/* Co-Pilot draft button */}
       <div style={{ padding: "10px 18px 0" }}>
         <button
@@ -318,41 +318,50 @@ export default function FamilyDetail({ familyId, family: familyProp, params, onN
         ))}
       </div>
 
-      {/* Tab content — scrollable */}
-      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 80 }}>
-        {activeTab === "Insights"   && <InsightsTab  family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
-        {activeTab === "Sleep Data" && <SleepDataTab family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
-        {activeTab === "Plan"       && <PlanTab      family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
-        {activeTab === "Intake"     && <IntakeTab    family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
-        {activeTab === "Notes"      && <NotesTab     family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
-        {activeTab === "Messages"   && <FamilyMessagesTab family={family} triggerCoPilot={params?.triggerCoPilot} onNavigate={onNavigate} />}
-
-        {/* ── End Relationship button — inside scroll so it's always reachable ── */}
-        <div style={{ padding: "24px 18px 8px", borderTop: `1px solid ${T.border}`, marginTop: 16 }}>
-          {endError && (
-            <div style={{
-              fontFamily: font, fontSize: 13, color: "#8B2E2E",
-              textAlign: "center", marginBottom: 10,
-            }}>
-              {endError}
-            </div>
-          )}
-          <button
-            onClick={() => setShowEndDialog(true)}
-            style={{
-              width: "100%", padding: "12px 0",
-              background: "transparent",
-              color: "#8B2E2E",
-              border: "1px solid rgba(139,46,46,0.3)",
-              borderRadius: 12,
-              fontFamily: font, fontSize: 14, fontWeight: 500,
-              cursor: "pointer", letterSpacing: "0.01em",
-            }}
-          >
-            End relationship with this family
-          </button>
+      {/* Tab content */}
+      {activeTab === "Messages" ? (
+        // Messages owns a real chat layout: thread scrolls internally, compose
+        // bar is pinned to the bottom of the AVAILABLE space (not faked with
+        // a hardcoded paddingBottom). No height:100% vs. overflow:auto fight
+        // with the parent, and no other tab content sneaking in below it.
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <FamilyMessagesTab family={family} triggerCoPilot={params?.triggerCoPilot} onNavigate={onNavigate} />
         </div>
-      </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: "auto", paddingBottom: 80 }}>
+          {activeTab === "Insights"   && <InsightsTab  family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+          {activeTab === "Sleep Data" && <SleepDataTab family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+          {activeTab === "Plan"       && <PlanTab      family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+          {activeTab === "Intake"     && <IntakeTab    family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+          {activeTab === "Notes"      && <NotesTab     family={family} activeChild={activeChild} onNavigate={handleTabNav} />}
+
+          {/* ── End Relationship button — inside scroll so it's always reachable ── */}
+          <div style={{ padding: "24px 18px 8px", borderTop: `1px solid ${T.border}`, marginTop: 16 }}>
+            {endError && (
+              <div style={{
+                fontFamily: font, fontSize: 13, color: "#8B2E2E",
+                textAlign: "center", marginBottom: 10,
+              }}>
+                {endError}
+              </div>
+            )}
+            <button
+              onClick={() => setShowEndDialog(true)}
+              style={{
+                width: "100%", padding: "12px 0",
+                background: "transparent",
+                color: "#8B2E2E",
+                border: "1px solid rgba(139,46,46,0.3)",
+                borderRadius: 12,
+                fontFamily: font, fontSize: 14, fontWeight: 500,
+                cursor: "pointer", letterSpacing: "0.01em",
+              }}
+            >
+              End relationship with this family
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -41,7 +41,8 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
 
   const hasData   = (stats.nights?.length || 0) + (stats.naps?.length || 0) > 0;
   const childName = activeChild?.name ?? "your child";
-  const nsState   = family?.nsState   || "regulated";
+  // No fallback to "regulated" — missing/unrecognized state reads as no_data.
+  const nsState   = family?.nsState || "no_data";
   const nsNote    = family?.nsNote    || "";
   const nsTrendDays = (family?.nsTrend || []).filter(v => v >= 3).length;
 
@@ -56,8 +57,8 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
 
   // ── Status ─────────────────────────────────────────────────────────────────
   const status   = activeChild?.status || "good";
-  const isUrgent = status === "urgent" || nsState === "overwhelmed";
-  const isWatch  = !isUrgent && (status === "watch" || nsState === "activated");
+  const isUrgent = status === "urgent" || nsState === "Shutdown" || nsState === "Fight";
+  const isWatch  = !isUrgent && (status === "watch" || nsState === "Freeze" || nsState === "Flight" || nsState === "Stretched");
 
   // ── Sleep signals ──────────────────────────────────────────────────────────
   const avgNightWakes = stats.avgNightWakes ?? 0;
@@ -178,7 +179,7 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
 
   // ── Co-Pilot parent state insight ─────────────────────────────────────────
   const parentInsight = (() => {
-    if (nsState === "overwhelmed") return {
+    if (nsState === "Shutdown" || nsState === "Fight") return {
       title: "Validate first. Data second.",
       body:  `NS trend shows ${nsTrendDays || "several"} days activated${nsNote ? ` — "${nsNote}"` : ""}. Parent needs emotional anchoring before any plan discussion. Lead with warmth.`,
       actions: [
@@ -186,7 +187,7 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
         { label: "See NS log",            onClick: () => {} },
       ],
     };
-    if (nsState === "activated") return {
+    if (nsState === "Freeze" || nsState === "Flight" || nsState === "Stretched") return {
       title: "Parent NS activated — check in proactively.",
       body:  `${nsTrendDays > 0 ? `${nsTrendDays} days activated` : "Recent check-in shows activation"}${nsNote ? ` — "${nsNote}"` : ""}. Reach out before they message you tonight.`,
       actions: [
@@ -194,11 +195,16 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
         { label: "See NS log",     onClick: () => {} },
       ],
     };
+    if (nsState === "no_data") return {
+      title: "No check-in yet — nothing to report.",
+      body:  "Encourage the parent to log how they're feeling — it helps you calibrate your support.",
+      actions: [
+        { label: "Draft check-in", onClick: () => onNavigate("responseBuilder") },
+      ],
+    };
     return {
       title: "Parent is regulated — good window for data sharing.",
-      body:  family?.nsCheckinTime
-        ? `Last check-in ${fmtRelTime(family.nsCheckinTime)} shows regulation. This is a good moment to share progress data or set expectations for the next phase.`
-        : `No recent NS check-in. Encourage the parent to log how they're feeling — it helps you calibrate your support.`,
+      body:  `Last check-in ${fmtRelTime(family.nsCheckinTime)} shows regulation. This is a good moment to share progress data or set expectations for the next phase.`,
       actions: [
         { label: "Draft check-in", onClick: () => onNavigate("responseBuilder") },
       ],
@@ -208,10 +214,10 @@ export default function InsightsTab({ family, activeChild, onNavigate }) {
   // ── Proactive suggestion (day-triggered anticipatory guidance) ────────────
   const proactiveSuggestion = (() => {
     // NS state always takes priority
-    if (nsState === "overwhelmed") return {
+    if (nsState === "Shutdown" || nsState === "Fight") return {
       icon: "🫂",
       label: "Parent state · Act now",
-      text: `Parent is in overwhelm. Reach out before they message you — a short, warm note can regulate their system before tonight's session.`,
+      text: `Parent is in distress. Reach out before they message you — a short, warm note can regulate their system before tonight's session.`,
       cta: "Draft support message →",
     };
     if (isUrgent) return {

@@ -8,7 +8,7 @@ import {
   THEMES, ThemeCtx, AppCtx, useT, useApp,
   useStorage, font, serif
 } from "./core/shared.jsx";
-import { supabase, clearStaleAuthTokens, clearStaleLocks, onPasswordRecovery } from "./lib/supabase.js";
+import { supabase, getSupabase, clearStaleAuthTokens, clearStaleLocks, onPasswordRecovery } from "./lib/supabase.js";
 import { warmAI } from "./lib/ai.js";
 
 // ── Layout (held nav + SOS FAB)
@@ -723,10 +723,39 @@ export default function RCCShell() {
   // ── LOAD PROFILE (UNCHANGED logic)
   async function loadProfile(userId, authEmail = null, fromCache = false) {
     if (!fromCache) setAuthLoading(true);
+    // Pin to a single client instance for this entire function. loadProfile
+    // makes many sequential and parallel Supabase calls (profile, families,
+    // children, consultants, co-caregiver lookups, etc). The global `supabase`
+    // export is a Proxy that the visibility-resume handler in lib/supabase.js
+    // can swap out mid-flight (e.g. if the app is backgrounded and restored
+    // while this function is still running — a common case when someone
+    // opens the app after it's been idle). Without pinning, a call partway
+    // through this function could silently run against a fresh, not-yet-
+    // authenticated client and never resolve, which is what produced the
+    // "Loading sleep data..." hang that never recovers even on refresh.
+    const client = getSupabase();
+
+    // Hard timeout on the whole load sequence, mirroring the existing
+    // pattern already used in ParentHome.jsx (useFamilyState's fetch
+    // bundle). loadProfile can stall for reasons beyond the client-swap
+    // race above — slow/dropping wifi, a cold Supabase function, etc — and
+    // until now there was no ceiling on how long it would wait, so any
+    // stall surfaced as a permanent "Loading sleep data..." hang with no
+    // way to recover short of a full sign-out/sign-in. On timeout we stop
+    // waiting and clear the loading flags so the UI is no longer stuck.
+    // families/children are left as whatever they already were (e.g.
+    // cached values from a prior successful load) rather than being
+    // wiped — visibility-change and other normal re-triggers of
+    // loadProfile get another chance to complete successfully. Note: the
+    // inner load may still be running in the background after a timeout
+    // "wins" the race (JS can't cancel an in-flight fetch this way) — if
+    // it eventually completes, its own setState calls still apply safely,
+    // they just arrive late rather than blocking the UI in the meantime.
+    async function loadProfileInner() {
     try {
       const [{ data: { user: authUser } }, { data: profile, error: profileError }] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.from("profiles").select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin, notification_prompt_seen").eq("id", userId).maybeSingle(),
+        client.auth.getUser(),
+        client.from("profiles").select("id, name, user_email, role, subscription_tier, ai_messages_used, ai_messages_reset_at, child_name, dob, weight_lbs, weight_oz, consultant_pin, notification_prompt_seen").eq("id", userId).maybeSingle(),
       ]);
       if (profileError) throw profileError;
 
@@ -770,11 +799,11 @@ export default function RCCShell() {
         // before the DB write completes.
         if (sessionStorage.getItem("held_notif_prompt_seen")) {
           // Already seen this session — mark in DB so it never shows again on next login
-          await supabase.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
+          await client.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
           setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
           try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...merged, notification_prompt_seen: true }))); } catch {}
         } else {
-          const { data: existingSub } = await supabase
+          const { data: existingSub } = await client
             .from("push_subscriptions")
             .select("id")
             .eq("user_id", userId)
@@ -782,7 +811,7 @@ export default function RCCShell() {
 
           if (existingSub) {
             // Already subscribed — just mark seen so we never check again
-            await supabase.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
+            await client.from("profiles").update({ notification_prompt_seen: true }).eq("id", userId);
             setCurrentUser(prev => ({ ...prev, notification_prompt_seen: true }));
             try { localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...merged, notification_prompt_seen: true }))); } catch {}
           } else {
@@ -796,8 +825,8 @@ export default function RCCShell() {
       if (isAdmin(merged.role)) {
         setTab("dashboard");
         const [{ data: fams }, { data: cons }] = await Promise.all([
-          supabase.from("families").select("*"),
-          supabase.from("profiles").select("*").in("role", ["consultant", "consultant_internal", "admin"]),
+          client.from("families").select("*"),
+          client.from("profiles").select("*").in("role", ["consultant", "consultant_internal", "admin"]),
         ]);
         setFamilies(fams || []); cacheFamilies(fams || []);
         setConsultants(cons || []); cacheConsultants(cons || []);
@@ -808,7 +837,7 @@ export default function RCCShell() {
 
       if (isConsultant(merged.role)) {
         setTab("families");
-        const { data: fams } = await supabase.from("families").select("*").eq("consultant_id", userId);
+        const { data: fams } = await client.from("families").select("*").eq("consultant_id", userId);
         setFamilies(fams || []); cacheFamilies(fams || []);
         setConsultants([]); cacheConsultants([]);
         setChildren([]); cacheChildren([]);
@@ -819,16 +848,16 @@ export default function RCCShell() {
       setTab("home");
 
       const [{ data: byId }, { data: byEmail }] = await Promise.all([
-        supabase.from("families").select("*").eq("parent_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        client.from("families").select("*").eq("parent_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         resolvedEmail
-          ? supabase.from("families").select("*").eq("invite_email", resolvedEmail).order("consultant_id", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1).maybeSingle()
+          ? client.from("families").select("*").eq("invite_email", resolvedEmail).order("consultant_id", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(1).maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
 
       let familyData = byId || byEmail || null;
 
       if (!byId && byEmail) {
-        supabase.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
+        client.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
       }
 
       if (!familyData) {
@@ -836,7 +865,7 @@ export default function RCCShell() {
         // then fall back to email. Two separate queries avoids .or() syntax issues.
         let coRecord = null;
 
-        const { data: byUserId } = await supabase
+        const { data: byUserId } = await client
           .from("co_caregivers")
           .select("family_id")
           .eq("user_id", userId)
@@ -846,7 +875,7 @@ export default function RCCShell() {
         if (byUserId) {
           coRecord = byUserId;
         } else if (resolvedEmail) {
-          const { data: byCoEmail } = await supabase
+          const { data: byCoEmail } = await client
             .from("co_caregivers")
             .select("family_id")
             .eq("email", resolvedEmail)
@@ -856,7 +885,7 @@ export default function RCCShell() {
         }
 
         if (coRecord) {
-          const { data: coFamily } = await supabase
+          const { data: coFamily } = await client
             .from("families")
             .select("*")
             .eq("id", coRecord.family_id)
@@ -870,7 +899,7 @@ export default function RCCShell() {
               const cached = JSON.parse(localStorage.getItem("rcc_user") || "{}");
               localStorage.setItem("rcc_user", JSON.stringify(buildSafeCache({ ...cached, ...merged, role: "co_caregiver" })));
             } catch {}
-            supabase
+            client
               .from("co_caregivers")
               .update({ status: "active", user_id: userId })
               .eq("family_id", coRecord.family_id)
@@ -888,11 +917,11 @@ export default function RCCShell() {
           : userId;
 
         const [{ data: resolvedKids }, { data: cons }, { data: intake }] = await Promise.all([
-          supabase.from("children").select("*").eq("parent_id", parentIdForKids).order("created_at", { ascending: true }),
+          client.from("children").select("*").eq("parent_id", parentIdForKids).order("created_at", { ascending: true }),
           familyData.consultant_id
-            ? supabase.from("profiles").select("*").eq("id", familyData.consultant_id).maybeSingle()
+            ? client.from("profiles").select("*").eq("id", familyData.consultant_id).maybeSingle()
             : Promise.resolve({ data: null }),
-          supabase.from("intake_responses").select("*").eq("family_id", familyData.id).maybeSingle(),
+          client.from("intake_responses").select("*").eq("family_id", familyData.id).maybeSingle(),
         ]);
 
         const kidList = resolvedKids || [];
@@ -935,6 +964,23 @@ export default function RCCShell() {
       setProfileReady(true);
     } finally {
       setAuthLoading(false);
+    }
+    } // end loadProfileInner
+
+    const LOAD_TIMEOUT_MS = 15000;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("load_profile_timeout")), LOAD_TIMEOUT_MS)
+    );
+    try {
+      await Promise.race([loadProfileInner(), timeoutPromise]);
+    } catch (err) {
+      if (err.message === "load_profile_timeout") {
+        console.warn("[RCCShell] loadProfile timed out after", LOAD_TIMEOUT_MS, "ms — unblocking UI so the app doesn't hang indefinitely");
+        setProfileReady(true);
+        setAuthLoading(false);
+      }
+      // Any other error here is unexpected, since loadProfileInner already
+      // has its own try/catch — but don't let it crash the app either way.
     }
   }
 
@@ -1240,11 +1286,20 @@ export default function RCCShell() {
     if (!coInviteEmail.trim()) { setCoInviteError("Please enter an email address."); return; }
     setCoInviteBusy(true); setCoInviteError(""); setCoInviteSuccess("");
     try {
+      // Pin to a single client instance for the whole invite flow. The global
+      // `supabase` export is a Proxy that can be swapped out mid-flight by the
+      // visibility-resume handler in lib/supabase.js (e.g. if the tab/app is
+      // backgrounded and restored between these two calls). Grabbing the
+      // client once here means both calls below always run against the same
+      // (already-authenticated) instance, instead of the second call possibly
+      // landing on a brand-new client whose session hasn't rehydrated yet.
+      const client = getSupabase();
+
       const familyId = activeFamily?.id;
       if (!familyId) throw new Error("No active family found.");
       const normalizedEmail = coInviteEmail.trim().toLowerCase();
 
-      const { error: insertError } = await supabase.from("co_caregivers").upsert({
+      const { error: insertError } = await client.from("co_caregivers").upsert({
         family_id: familyId,
         invited_by: currentUser?.id,
         email: normalizedEmail,
@@ -1252,7 +1307,7 @@ export default function RCCShell() {
       }, { onConflict: "family_id,email" });
       if (insertError) throw insertError;
 
-      const { error } = await supabase.functions.invoke("send-invite", {
+      const { error } = await client.functions.invoke("send-invite", {
         body: {
           email: normalizedEmail,
           familyId,

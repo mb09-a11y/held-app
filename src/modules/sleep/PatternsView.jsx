@@ -127,9 +127,25 @@ export function PatternsView({ logs, onPatch, onDelete }) {
       return hour >= 6 && hour < 20;
     });
     const night = sessions.filter(l => l.session_type === "night");
-    const totalH = sessions.reduce((s,l) => s + Math.max(0, new Date(l.end_ts)-new Date(l.ts)),0)/3600000;
-    const napH   = naps.reduce((s,l) => s + Math.max(0, new Date(l.end_ts)-new Date(l.ts)),0)/3600000;
-    const nightH = night.reduce((s,l) => s + Math.max(0, new Date(l.end_ts)-new Date(l.ts)),0)/3600000;
+
+    // Sleep duration = total_sleep_ms (already computed at wake-up / on edit using
+    // fell_asleep_ts, falling back to ts when settling wasn't logged separately —
+    // see TodayView.handleWakeUp and EditLogModal), minus any night_waking whose
+    // timestamp falls inside that session's actual sleep window.
+    const sleepMinusWakings = (sess) => {
+      const start = new Date(sess.fell_asleep_ts || sess.ts).getTime();
+      const end = new Date(sess.end_ts).getTime();
+      const base = sess.total_sleep_ms != null ? sess.total_sleep_ms : Math.max(0, end - start);
+      const wakingMs = logs
+        .filter(l => l.type === "night_waking")
+        .filter(l => { const t = new Date(l.ts).getTime(); return t >= start && t <= end; })
+        .reduce((s, l) => s + (l.duration || 0) * 60000, 0);
+      return Math.max(0, base - wakingMs);
+    };
+
+    const totalH = sessions.reduce((s,l) => s + sleepMinusWakings(l), 0) / 3600000;
+    const napH   = naps.reduce((s,l) => s + sleepMinusWakings(l), 0) / 3600000;
+    const nightH = night.reduce((s,l) => s + sleepMinusWakings(l), 0) / 3600000;
     return {
       label: d.toLocaleDateString([],{weekday:"short"}),
       totalH: parseFloat(totalH.toFixed(1)), nightH: parseFloat(nightH.toFixed(1)),
@@ -142,11 +158,47 @@ export function PatternsView({ logs, onPatch, onDelete }) {
     };
   }), [logs, range, target.total]);
 
+  // Dev visibility: flag night_waking entries that don't fall inside any sleep_session's
+  // window, so they're silently excluded from the totalH/nightH subtraction above.
+  // Beta-only console flag — not user-facing.
+  useMemo(() => {
+    const since = new Date(Date.now() - range * 86400000);
+    const allSessions = logs.filter(l => l.type === "sleep_session" && l.end_ts);
+    const allWakings = logs.filter(l => l.type === "night_waking" && new Date(l.ts) >= since);
+    const orphaned = allWakings.filter(w => {
+      const t = new Date(w.ts).getTime();
+      return !allSessions.some(sess => {
+        const start = new Date(sess.fell_asleep_ts || sess.ts).getTime();
+        const end = new Date(sess.end_ts).getTime();
+        return t >= start && t <= end;
+      });
+    });
+    if (orphaned.length) {
+      console.warn(
+        `[PatternsView] ${orphaned.length} night_waking log(s) don't fall inside any sleep_session window — excluded from sleep totals:`,
+        orphaned.map(w => ({ id: w.id, ts: w.ts, duration: w.duration }))
+      );
+    }
+  }, [logs, range]);
+
   const stats = useMemo(() => {
     const days = dayData.filter(d => d.hasData);
     if (!days.length) return null;
-    const avg = k => days.reduce((s,d)=>s+d[k],0)/days.length;
-    const avgTotal = avg("totalH"), avgNap = avg("napH"), avgNight = avg("nightH");
+    // avgNight and avgNap must only average over days that actually had that
+    // session type — otherwise a nap-only day (nightH=0) or a night-only day
+    // (napH=0) silently dilutes the other average toward zero, even though
+    // dayData.hasData correctly excludes days with no logs at all.
+    const nightDays = days.filter(d => d.nightH > 0);
+    const avgNight = nightDays.length ? nightDays.reduce((s,d)=>s+d.nightH,0) / nightDays.length : 0;
+    const napDaysForAvg = days.filter(d => d.napH > 0);
+    const avgNap = napDaysForAvg.length ? napDaysForAvg.reduce((s,d)=>s+d.napH,0) / napDaysForAvg.length : 0;
+    // avgTotal is derived from avgNight + avgNap rather than independently
+    // averaging each day's totalH — averaging raw daily totals mixes partial
+    // days (nap logged, no night yet, or vice versa) into the same pool as
+    // complete days, which understates the real daily total. Summing the two
+    // already-correctly-averaged components keeps this number consistent with
+    // what's shown on the Avg Night / Avg Naps cards right next to it.
+    const avgTotal = avgNight + avgNap;
     // Night wakes — only average across days that actually had a waking logged
     const daysWithWakings = dayData.filter(d => d.nightWakes > 0);
     const avgNightWakes = daysWithWakings.length
@@ -163,6 +215,8 @@ export function PatternsView({ logs, onPatch, onDelete }) {
       avgTotal: parseFloat(avgTotal.toFixed(1)), avgNap: parseFloat(avgNap.toFixed(1)),
       avgNight: parseFloat(avgNight.toFixed(1)), avgNightWakes,
       avgSettle, avgNapCount,
+      nightDaysLogged: nightDays.length,
+      totalDaysLogged: days.length,
       totalGap: parseFloat((avgTotal - target.total).toFixed(1)),
       napGap: parseFloat((avgNap - target.nap).toFixed(1)),
     };
@@ -264,19 +318,9 @@ export function PatternsView({ logs, onPatch, onDelete }) {
     };
   }
 
-  function nightStats() {
-    const nights = dayData.map((day, i) => {
-      const d = new Date(); d.setDate(d.getDate()-(range-1-i));
-      const dayLogs = logs.filter(l=>new Date(l.ts).toDateString()===d.toDateString());
-      const ns = dayLogs.filter(l=>l.type==="sleep_session"&&l.end_ts&&l.session_type==="night");
-      const wakes = dayLogs.filter(l=>l.type==="night_waking").length;
-      const dur = ns.reduce((s,l)=>s+Math.max(0,new Date(l.end_ts)-new Date(l.ts)),0)/3600000;
-      const settle = ns.filter(l=>l.fall_asleep_secs!=null);
-      return (ns.length > 0 || wakes > 0) ? { durH:dur, wakes, avgSettle: settle.length?Math.round(settle.reduce((s,l)=>s+l.fall_asleep_secs,0)/settle.length/60):null } : null;
-    }).filter(Boolean);
-    if (!nights.length) return null;
-    return { avgDurH: parseFloat((nights.reduce((s,n)=>s+n.durH,0)/nights.length).toFixed(1)), avgWakes: parseFloat((nights.reduce((s,n)=>s+n.wakes,0)/nights.length).toFixed(1)), avgSettle: nights.some(n=>n.avgSettle!==null)?Math.round(nights.filter(n=>n.avgSettle!==null).reduce((s,n)=>s+n.avgSettle,0)/nights.filter(n=>n.avgSettle!==null).length):null };
-  }
+  // Night card (below) now reads directly from `stats` — the same dayData-derived
+  // values that feed the top "Sleep Patterns · 7-Day Avg" card — so there is one
+  // source of truth for avg night sleep across the whole Patterns view.
 
   // Only show a nap slot if it occurred on enough days to be a real pattern
   // (at least 2 days AND at least 25% of logged days)
@@ -699,7 +743,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
                   );
                 })}
                 {(() => {
-                  const ns = nightStats();
+                  const ns = stats && stats.avgNight > 0 ? { avgDurH: stats.avgNight, avgWakes: stats.avgNightWakes, avgSettle: stats.avgSettle } : null;
                   if (!ns) return null;
                   return (
                     <div style={{ borderRadius: 16, padding: "16px 18px", background: `linear-gradient(135deg, ${T.bark}, ${T.bark}dd)` }}>

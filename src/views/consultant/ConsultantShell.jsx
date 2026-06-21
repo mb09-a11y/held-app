@@ -348,7 +348,10 @@ function MessagesTab({ onNavigate }) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 18, flexShrink: 0,
               }}>
-                {fam.nsState === "overwhelmed" ? "😢" : fam.nsState === "activated" ? "😰" : "😊"}
+                {fam.nsState === "Fight" || fam.nsState === "Shutdown" ? "😢"
+                  : fam.nsState === "Freeze" || fam.nsState === "Flight" || fam.nsState === "Stretched" ? "😰"
+                  : fam.nsState === "no_data" ? "🌱"
+                  : "😊"}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -523,6 +526,10 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNSCheckin, setShowNSCheckin] = useState(false);
+  // Set when navigating to the Families tab from a stat tile that implies a
+  // specific section (e.g. Home's "Urgent"/"Unread" tiles) — RedFlags reads
+  // this once on mount to scroll to and briefly highlight that section.
+  const [familiesScrollTarget, setFamiliesScrollTarget] = useState(null);
 
   // ── Distress Intercept gating ─────────────────────────────────────────────
   // Surfaces before EVERY reply, regardless of the family's NS state — unless
@@ -541,7 +548,11 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
   const goBack      = () => setNavStack(prev => prev.slice(0, -1));
   const goHome      = () => setNavStack([]);
 
-  const handleTabChange = (tabId) => { setNavStack([]); setActiveTab(tabId); };
+  const handleTabChange = (tabId, scrollTarget = null) => {
+    setNavStack([]);
+    setFamiliesScrollTarget(scrollTarget);
+    setActiveTab(tabId);
+  };
 
   const currentNav    = navStack[navStack.length - 1];
   const isDrilledDown = navStack.length > 0;
@@ -587,8 +598,8 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
 
   // ── Base tab views ────────────────────────────────────────────────────────
   const renderBaseTab = () => {
-    if (activeTab === "home")     return <ConsultantHome   onNavigate={navigate} onOpenDrawer={() => setDrawerOpen(true)} lastNSCheckin={lastNSCheckin} onCheckin={() => setShowNSCheckin(true)} />;
-    if (activeTab === "families") return <RedFlags onNavigate={navigate} onInviteFamily={onInviteFamily} />;
+    if (activeTab === "home")     return <ConsultantHome   onNavigate={navigate} onChangeTab={handleTabChange} onOpenDrawer={() => setDrawerOpen(true)} lastNSCheckin={lastNSCheckin} onCheckin={() => setShowNSCheckin(true)} />;
+    if (activeTab === "families") return <RedFlags onNavigate={navigate} onInviteFamily={onInviteFamily} scrollTarget={familiesScrollTarget} />;
     if (activeTab === "selah")    return <SelahTab onNavigate={navigate} onCheckin={() => setShowNSCheckin(true)} />;
     if (activeTab === "library")  return <ConsultantLibrary onClose={() => handleTabChange("home")} />;
     if (activeTab === "settings") return <ConsultantAccount currentUser={currentUser} logout={logout} onClose={() => handleTabChange("home")} />;
@@ -703,8 +714,12 @@ export default function ConsultantShell({ currentUser: currentUserProp, logout, 
           checkinContext="daily"
           onClose={() => setShowNSCheckin(false)}
           onCheckinSaved={(result) => {
+            // Only persist the result for the home-screen banner here.
+            // Do NOT close the overlay — ConsultantNSCheckin stays open so
+            // the user can actually read their result and choose "I've got
+            // this" or an exercise. Closing is handled by onClose/onDone,
+            // which fire from the user's own action inside that component.
             setLastNSCheckin({ created_at: new Date().toISOString(), inferred_state: result?.state });
-            setShowNSCheckin(false);
           }}
         />
       )}

@@ -51,25 +51,49 @@ export default function CoPilotWorkspace({ onNavigate, onBack, onCheckin }) {
   const [sharedIds, setSharedIds] = useState(new Set());
   const scrollRef = useRef(null);
 
-  // Generate suggested prompts from real families
+  // Generate suggested prompts from real families. Always surfaces at least
+  // 3 — if a caseload is missing a whole urgency tier (e.g. no "watch"
+  // families right now), a generic, non-family-specific prompt fills the
+  // gap instead of silently shrinking the list to whatever happened to match.
   const SUGGESTED = (() => {
     const prompts = [];
+
     const urgentFam = families.find(f => f.urgency === "urgent");
     const urgentChild = urgentFam?.children?.find(c => c.status === "urgent") || urgentFam?.children?.[0];
     if (urgentChild && urgentFam) {
       prompts.push({ q: `What's driving ${urgentChild.name}'s sleep issues?`, familyId: urgentFam.id });
     }
+
     const watchFam = families.find(f => f.urgency === "watch");
     const watchChild = watchFam?.children?.[0];
     if (watchChild && watchFam) {
       prompts.push({ q: `How should I prep for ${watchChild.name} tonight?`, familyId: watchFam.id });
     }
+
+    // Always present — doesn't depend on any specific family existing.
     prompts.push({ q: "Which families need attention this week?", familyId: null });
+
     const goodFam = families.find(f => f.urgency === "good");
     const goodChild = goodFam?.children?.[0];
     if (goodChild && goodFam) {
       prompts.push({ q: `Draft a check-in for ${goodChild.name}'s family`, familyId: goodFam.id });
     }
+
+    // Generic fallbacks — only added if the family-specific prompts above
+    // didn't reach the floor of 3. Ordered roughly by general usefulness.
+    if (prompts.length < 3) {
+      const unreadFam = families.find(f => f.unread);
+      if (unreadFam) {
+        prompts.push({ q: `What's the latest from ${unreadFam.name}?`, familyId: unreadFam.id });
+      }
+    }
+    if (prompts.length < 3) {
+      prompts.push({ q: "What patterns are you noticing across my caseload?", familyId: null });
+    }
+    if (prompts.length < 3) {
+      prompts.push({ q: "Any families I haven't checked in on recently?", familyId: null });
+    }
+
     return prompts.slice(0, 4);
   })();
 

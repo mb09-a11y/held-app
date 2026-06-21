@@ -4,6 +4,7 @@ import { useT, font, serif, mono } from "../../../core/shared.jsx";
 import { usePlans } from "../data/consultantStore.js";
 import { supabase } from "../../../lib/supabase.js";
 import InsightCard from "../shared/InsightCard.jsx";
+import { getPlanDay } from "../../../modules/sleep/sleepHelpers.js";
 
 // ─── COLORS ───────────────────────────────────────────────────────────────────
 const C = {
@@ -634,9 +635,8 @@ export default function PlanTab({ family, activeChild, onNavigate }) {
 
   const totalItems = plan.phases.flatMap(p => p.items).length;
   const doneItems = plan.phases.flatMap(p => p.items).filter(i => i.done).length;
-  const trainingDay = plan.startDate
-    ? Math.max(1, Math.floor((Date.now() - new Date(plan.startDate)) / 86400000) + 1)
-    : activeChild?.planDay;
+  // Timezone-correct: rolls over at the family's local midnight, not UTC.
+  const trainingDay = getPlanDay(plan.startDate, family?.timezone);
 
   return (
     <div>
