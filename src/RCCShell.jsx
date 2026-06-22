@@ -489,7 +489,7 @@ export default function RCCShell() {
           return;
         }
         if (consultantInviteToken) {
-          const { data, error } = await supabase.from("invites").select("*").eq("token", consultantInviteToken).eq("invite_kind", "consultant").maybeSingle();
+          const { data, error } = await supabase.rpc("get_consultant_invite", { p_token: consultantInviteToken }).maybeSingle();
           if (error) throw error;
           if (!ignore) {
             setInviteRecord(data ? { ...data, invite_kind: "consultant" } : null);
@@ -500,10 +500,7 @@ export default function RCCShell() {
         if (coInviteToken) {
           const email = decodeURIComponent(coInviteToken).toLowerCase();
           const { data, error } = await supabase
-            .from("co_caregivers")
-            .select("*, families(*)")
-            .eq("email", email)
-            .eq("status", "pending")
+            .rpc("get_co_caregiver_invite", { p_email: email })
             .maybeSingle();
           if (error) throw error;
           if (!ignore) {
@@ -1253,12 +1250,17 @@ export default function RCCShell() {
     try {
       const token = crypto.randomUUID();
       const role = consultantInviteForm.consultant_internal ? "consultant_internal" : "consultant";
-      const { error: insertError } = await supabase.from("invites").insert({
+      const { error: insertError } = await supabase.from("consultant_invites").insert({
         token,
-        invite_email: consultantInviteForm.email,
-        invite_kind: "consultant",
+        email: consultantInviteForm.email.trim().toLowerCase(),
+        name: consultantInviteForm.name?.trim() || null,
         role,
+        source: "admin",
         invited_by: currentUser?.id,
+        payment_required: false,
+        payment_completed: false,
+        status: "pending",
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       });
       if (insertError) throw insertError;
 
