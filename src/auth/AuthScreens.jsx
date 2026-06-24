@@ -223,6 +223,20 @@ function RegisterScreen({
       return;
     }
 
+    // Password requirements: 8–16 chars, at least 1 special character
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (form.password.length > 16) {
+      setError("Password must be 16 characters or fewer.");
+      return;
+    }
+    if (!/[^a-zA-Z0-9]/.test(form.password)) {
+      setError("Password must include at least one special character (e.g. !, @, #, $).");
+      return;
+    }
+
     // Lock email for all invite types
     const lockedEmail = lockedCoEmail || inviteRecord?.invite_email || inviteRecord?.email;
     if (lockedEmail && form.email.toLowerCase() !== lockedEmail.toLowerCase()) {
@@ -322,6 +336,9 @@ function RegisterScreen({
             type="password"
             required
           />
+          <div style={{ fontSize: 11, color: "#9A8878", marginTop: -8, marginBottom: 6, lineHeight: 1.5 }}>
+            8–16 characters, at least one special character (e.g. !, @, #, $)
+          </div>
 
           {error && <div style={{ fontSize: 12.5, color: "#C07070", marginBottom: 10 }}>{error}</div>}
 
@@ -508,6 +525,32 @@ function ResetPasswordScreen({ onDone }) {
     }
   });
 
+  // Wait for the recovery session to be fully established before showing the
+  // form. The PKCE code exchange is async — if we let the user submit before
+  // it completes, updateUser() finds no session and returns "Auth session missing!"
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  useEffect(() => {
+    // Poll briefly — the exchange usually completes within a few hundred ms.
+    let attempts = 0;
+    const maxAttempts = 10; // 10 × 300ms = 3 seconds max wait
+    const interval = setInterval(async () => {
+      attempts++;
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) {
+        setSessionReady(true);
+        setSessionChecked(true);
+        clearInterval(interval);
+      } else if (attempts >= maxAttempts) {
+        // Gave up — no session arrived. Show the "link expired" resend UI.
+        setSessionReady(false);
+        setSessionChecked(true);
+        clearInterval(interval);
+      }
+    }, 300);
+    return () => clearInterval(interval);
+  }, []);
+
   const [resendEmail, setResendEmail] = useState("");
   const [resendSent, setResendSent] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
@@ -532,8 +575,16 @@ function ResetPasswordScreen({ onDone }) {
   }
 
   async function handleReset() {
-    if (!password || password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    if (!password || password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password.length > 16) {
+      setError("Password must be 16 characters or fewer.");
+      return;
+    }
+    if (!/[^a-zA-Z0-9]/.test(password)) {
+      setError("Password must include at least one special character (e.g. !, @, #, $).");
       return;
     }
     if (password !== confirm) {
@@ -562,16 +613,22 @@ function ResetPasswordScreen({ onDone }) {
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 36, marginBottom: 6 }}>🌿</div>
           <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 34, color: "#2D4A35", lineHeight: 1.1, marginBottom: 4 }}>
-            {linkError ? "Link expired" : "Set new password"}
+            {(linkError || (sessionChecked && !sessionReady)) ? "Link expired" : "Set new password"}
           </h1>
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: "#9A8878", margin: 0 }}>
-            {linkError
+            {(linkError || (sessionChecked && !sessionReady))
               ? "This reset link is no longer valid — it may have already been used, or your email app opened it before you clicked."
               : "Choose a new password for your account."}
           </p>
         </div>
         <div style={{ background: "#FFFFFF", borderRadius: 20, padding: "20px 18px", boxShadow: "0 4px 28px rgba(45,74,53,0.10)", border: "1px solid #E8DDD0" }}>
-          {linkError ? (
+          {!sessionChecked ? (
+            <div style={{ textAlign: "center", padding: "28px 0" }}>
+              <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: "#9A8878", margin: 0 }}>
+                Verifying your reset link…
+              </p>
+            </div>
+          ) : (linkError || !sessionReady) ? (
             resendSent ? (
               <div style={{ textAlign: "center", padding: "20px 0" }}>
                 <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>

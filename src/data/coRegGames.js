@@ -130,8 +130,8 @@ export const CO_REG_GAMES = {
     "5_7y": {
       key: "heavy_work",
       title: "Heavy Work",
-      prompt: '"Help me push this wall." Push together for 10 seconds.',
-      subPrompt: "Any wall. Press hard together. Count to 10.",
+      prompt: '"Help me push this wall." Push together for 30 seconds.',
+      subPrompt: "Any wall. Press hard together. Feel your bodies working as a team.",
       why: "Proprioceptive heavy work is inherently regulating. Shared physical goal bypasses PFC entirely.",
       timerSecs: 30,
     },

@@ -677,7 +677,12 @@ export default function RCCShell() {
             }
           }
 
-          if (kids) { setChildren(kids); cacheChildren(kids); }
+          // Only overwrite children if we found a family by parent_id.
+          // Co-caregivers have no family row with their parent_id — their family
+          // was resolved by loadProfile via the co_caregivers table. Overwriting
+          // with an empty array here would wipe their correctly-loaded child state
+          // every time the app resumes from background.
+          if (kids && familyById) { setChildren(kids); cacheChildren(kids); }
 
         } catch (dataErr) {
           // Data re-fetch failed (network blip). Session is still valid — don't sign out.
@@ -1024,6 +1029,20 @@ export default function RCCShell() {
         await supabase.from("family_invites")
           .update({ status: "accepted", accepted_at: new Date().toISOString() })
           .eq("token", tok);
+        // If the family already has a consultant assigned, auto-elevate the
+        // parent to VIP tier — same logic as assignConsultant() in AdminViews.
+        // Without this, parents invited by a consultant land on free tier
+        // because assignConsultant() only fires on manual admin reassignment.
+        const { data: invitedFamily } = await supabase
+          .from("families")
+          .select("consultant_id")
+          .eq("invite_token", tok)
+          .maybeSingle();
+        if (invitedFamily?.consultant_id) {
+          await supabase.from("profiles")
+            .update({ subscription_tier: "vip" })
+            .eq("id", data.user.id);
+        }
       } else if (role === "parent" && !tok && !isCoCaregiver) {
         const { error: familyError } = await supabase.from("families").insert({
           parent_id: data.user.id,

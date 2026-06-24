@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
+import { supabase } from "../../lib/supabase.js";
 
-// ─── CONSULTANT DATA ──────────────────────────────────────────────────────────
-// Update filterTags to control which filters each consultant appears under.
-// Only Manu does Parenting coaching.
+// ─── CONSULTANT ROSTER ────────────────────────────────────────────────────────
+// RCC-internal consultants only. Adding a new consultant = add an entry here.
+// External consultant marketplace listing is a future feature.
 const CONSULTANTS = [
   {
     id: "manu",
@@ -13,7 +14,7 @@ const CONSULTANTS = [
     photo: "https://beyondbirthbasics.com/wp-content/uploads/2024/04/Headshot-Updated.jpg",
     specialties: ["Sleep Coaching Ages 0-17", "Special Needs", "Newborn", "Parenting Coaching", "Potty Training", "Postpartum", "Family Nervous Systems Coaching"],
     filterTags: ["Newborn", "Infant & Toddler", "Sleep", "Parenting", "Postpartum"],
-    bio: "Manu is the founder of Beyond Birth Basics and author of Overcorrecting. She holds certifications in pediatric sleep consulting, postpartum doula work, potty training, and transformational parenting coaching. A mama of 3, she is passionate about helping parents sleep better, break generational patterns, and live with curiosity and empowerment.",
+    bio: "Manu is the founder of Rooted Connections Collective and author of Overcorrecting. She holds certifications in pediatric sleep consulting, postpartum doula work, potty training, and transformational parenting coaching. A mama of 3, she is passionate about helping parents sleep better, break generational patterns, and live with curiosity and empowerment.",
   },
   {
     id: "lindie",
@@ -47,14 +48,50 @@ const CONSULTANTS = [
   },
 ];
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function getChildAge(dob) {
+  if (!dob) return null;
+  const birth = new Date(dob);
+  const now = new Date();
+  const months = (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth());
+  if (months < 1) return "a newborn";
+  if (months < 24) return `${months} month${months === 1 ? "" : "s"} old`;
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} old`;
+}
+
+function buildDraftMessage({ consultantName, parentName, parentEmail, childDescriptions }) {
+  const childLine = childDescriptions.length > 0
+    ? `My ${childDescriptions.length === 1 ? "child is" : "children are"} ${childDescriptions.join(" and ")}.`
+    : "";
+  return [
+    `Hi!`,
+    ``,
+    `I'd love to work with ${consultantName}.`,
+    ``,
+    `My name is ${parentName || "[your name]"} and my email is ${parentEmail || "[your email]"}.${childLine ? " " + childLine : ""}`,
+    ``,
+    `A little about what we're going through:`,
+    `[Tell us what's happening so we can best support you]`,
+    ``,
+    `Looking forward to connecting!`,
+  ].join("\n");
+}
+
+// ─── SPECIALTY PILL ───────────────────────────────────────────────────────────
 function SpecialtyPill({ label, T }) {
   return (
-    <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, background: `${T.teal}15`, border: `1px solid ${T.teal}30`, fontFamily: font, fontSize: 11, color: T.teal, fontWeight: 600, whiteSpace: "nowrap" }}>
+    <span style={{
+      display: "inline-block", padding: "3px 10px", borderRadius: 20,
+      background: `${T.teal}15`, border: `1px solid ${T.teal}30`,
+      fontFamily: font, fontSize: 11, color: T.teal, fontWeight: 600, whiteSpace: "nowrap",
+    }}>
       {label}
     </span>
   );
 }
 
+// ─── CONSULTANT CARD ──────────────────────────────────────────────────────────
 function ConsultantCard({ consultant, onRequest, T }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -74,7 +111,11 @@ function ConsultantCard({ consultant, onRequest, T }) {
         {consultant.specialties.map(s => <SpecialtyPill key={s} label={s} T={T} />)}
       </div>
       <div style={{ padding: "0 18px 14px" }}>
-        <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.65, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: expanded ? "none" : 3, WebkitBoxOrient: "vertical" }}>
+        <p style={{
+          fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.65,
+          overflow: "hidden", display: "-webkit-box",
+          WebkitLineClamp: expanded ? "none" : 3, WebkitBoxOrient: "vertical",
+        }}>
           {consultant.bio}
         </p>
         <button onClick={() => setExpanded(e => !e)}
@@ -92,19 +133,55 @@ function ConsultantCard({ consultant, onRequest, T }) {
   );
 }
 
+// ─── REQUEST MODAL ────────────────────────────────────────────────────────────
 function RequestModal({ consultant, onClose, T }) {
-  const { currentUser } = useApp();
-  const [note, setNote] = useState("");
-  const [sent, setSent] = useState(false);
+  const { currentUser, children } = useApp();
 
-  function handleSend() {
-    const subject = encodeURIComponent(`Consultant Request: ${consultant.name} — via Held App`);
-    const body = encodeURIComponent(
-      `Hi Manu,\n\nI'd love to work with ${consultant.name}!\n\nMy name: ${currentUser?.name || ""}\nMy email: ${currentUser?.email || ""}\n\n${note ? "Additional notes:\n" + note + "\n\n" : ""}I'm reaching out from the Held app.\n\nThank you!`
-    );
-    window.open(`mailto:hello@beyondbirthbasics.com?subject=${subject}&body=${body}`, "_blank");
-    setSent(true);
+  // Build child age descriptions from the children array
+  const childDescriptions = useMemo(() => {
+    if (!children?.length) return [];
+    return children.map(c => {
+      const age = getChildAge(c.dob);
+      return age ? `${c.name} (${age})` : c.name;
+    }).filter(Boolean);
+  }, [children]);
+
+  const draft = useMemo(() => buildDraftMessage({
+    consultantName: consultant.name,
+    parentName: currentUser?.name || "",
+    parentEmail: currentUser?.email || currentUser?.user_email || "",
+    childDescriptions,
+  }), [consultant.name, currentUser, childDescriptions]);
+
+  const [message, setMessage] = useState(draft);
+  const [status, setStatus] = useState("idle"); // idle | sending | sent | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSend() {
+    if (!message.trim()) return;
+    setStatus("sending");
+    setErrorMsg("");
+    try {
+      const { data, error } = await supabase.functions.invoke("send-consultant-request", {
+        body: {
+          consultantName: consultant.name,
+          parentName: currentUser?.name || "",
+          parentEmail: currentUser?.email || currentUser?.user_email || "",
+          message: message.trim(),
+        },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      setStatus("sent");
+    } catch (e) {
+      console.error("send-consultant-request failed:", e);
+      setErrorMsg(e.message || "Something went wrong. Please try again.");
+      setStatus("error");
+    }
   }
+
+  const parentEmail = currentUser?.email || currentUser?.user_email || "";
+  const fallbackMailto = `mailto:hello@rootedconnectionscollective.com?subject=${encodeURIComponent(`Consultant Request: ${consultant.name}`)}&body=${encodeURIComponent(message)}`;
 
   return (
     <div
@@ -120,7 +197,7 @@ function RequestModal({ consultant, onClose, T }) {
         maxHeight: "90vh", overflowY: "auto",
         boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
       }}>
-        {/* Handle + close */}
+        {/* Header */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "14px 20px 12px", borderBottom: `1px solid ${T.border}`,
@@ -136,13 +213,21 @@ function RequestModal({ consultant, onClose, T }) {
         </div>
 
         <div style={{ padding: "20px 24px 40px" }}>
-          {sent ? (
+          {/* ── SENT STATE ── */}
+          {status === "sent" ? (
             <div style={{ textAlign: "center", padding: "20px 0" }}>
               <div style={{ fontSize: 40, marginBottom: 16 }}>🌿</div>
-              <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 10 }}>Request sent!</div>
-              <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.65, marginBottom: 24 }}>
-                Your email to hello@beyondbirthbasics.com has been opened. We'll be in touch soon to confirm your match with {consultant.name}.
+              <div style={{ fontFamily: serif, fontSize: 22, color: T.headingText, marginBottom: 10 }}>
+                Request sent!
+              </div>
+              <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.65, marginBottom: 8 }}>
+                Your request to work with {consultant.name.split(" ")[0]} has been sent to our team.
               </p>
+              {parentEmail && (
+                <p style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.6, marginBottom: 24 }}>
+                  We've sent a confirmation to <strong>{parentEmail}</strong>. We'll be in touch within 24 hours.
+                </p>
+              )}
               <button onClick={onClose}
                 style={{ padding: "12px 28px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
                 Done
@@ -150,6 +235,7 @@ function RequestModal({ consultant, onClose, T }) {
             </div>
           ) : (
             <>
+              {/* Consultant mini-card */}
               <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "12px 14px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginBottom: 20 }}>
                 <img src={consultant.photo} alt={consultant.name} onError={e => e.target.style.display = "none"}
                   style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
@@ -158,23 +244,62 @@ function RequestModal({ consultant, onClose, T }) {
                   <div style={{ fontFamily: font, fontSize: 12, color: T.muted }}>{consultant.title}</div>
                 </div>
               </div>
-              <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65, marginBottom: 16 }}>
-                This will open an email to our team at Beyond Birth Basics. We'll review your request and reach out to confirm your match — usually within 24 hours.
-              </p>
-              <div style={{ marginBottom: 20 }}>
+
+              {/* Editable message */}
+              <div style={{ marginBottom: 6 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, letterSpacing: ".07em", textTransform: "uppercase", marginBottom: 6, fontFamily: font }}>
-                  Anything you'd like us to know? (optional)
+                  Your message — feel free to edit
                 </div>
-                <textarea value={note} onChange={e => setNote(e.target.value)}
-                  placeholder="e.g. my baby is 6 months and we're struggling with night wakings…"
-                  rows={3}
-                  style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: `1.5px solid ${T.border}`, background: T.inputBg, color: T.text, fontFamily: font, fontSize: 13.5, lineHeight: 1.5, resize: "none", outline: "none", boxSizing: "border-box" }}
+                <textarea
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  rows={10}
+                  style={{
+                    width: "100%", padding: "12px 14px", borderRadius: 10,
+                    border: `1.5px solid ${T.border}`, background: T.inputBg,
+                    color: T.text, fontFamily: font, fontSize: 13.5,
+                    lineHeight: 1.65, resize: "vertical", outline: "none",
+                    boxSizing: "border-box",
+                  }}
                   onFocus={e => e.target.style.borderColor = T.teal}
-                  onBlur={e => e.target.style.borderColor = T.border} />
+                  onBlur={e => e.target.style.borderColor = T.border}
+                />
               </div>
-              <button onClick={handleSend}
-                style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>
-                Send Request →
+
+              {/* Confirmation note */}
+              {parentEmail && (
+                <p style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6, marginBottom: 20 }}>
+                  A confirmation copy will be sent to <strong>{parentEmail}</strong>.
+                </p>
+              )}
+
+              {/* Error state */}
+              {status === "error" && (
+                <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16 }}>
+                  <p style={{ margin: "0 0 6px", fontFamily: font, fontSize: 13, color: "#B91C1C", fontWeight: 600 }}>
+                    Something went wrong
+                  </p>
+                  <p style={{ margin: "0 0 8px", fontFamily: font, fontSize: 12.5, color: "#B91C1C" }}>
+                    {errorMsg}
+                  </p>
+                  <a href={fallbackMailto}
+                    style={{ fontFamily: font, fontSize: 12.5, color: "#5A8A96", fontWeight: 600 }}>
+                    Try sending via your email app instead →
+                  </a>
+                </div>
+              )}
+
+              <button
+                onClick={handleSend}
+                disabled={status === "sending" || !message.trim()}
+                style={{
+                  width: "100%", padding: "14px", borderRadius: 10, border: "none",
+                  background: status === "sending" ? `${T.teal}80` : T.teal,
+                  color: "#fff", fontFamily: font, fontSize: 15, fontWeight: 700,
+                  cursor: status === "sending" ? "default" : "pointer", marginBottom: 10,
+                  transition: "background .2s",
+                }}>
+                {status === "sending" ? "Sending…" : "Send Request →"}
               </button>
               <button onClick={onClose}
                 style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 13.5, cursor: "pointer" }}>
@@ -188,6 +313,7 @@ function RequestModal({ consultant, onClose, T }) {
   );
 }
 
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export function FindConsultant({ onClose }) {
   const T = useT();
   const [requesting, setRequesting] = useState(null);
@@ -197,7 +323,6 @@ export function FindConsultant({ onClose }) {
   const filtered = CONSULTANTS.filter(c => filter === "All" || c.filterTags.includes(filter));
 
   return (
-    /* ── Full-screen backdrop ── */
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose?.(); }}
       style={{
@@ -206,10 +331,8 @@ export function FindConsultant({ onClose }) {
         display: "flex", alignItems: "flex-end", justifyContent: "center",
       }}>
 
-      {/* ── Sheet ── */}
       <div style={{
-        background: T.bg,
-        borderRadius: "20px 20px 0 0",
+        background: T.bg, borderRadius: "20px 20px 0 0",
         width: "100%", maxWidth: 480,
         maxHeight: "90vh", overflowY: "auto",
         boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
@@ -236,22 +359,39 @@ export function FindConsultant({ onClose }) {
 
         {/* Content */}
         <div style={{ padding: "20px 24px 48px", fontFamily: font, color: T.text }}>
-          {requesting && <RequestModal consultant={requesting} onClose={() => setRequesting(null)} T={T} />}
+          {requesting && (
+            <RequestModal
+              consultant={requesting}
+              onClose={() => setRequesting(null)}
+              T={T}
+            />
+          )}
 
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 10, letterSpacing: ".18em", textTransform: "uppercase", color: T.subText, fontFamily: font, marginBottom: 6 }}>
               Rooted Connections Collective
             </div>
-            <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.2, marginBottom: 8 }}>Find Your Consultant</h1>
+            <h1 style={{ fontFamily: serif, fontSize: 26, color: T.headingText, lineHeight: 1.2, marginBottom: 8 }}>
+              Find Your Consultant
+            </h1>
             <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65 }}>
               Browse our team and request the consultant that feels right for your family. We'll confirm your match within 24 hours.
             </p>
           </div>
 
+          {/* Filters */}
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, marginBottom: 20, scrollbarWidth: "none" }}>
             {specialtyFilters.map(f => (
               <button key={f} onClick={() => setFilter(f)}
-                style={{ padding: "7px 14px", borderRadius: 20, flexShrink: 0, border: `1.5px solid ${filter === f ? T.teal : T.border}`, background: filter === f ? `${T.teal}18` : T.faint, color: filter === f ? T.teal : T.muted, fontFamily: font, fontSize: 12.5, fontWeight: filter === f ? 700 : 400, cursor: "pointer", transition: "all .15s" }}>
+                style={{
+                  padding: "7px 14px", borderRadius: 20, flexShrink: 0,
+                  border: `1.5px solid ${filter === f ? T.teal : T.border}`,
+                  background: filter === f ? `${T.teal}18` : T.faint,
+                  color: filter === f ? T.teal : T.muted,
+                  fontFamily: font, fontSize: 12.5,
+                  fontWeight: filter === f ? 700 : 400,
+                  cursor: "pointer", transition: "all .15s",
+                }}>
                 {f}
               </button>
             ))}
@@ -262,13 +402,17 @@ export function FindConsultant({ onClose }) {
               No consultants match that filter.
             </div>
           ) : (
-            filtered.map(c => <ConsultantCard key={c.id} consultant={c} onRequest={setRequesting} T={T} />)
+            filtered.map(c => (
+              <ConsultantCard key={c.id} consultant={c} onRequest={setRequesting} T={T} />
+            ))
           )}
 
           <div style={{ padding: "16px", borderRadius: 12, background: T.faint, border: `1px solid ${T.border}`, marginTop: 4 }}>
             <p style={{ fontFamily: font, fontSize: 12.5, color: T.muted, lineHeight: 1.65, textAlign: "center" }}>
               Not sure who to choose? Email us at{" "}
-              <a href="mailto:hello@beyondbirthbasics.com" style={{ color: T.teal, textDecoration: "none" }}>hello@beyondbirthbasics.com</a>
+              <a href="mailto:hello@rootedconnectionscollective.com" style={{ color: T.teal, textDecoration: "none" }}>
+                hello@rootedconnectionscollective.com
+              </a>
               {" "}and we'll match you with the right fit. 🌿
             </p>
           </div>

@@ -106,7 +106,7 @@ function useRecentRegulationCheckins(userId, refreshKey = 0) {
 }
 
 // ─── NS CHECK-IN COUNT (for jar/leaves card) ──────────────────────────────────
-function useNSCheckinCount(userId) {
+function useNSCheckinCount(userId, refreshKey = 0) {
   const [count, setCount] = useState(null);
   const fetch = useCallback(() => {
     if (!userId) return;
@@ -116,7 +116,7 @@ function useNSCheckinCount(userId) {
       .eq("user_id", userId)
       .then(({ count: c }) => setCount(c ?? 0));
   }, [userId]);
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => { fetch(); }, [fetch, refreshKey]);
   return count;
 }
 
@@ -566,7 +566,7 @@ export function HeldHome({ onSOS, onNSCheckin, onMorningMoment, onEveningClose, 
 
   const checkin = useRecentCheckin(currentUser?.id, checkinRefreshKey);
   const recentRegCheckins = useRecentRegulationCheckins(currentUser?.id, checkinRefreshKey);
-  const nsCheckinCount = useNSCheckinCount(currentUser?.id);
+  const nsCheckinCount = useNSCheckinCount(currentUser?.id, checkinRefreshKey);
   const { currentStreak, milestonesEver } = useCheckinStreak(currentUser?.id);
 
   // ── Forest stage ──

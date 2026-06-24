@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { supabase } from "../../lib/supabase.js";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { RegulationModule } from "../regulation/RegulationModule.jsx";
 
@@ -519,16 +520,77 @@ function SectionBlock({ section, canAccessFullLibrary }) {
   );
 }
 
+
+// ─── UPGRADE MODAL ────────────────────────────────────────────────────────────
+function UpgradeModal({ onClose, T, currentUser }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleUpgrade() {
+    setLoading(true); setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email: currentUser?.email,
+          name: currentUser?.name,
+          user_id: currentUser?.id,
+          tier: "plus",
+        }),
+      });
+      const data = await res.json();
+      if (data.url) { window.open(data.url, "_blank"); onClose(); }
+      else setError(data.error || "Something went wrong. Please try again.");
+    } catch (e) {
+      setError(e.message || "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: T.bg, borderRadius: 20, padding: 28, maxWidth: 340, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,0.18)" }}>
+        <div style={{ fontSize: 32, textAlign: "center", marginBottom: 12 }}>🌿</div>
+        <div style={{ fontFamily: serif, fontSize: 20, color: T.headingText, textAlign: "center", marginBottom: 8 }}>Upgrade to Plus</div>
+        <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.65, textAlign: "center", marginBottom: 24 }}>
+          Unlock all courses, masterclasses, and troubleshooting guides for $15/month.
+        </p>
+        {error && (
+          <p style={{ fontFamily: font, fontSize: 12.5, color: "#B91C1C", marginBottom: 12, textAlign: "center" }}>{error}</p>
+        )}
+        <button onClick={handleUpgrade} disabled={loading}
+          style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontFamily: font, fontSize: 14, fontWeight: 700, cursor: loading ? "default" : "pointer", marginBottom: 10 }}>
+          {loading ? "Opening checkout…" : "Upgrade to Plus →"}
+        </button>
+        <button onClick={onClose}
+          style={{ width: "100%", padding: "11px", borderRadius: 10, border: `1px solid ${T.border}`, background: "none", color: T.muted, fontFamily: font, fontSize: 13.5, cursor: "pointer" }}>
+          Maybe later
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function LibraryModule({ defaultTab, onOpenDrawer }) {
   const T = useT();
-  const { canAccessFullLibrary } = useApp();
+  const { canAccessFullLibrary, currentUser } = useApp();
   const [activeTab, setActiveTab] = useState(defaultTab || "postpartum");
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const tabContent = CONTENT[activeTab];
   const isGrounding = activeTab === "grounding";
   const isScripts = activeTab === "scripts";
 
   return (
     <div style={{ fontFamily: font, color: T.text, paddingBottom: 80, padding: "0 18px 80px" }}>
+      {showUpgradeModal && <UpgradeModal onClose={() => setShowUpgradeModal(false)} T={T} currentUser={currentUser} />}
       <div style={{ marginBottom: 24, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 9.5, letterSpacing: ".18em", textTransform: "uppercase", color: T.subText, fontWeight: 600, marginBottom: 6 }}>Rooted Connections Collective</div>
@@ -556,7 +618,7 @@ export function LibraryModule({ defaultTab, onOpenDrawer }) {
             <div style={{ fontFamily: font, fontSize: 13, fontWeight: 700, color: T.headingText, marginBottom: 3 }}>Some resources are Plus features</div>
             <div style={{ fontFamily: font, fontSize: 12, color: T.muted, lineHeight: 1.6 }}>Upgrade to Plus for $15/mo to unlock all courses, masterclasses, and troubleshooting guides.</div>
           </div>
-          <button style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Upgrade</button>
+          <button onClick={() => setShowUpgradeModal(true)} style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 10, border: "none", background: C.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>Upgrade</button>
         </div>
       )}
 

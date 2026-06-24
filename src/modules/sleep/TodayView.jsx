@@ -311,9 +311,21 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
     updateSession(null); showToast("Wake up logged ✓", "☀️");
   };
 
-  const handleNightWaking = (vals) => {
+  const [nightWakingWarning, setNightWakingWarning] = useState(false);
+
+  const handleNightWaking = (vals, force = false) => {
+    // Warn if no active sleep session is open — parent may have forgotten to start one.
+    // They can dismiss and log anyway (force=true), or cancel and start a session first.
+    if (!session && !force) {
+      setNightWakingWarning(true);
+      return;
+    }
+    setNightWakingWarning(false);
     const ts = vals?.time ? timeStrToISO(vals.time) : new Date().toISOString();
-    onLog("night_waking", { ts, duration: parseInt(vals?.duration) || 10, description: vals?.notes || null });
+    // Inherit session_type from the open session so night_waking rows are correctly
+    // classified as 'night' or 'nap' rather than falling through to the schema default ('nap').
+    const inheritedType = session?.sessionType || "night";
+    onLog("night_waking", { ts, duration: parseInt(vals?.duration) || 10, description: vals?.notes || null, session_type: inheritedType });
     showToast("Night waking logged", "🌛");
   };
 
@@ -403,6 +415,39 @@ export function TodayView({ onLog, onPatch, logs, config, activeFamily, hasOpenD
       <style>{`@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
       <Toast message={toast.message} icon={toast.icon} visible={toast.visible} />
       {sheet && <InputSheet title={sheet.title} fields={sheet.fields} onConfirm={(vals) => { sheet.onConfirm(vals); closeSheet(); }} onCancel={closeSheet} />}
+
+      {/* ── Night Waking Warning ── */}
+      {nightWakingWarning && (
+        <div style={{
+          background: "#FFF8EC", border: "1px solid #F0C97A", borderRadius: 14,
+          padding: "13px 15px", display: "flex", flexDirection: "column", gap: 10,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <p style={{ fontFamily: font, fontSize: 13, color: "#7A5C1E", lineHeight: 1.55, margin: 0, flex: 1, paddingRight: 10 }}>
+              ⚠️ No sleep session is open. Starting a session first helps Held track this waking accurately — but you can log it anyway.
+            </p>
+            <button onClick={() => setNightWakingWarning(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#888", padding: 0, flexShrink: 0 }}>✕</button>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                setNightWakingWarning(false);
+                const d = nowDateStr(), ti = nowTimeStr();
+                openSheet({ title: "🌛 Night Waking", fields: [{ key: "time", label: "Time", type: "time", default: ti }, { key: "duration", label: "Duration (minutes)", type: "number", default: "10" }, { key: "notes", label: "Notes (optional)", type: "text", default: "" }], onConfirm: (vals) => handleNightWaking(vals, true) });
+              }}
+              style={{ flex: 1, padding: "9px 0", borderRadius: 10, background: "#F0C97A", border: "none", fontFamily: font, fontSize: 12, fontWeight: 700, color: "#7A5C1E", cursor: "pointer" }}
+            >
+              Log anyway
+            </button>
+            <button
+              onClick={() => setNightWakingWarning(false)}
+              style={{ flex: 1, padding: "9px 0", borderRadius: 10, background: "transparent", border: "1px solid #F0C97A", fontFamily: font, fontSize: 12, fontWeight: 600, color: "#7A5C1E", cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Sleep Tracker ── */}
       <Card>

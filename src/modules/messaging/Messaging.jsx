@@ -540,6 +540,7 @@ export function Messaging({ user, activeFamily, families, onFamilyChange, childr
   const messages = mode === "ai" ? aiMessages : dbMessages;
 
   const [aiTyping, setAiTyping] = useState(false);
+  const [exportStatus, setExportStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
   const activeChild = children?.[0] || null;
   const [intakeContext, setIntakeContext] = useState("");
 
@@ -934,7 +935,30 @@ Use the child's name naturally. Know what method they're on and what day — don
       .map(m => `${m.sender === "parent" ? "Parent" : "RCC Coach"}: ${m.content}`)
       .join("\n\n");
     await sendToDb({ type: "text", content: `📋 Shared from RCC Coach:\n\n${transcript}` });
-    alert("Conversation shared with your consultant!");
+    showToast("Shared with your consultant!", "📋");
+  }
+
+  // ── Email AI conversation transcript to parent ─────────────────────────────
+  async function exportAiConversation() {
+    if (aiMessages.length === 0 || !user?.email) return;
+    setExportStatus("sending");
+    try {
+      const transcript = aiMessages
+        .filter(m => m.type === "text" && (m.sender === "parent" || m.sender === "ai"))
+        .map(m => `${m.sender === "parent" ? "You" : "RCC Coach"}: ${m.content}`)
+        .join("\n\n");
+      const { supabase: sb } = await import("../../lib/supabase.js");
+      const { error } = await sb.functions.invoke("send-coach-export", {
+        body: { email: user.email, transcript, childName: activeChild?.name || "your little one" },
+      });
+      if (error) throw error;
+      setExportStatus("sent");
+      setTimeout(() => setExportStatus(null), 4000);
+    } catch (e) {
+      console.error("Export failed:", e);
+      setExportStatus("error");
+      setTimeout(() => setExportStatus(null), 4000);
+    }
   }
 
   const displayMessages = mode === "ai"
@@ -1029,6 +1053,22 @@ Use the child's name naturally. Know what method they're on and what day — don
               <button onClick={shareAiConversation}
                 style={{ background: `${C.purple}20`, border: `1px solid ${C.purple}50`, borderRadius: 10, padding: "8px 12px", color: C.purple, fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                 Share with consultant
+              </button>
+            )}
+
+            {/* Email export button — parents only, AI tab, when there are messages */}
+            {mode === "ai" && user?.role === "parent" && aiMessages.length > 0 && (
+              <button
+                onClick={exportAiConversation}
+                disabled={exportStatus === "sending"}
+                style={{
+                  background: exportStatus === "sent" ? `${C.sage}20` : exportStatus === "error" ? "#FFF0F0" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${exportStatus === "sent" ? C.sage : exportStatus === "error" ? "#E88" : T.border}`,
+                  borderRadius: 10, padding: "8px 12px",
+                  color: exportStatus === "sent" ? C.sage : exportStatus === "error" ? "#C44" : T.muted,
+                  fontFamily: font, fontSize: 12, fontWeight: 600, cursor: exportStatus === "sending" ? "default" : "pointer",
+                }}>
+                {exportStatus === "sending" ? "Sending…" : exportStatus === "sent" ? "✓ Sent to your email" : exportStatus === "error" ? "Failed — try again" : "📧 Email to me"}
               </button>
             )}
 
