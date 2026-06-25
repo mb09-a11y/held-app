@@ -17,9 +17,6 @@ function createSupabaseClient() {
       detectSessionInUrl: true,
       flowType: "pkce",
     },
-    global: {
-      headers: { "x-application-name": "rcc-app" },
-    },
     db: {
       retryAttempts: 3,
       retryInterval: 1000,

@@ -326,7 +326,7 @@ function MessageBubble({ msg, isOwn, onPin, onSearch, signedUrls = {} }) {
   const senderLabel = isAI ? "✦ RCC Coach" : isConsultant ? "Your Consultant" : "You";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: isOwn || isAI ? "flex-end" : "flex-start", marginBottom: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: isOwn && !isAI ? "flex-end" : "flex-start", marginBottom: 4 }}>
       {(!isOwn || isAI) && (
         <div style={{ fontSize: 10.5, fontWeight: 700, color: nameColor, fontFamily: font, marginBottom: 3, marginLeft: 2, marginRight: 2, letterSpacing: ".04em" }}>
           {senderLabel}
@@ -534,13 +534,49 @@ export function Messaging({ user, activeFamily, families, onFamilyChange, childr
 
   // ── Supabase-backed messages for Messages tab; ephemeral state for AI tab ──
   const [dbMessages, setDbMessages] = useState([]);
-  const [aiMessages, setAiMessages] = useState([]);
+
+  // ── AI messages: persist in sessionStorage for up to 1 hour ──────────────
+  // Survives tab navigation and app backgrounding within the same browser session.
+  // Clears automatically after 1 hour or when the tab/session closes.
+  const AI_STORAGE_KEY = `held_ai_messages_${user?.id || "anon"}`;
+  const AI_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+  const [aiMessages, setAiMessages] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(`held_ai_messages_${user?.id || "anon"}`);
+      if (!raw) return [];
+      const { messages: saved, savedAt } = JSON.parse(raw);
+      if (Date.now() - savedAt > AI_TTL_MS) {
+        sessionStorage.removeItem(`held_ai_messages_${user?.id || "anon"}`);
+        return [];
+      }
+      return saved || [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Write AI messages to sessionStorage whenever they change
+  useEffect(() => {
+    try {
+      if (aiMessages.length === 0) {
+        sessionStorage.removeItem(AI_STORAGE_KEY);
+      } else {
+        sessionStorage.setItem(AI_STORAGE_KEY, JSON.stringify({ messages: aiMessages, savedAt: Date.now() }));
+      }
+    } catch {
+      // sessionStorage unavailable — silently continue with in-memory only
+    }
+  }, [aiMessages]);
+
   const [loading, setLoading] = useState(false);
 
   const messages = mode === "ai" ? aiMessages : dbMessages;
 
   const [aiTyping, setAiTyping] = useState(false);
   const [exportStatus, setExportStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
+  const [shareStatus, setShareStatus] = useState(null); // null | 'sending' | 'sent' | 'error'
+  const [inputFocused, setInputFocused] = useState(false);
   const activeChild = children?.[0] || null;
   const [intakeContext, setIntakeContext] = useState("");
 
@@ -928,14 +964,43 @@ Use the child's name naturally. Know what method they're on and what day — don
   }
 
   // ── Share AI conversation into the real Messages thread ───────────────────
+  async function handleUpgrade() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const tier = subscriptionTier === "plus" ? "premium" : "plus";
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-parent-checkout-session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ email: user?.email, name: user?.name, user_id: user?.id, tier }),
+      });
+      const data = await res.json();
+      if (data.url) window.open(data.url, "_blank");
+      else showToast(data.error || "Something went wrong. Please try again.", "⚠️");
+    } catch (e) {
+      showToast("Couldn't open checkout. Please try again.", "⚠️");
+    }
+  }
+
   async function shareAiConversation() {
     if (!activeFamily || aiMessages.length === 0) return;
-    const transcript = aiMessages
-      .filter(m => m.type === "text" && (m.sender === "parent" || m.sender === "ai"))
-      .map(m => `${m.sender === "parent" ? "Parent" : "RCC Coach"}: ${m.content}`)
-      .join("\n\n");
-    await sendToDb({ type: "text", content: `📋 Shared from RCC Coach:\n\n${transcript}` });
-    showToast("Shared with your consultant!", "📋");
+    setShareStatus("sending");
+    try {
+      const transcript = aiMessages
+        .filter(m => m.type === "text" && (m.sender === "parent" || m.sender === "ai"))
+        .map(m => `${m.sender === "parent" ? "Parent" : "RCC Coach"}: ${m.content}`)
+        .join("\n\n");
+      await sendToDb({ type: "text", content: `📋 Shared from RCC Coach:\n\n${transcript}` });
+      setShareStatus("sent");
+      setTimeout(() => setShareStatus(null), 4000);
+    } catch (e) {
+      console.error("Share failed:", e);
+      setShareStatus("error");
+      setTimeout(() => setShareStatus(null), 4000);
+    }
   }
 
   // ── Email AI conversation transcript to parent ─────────────────────────────
@@ -1051,8 +1116,15 @@ Use the child's name naturally. Know what method they're on and what day — don
             {/* Share AI conversation button — parents only, AI tab, when there are messages */}
             {mode === "ai" && user?.role === "parent" && aiMessages.length > 0 && (
               <button onClick={shareAiConversation}
-                style={{ background: `${C.purple}20`, border: `1px solid ${C.purple}50`, borderRadius: 10, padding: "8px 12px", color: C.purple, fontFamily: font, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                Share with consultant
+                disabled={shareStatus === "sending"}
+                style={{
+                  background: shareStatus === "sent" ? `${C.sage}20` : shareStatus === "error" ? "#FFF0F0" : `${C.purple}20`,
+                  border: `1px solid ${shareStatus === "sent" ? C.sage : shareStatus === "error" ? "#E88" : `${C.purple}50`}`,
+                  borderRadius: 10, padding: "8px 12px",
+                  color: shareStatus === "sent" ? C.sage : shareStatus === "error" ? "#C44" : C.purple,
+                  fontFamily: font, fontSize: 12, fontWeight: 600, cursor: shareStatus === "sending" ? "default" : "pointer",
+                }}>
+                {shareStatus === "sending" ? "Sending…" : shareStatus === "sent" ? "✓ Shared with consultant" : shareStatus === "error" ? "Failed — try again" : "Share with consultant"}
               </button>
             )}
 
@@ -1091,19 +1163,32 @@ Use the child's name naturally. Know what method they're on and what day — don
           )}
 
           {/* AI message limit counter */}
-          {mode === "ai" && aiMessageLimit !== Infinity && (
-            <div style={{ marginTop: 6, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
-              {!canSendAIMessage ? (
-                <div style={{ fontSize: 11, color: T.rose || "#A87B8A", fontFamily: font, fontWeight: 600 }}>
-                  Message limit reached — upgrade to keep going
-                </div>
-              ) : (
-                <div style={{ fontSize: 11, color: T.muted, fontFamily: font }}>
-                  {aiMessagesRemaining} of {aiMessageLimit} messages remaining this month
-                </div>
-              )}
-            </div>
-          )}
+          {mode === "ai" && aiMessageLimit !== Infinity && (() => {
+            const isFree = !subscriptionTier || subscriptionTier === "free";
+            const isPlus = subscriptionTier === "plus";
+            const isPremiumOrVip = subscriptionTier === "premium" || subscriptionTier === "vip";
+            const showUpgrade = !isPremiumOrVip && (isFree || (isPlus && aiMessagesRemaining <= 10));
+            return (
+              <div style={{ marginTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                {!canSendAIMessage ? (
+                  <div style={{ fontSize: 11, color: T.rose || "#A87B8A", fontFamily: font, fontWeight: 600 }}>
+                    Message limit reached
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: T.muted, fontFamily: font }}>
+                    {aiMessagesRemaining} of {aiMessageLimit} messages remaining this month
+                  </div>
+                )}
+                {showUpgrade && (
+                  <button
+                    onClick={handleUpgrade}
+                    style={{ fontSize: 11, color: C.teal, fontFamily: font, fontWeight: 600, background: "none", border: "none", cursor: "pointer", padding: 0, whiteSpace: "nowrap" }}>
+                    Upgrade for more →
+                  </button>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Async support copy for Premium/VIP in Messages tab */}
           {mode === "messages" && asyncSupportCopy && (
@@ -1262,7 +1347,7 @@ Use the child's name naturally. Know what method they're on and what day — don
                     : "Messages reset at the start of your next billing cycle"}
                 </div>
                 {(subscriptionTier === "free" || subscriptionTier === "plus") && (
-                  <button style={{ padding: "8px 20px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  <button onClick={handleUpgrade} style={{ padding: "8px 20px", borderRadius: 10, border: "none", background: T.teal, color: "#fff", fontFamily: font, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
                     Upgrade Now
                   </button>
                 )}
@@ -1320,12 +1405,14 @@ Use the child's name naturally. Know what method they're on and what day — don
                       : "Message…"
                 }
                 rows={1}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
                 style={{
                   flex: 1,
                   width: "100%",
                   minWidth: 0,
                   background: "#FFFFFF",
-                  border: `1.5px solid ${T.border}`,
+                  border: `1.5px solid ${inputFocused ? T.border + "cc" : T.border}`,
                   borderRadius: 20,
                   padding: "10px 16px",
                   color: T.text,
@@ -1334,10 +1421,12 @@ Use the child's name naturally. Know what method they're on and what day — don
                   resize: "none",
                   outline: "none",
                   lineHeight: 1.5,
+                  height: inputFocused || input.length > 0 ? undefined : "40px",
                   maxHeight: 120,
                   overflowY: "auto",
                   opacity: !activeFamily && mode !== "ai" ? 0.6 : 1,
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.08)"
+                  boxShadow: inputFocused ? "0 1px 8px rgba(0,0,0,0.12)" : "0 1px 4px rgba(0,0,0,0.08)",
+                  transition: "height 0.15s ease, box-shadow 0.15s ease"
                 }}
               />
 

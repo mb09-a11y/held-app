@@ -15,8 +15,11 @@ import { Card, Btn, Pill, Divider, SectionLabel, StatCard } from "./sleepUI.jsx"
 import { TodayView } from "./TodayView.jsx";
 import { PatternsView } from "./PatternsView.jsx";
 
-// ─── WHO GROWTH REFERENCE DATA ────────────────────────────────────────────────
+// ─── WHO + CDC GROWTH REFERENCE DATA (imperial, 0–17 years) ───────────────────
+// WHO: 0–60 months | CDC: 72–204 months | interpolateWHO bridges any gaps
+// Percentile columns: [3rd, 10th, 25th, 50th, 75th, 90th, 97th]
 const WHO_WEIGHT = {
+  // WHO 0–24 months (lb)
   0:  [5.3,5.8,6.4,7.3,8.2,9.0,9.9], 1: [6.7,7.4,8.2,9.2,10.3,11.2,12.3],
   2:  [8.2,9.0,9.9,11.1,12.4,13.5,14.8], 3: [9.5,10.4,11.5,12.8,14.3,15.6,17.1],
   4:  [10.6,11.6,12.8,14.3,15.9,17.3,18.9], 5: [11.5,12.6,13.9,15.4,17.2,18.7,20.5],
@@ -27,14 +30,39 @@ const WHO_WEIGHT = {
   16: [17.1,18.6,20.6,22.9,25.5,27.8,30.5], 18: [17.8,19.4,21.5,23.9,26.6,29.0,31.9],
   20: [18.5,20.2,22.4,24.9,27.7,30.2,33.2], 22: [19.2,21.0,23.2,25.8,28.8,31.4,34.5],
   24: [19.8,21.7,24.0,26.7,29.8,32.6,35.8],
+  // WHO 27–60 months (lb)
+  27: [20.7,22.7,25.1,28.0,31.3,34.2,37.6], 30: [21.6,23.6,26.1,29.1,32.6,35.7,39.2],
+  33: [22.4,24.5,27.1,30.2,33.9,37.1,40.8], 36: [23.1,25.4,28.0,31.3,35.1,38.4,42.3],
+  42: [24.7,27.1,30.0,33.5,37.7,41.2,45.4], 48: [26.2,28.8,31.9,35.7,40.1,44.1,48.7],
+  54: [27.8,30.6,33.9,37.9,42.7,47.0,52.0], 60: [29.3,32.3,35.8,40.1,45.2,49.8,55.3],
+  // CDC 6–17 years (lb)
+  72:  [33.1,36.6,40.6,45.6,51.9,57.9,65.3], 84:  [37.0,41.2,46.3,52.5,60.6,68.5,78.7],
+  96:  [41.2,46.3,52.7,60.5,71.0,81.8,96.3], 108: [45.6,51.9,59.9,70.3,83.8,98.1,117.0],
+  120: [50.4,58.2,68.2,81.0,98.1,116.4,139.8], 132: [55.6,65.3,77.8,93.5,114.4,137.0,163.1],
+  144: [61.7,73.4,88.8,107.6,131.6,157.9,185.2], 156: [69.0,83.2,100.6,121.3,147.3,174.4,201.1],
+  168: [77.6,93.7,112.4,133.6,159.0,184.7,210.7], 180: [86.0,103.2,122.8,143.8,168.4,192.8,218.3],
+  192: [93.3,111.3,131.1,152.0,176.2,199.8,225.4], 204: [99.0,117.5,137.2,158.3,182.1,205.5,231.0],
 };
 const WHO_LENGTH = {
+  // WHO 0–24 months (inches)
   0:  [17.6,18.1,18.6,19.4,20.1,20.7,21.3], 1: [19.3,19.8,20.4,21.1,21.9,22.5,23.2],
   2:  [20.8,21.3,21.9,22.8,23.5,24.2,24.9], 3: [22.0,22.5,23.2,24.0,24.9,25.6,26.4],
   4:  [23.0,23.6,24.3,25.2,26.0,26.8,27.6], 6: [24.8,25.4,26.1,27.1,28.0,28.8,29.7],
   9:  [26.6,27.3,28.0,29.1,30.0,30.9,31.9], 12: [28.1,28.8,29.6,30.7,31.7,32.6,33.6],
   15: [29.4,30.1,30.9,32.1,33.1,34.1,35.1], 18: [30.6,31.3,32.2,33.4,34.5,35.5,36.6],
   21: [31.6,32.4,33.3,34.6,35.7,36.8,37.9], 24: [32.6,33.4,34.3,35.7,36.8,37.9,39.1],
+  // WHO 27–60 months (inches)
+  27: [33.5,34.3,35.2,36.6,37.8,38.9,40.1], 30: [34.3,35.1,36.1,37.5,38.7,39.8,41.1],
+  33: [35.1,35.9,36.9,38.3,39.6,40.7,42.0], 36: [35.8,36.7,37.7,39.1,40.4,41.6,42.9],
+  42: [37.2,38.1,39.2,40.7,42.0,43.2,44.6], 48: [38.5,39.5,40.6,42.1,43.5,44.8,46.2],
+  54: [39.8,40.8,41.9,43.5,44.9,46.2,47.7], 60: [40.9,42.0,43.2,44.8,46.3,47.7,49.2],
+  // CDC 6–17 years (inches)
+  72:  [42.5,43.7,45.0,46.5,48.0,49.3,50.7], 84:  [44.5,45.8,47.2,48.7,50.3,51.7,53.2],
+  96:  [46.4,47.8,49.2,50.8,52.5,54.0,55.6], 108: [48.2,49.6,51.1,52.8,54.6,56.2,57.9],
+  120: [49.9,51.4,53.0,54.8,56.7,58.5,60.4], 132: [51.6,53.2,54.9,56.8,58.9,60.9,63.0],
+  144: [53.3,55.0,56.8,58.9,61.2,63.4,65.7], 156: [55.1,56.9,58.8,61.0,63.5,65.8,68.1],
+  168: [57.1,58.9,60.8,63.0,65.4,67.6,69.8], 180: [58.8,60.6,62.4,64.4,66.6,68.6,70.5],
+  192: [59.9,61.6,63.3,65.2,67.2,69.0,70.8], 204: [60.4,62.1,63.7,65.6,67.5,69.3,71.0],
 };
 
 function interpolateWHO(table, ageMonths) {
@@ -56,16 +84,22 @@ function GrowthChart({ data, dob, metric, T }) {
   const W = 300, H = 160, padL = 36, padR = 12, padT = 10, padB = 28;
   const chartW = W - padL - padR, chartH = H - padT - padB;
 
-  const maxAge = Math.max(...data.map(d => d.ageMonths), 24);
+  const currentAgeMonths = dob ? (Date.now() - new Date(dob)) / (1000 * 60 * 60 * 24 * 30.44) : 0;
+  // Show a rolling 5-year (60-month) window: 2.5 years before and after current age
+  // For young children (<30mo) always start at 0; cap at 204 months (17y)
+  const windowHalf = 30; // months on each side
+  const chartMinAge = Math.max(0, Math.round(currentAgeMonths - windowHalf));
+  const chartMaxAge = Math.min(204, Math.max(Math.round(currentAgeMonths + windowHalf), 24));
   const refTable = metric === "weight" ? WHO_WEIGHT : WHO_LENGTH;
-  const whoKeys = Object.keys(refTable).map(Number).sort((a,b)=>a-b).filter(k => k <= maxAge + 2);
+  const whoKeys = Object.keys(refTable).map(Number).sort((a,b)=>a-b).filter(k => k >= chartMinAge - 2 && k <= chartMaxAge + 2);
   const whoPercentiles = whoKeys.map(k => ({ age: k, vals: refTable[k] || interpolateWHO(refTable, k) }));
   const allWhoVals = whoPercentiles.flatMap(p => p.vals);
-  const allValues = data.map(d => d.value);
+  const visibleData = data.filter(d => d.ageMonths >= chartMinAge && d.ageMonths <= chartMaxAge);
+  const allValues = visibleData.length > 0 ? visibleData.map(d => d.value) : data.map(d => d.value);
   const minV = Math.min(...allValues, ...allWhoVals) * 0.92;
   const maxV = Math.max(...allValues, ...allWhoVals) * 1.05;
 
-  const sx = age => padL + (age / (maxAge || 1)) * chartW;
+  const sx = age => padL + ((age - chartMinAge) / ((chartMaxAge - chartMinAge) || 1)) * chartW;
   const sy = val => padT + chartH - ((val - minV) / (maxV - minV || 1)) * chartH;
 
   // Shaded band between 10th and 90th percentile
@@ -107,9 +141,13 @@ function GrowthChart({ data, dob, metric, T }) {
       ))}
 
       {/* X axis labels */}
-      {[0, 6, 12, 18, 24].filter(m => m <= maxAge).map(m => (
-        <text key={m} x={sx(m)} y={H - 4} textAnchor="middle" fill="#bbb" fontSize={8} fontFamily={font}>{m}mo</text>
-      ))}
+      {[0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 168, 180, 192, 204]
+        .filter(m => m >= chartMinAge && m <= chartMaxAge)
+        .map(m => (
+          <text key={m} x={sx(m)} y={H - 4} textAnchor="middle" fill="#bbb" fontSize={8} fontFamily={font}>
+            {m === 0 ? "0" : m % 12 === 0 ? `${m/12}y` : `${m}mo`}
+          </text>
+        ))}
 
       {/* Actual data line */}
       {data.length >= 2 && (
