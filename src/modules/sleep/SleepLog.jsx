@@ -697,8 +697,8 @@ function WellnessView({ logs, activeFamily }) {
         const dirtyCount = recentDiapers.filter(l => l.sub_type === "dirty").length;
         const bothCount = recentDiapers.filter(l => l.sub_type === "both").length;
         const totalDays = 14;
-        const wetPerDay  = parseFloat(((wetCount + bothCount) / totalDays).toFixed(1));
-        const dirtyPerDay = parseFloat(((dirtyCount + bothCount) / totalDays).toFixed(1));
+        const wetPerDay  = Math.round((wetCount + bothCount) / totalDays);
+        const dirtyPerDay = Math.round((dirtyCount + bothCount) / totalDays);
 
         // AAP-based normal ranges by age
         const wetRange   = ageMonths < 1.5 ? [6,8] : ageMonths < 6 ? [5,6] : [4,6];
@@ -929,6 +929,7 @@ function ConsultantView({ config, setConfig, dbPin, isConsultant }) {
   const [authed, setAuthed] = useState(isConsultant);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [saved, setSaved] = useState(false);
 
   if (!authed) {
@@ -1031,9 +1032,12 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
   const [mood, setMood] = useState(log.mood || "");
   const [diaperType, setDiaperType] = useState(log.sub_type || "wet");
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isDiaper = log.type === "diaper";
   const isWaking = log.type === "night_waking";
+  const isSleep = log.type === "sleep_session";
+  const [sessionType, setSessionType] = useState(log.session_type || "nap");
   const [duration, setDuration] = useState(log.duration ? String(log.duration) : "10");
   const [notes, setNotes] = useState(log.description || "");
 
@@ -1051,6 +1055,7 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
     if (log.type === "sleep_session") {
       if (endTime) { const newEnd = toISO(date, endTime, newTs); changes.end_ts = newEnd; changes.total_sleep_ms = Math.max(0, new Date(newEnd)-new Date(log.fell_asleep_ts||newTs)); }
       if (mood) changes.mood = mood;
+      changes.session_type = sessionType;
     }
     if (isDiaper) {
       changes.sub_type = diaperType;
@@ -1078,6 +1083,16 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
         <div style={{ marginBottom:14 }}><label style={labelStyle}>Date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={inputStyle} /></div>
         <div style={{ marginBottom:14 }}><label style={labelStyle}>Time</label><input type="time" value={time} onChange={e=>setTime(e.target.value)} style={inputStyle} /></div>
         {log.type==="sleep_session"&&log.end_ts&&<div style={{ marginBottom:14 }}><label style={labelStyle}>End time</label><input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)} style={inputStyle} /></div>}
+        {isSleep&&(
+          <div style={{ marginBottom:14 }}>
+            <label style={labelStyle}>Sleep type</label>
+            <div style={{ display:"flex", gap:8 }}>
+              {[{id:"nap",label:"🌤 Nap"},{id:"night",label:"🌙 Night sleep"}].map(opt=>(
+                <button key={opt.id} onClick={()=>setSessionType(opt.id)} style={{ flex:1, padding:"10px 8px", borderRadius:10, border:`1.5px solid ${sessionType===opt.id?C.teal:T.border}`, background:sessionType===opt.id?`${C.teal}18`:"transparent", cursor:"pointer", fontFamily:font, fontSize:13, color:sessionType===opt.id?C.teal:T.text }}>{opt.label}</button>
+              ))}
+            </div>
+          </div>
+        )}
         {log.type==="sleep_session"&&(
           <div style={{ marginBottom:20 }}>
             <label style={labelStyle}>Wake-up mood</label>
@@ -1112,7 +1127,10 @@ export function EditLogModal({ log, onSave, onDelete, onClose }) {
         )}
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={handleSave} disabled={saving} style={{ flex:1, padding:14, borderRadius:12, border:"none", background:T.teal, color:"#fff", fontFamily:font, fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":"Save changes"}</button>
-          <button onClick={()=>{if(window.confirm("Delete this log entry?"))onDelete(log.id).then(onClose);}} style={{ padding:"14px 20px", borderRadius:12, border:`1px solid ${C.rose}40`, background:"none", color:C.rose, fontFamily:font, fontSize:14, cursor:"pointer" }}>Delete</button>
+          {confirmDelete
+            ? <button onClick={()=>onDelete(log.id).then(onClose)} style={{ padding:"14px 20px", borderRadius:12, border:`1px solid ${C.rose}`, background:C.rose, color:"#fff", fontFamily:font, fontSize:14, fontWeight:700, cursor:"pointer" }}>Confirm delete</button>
+            : <button onClick={()=>setConfirmDelete(true)} style={{ padding:"14px 20px", borderRadius:12, border:`1px solid ${C.rose}40`, background:"none", color:C.rose, fontFamily:font, fontSize:14, cursor:"pointer" }}>Delete</button>
+          }
         </div>
       </div>
     </div>

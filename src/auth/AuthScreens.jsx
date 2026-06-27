@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useT, Card, Btn, Input, EyeIcon, font, serif } from "../core/shared.jsx";
 import { supabase } from "../lib/supabase.js";
 

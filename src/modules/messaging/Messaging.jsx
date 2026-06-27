@@ -535,11 +535,14 @@ export function Messaging({ user, activeFamily, families, onFamilyChange, childr
   // ── Supabase-backed messages for Messages tab; ephemeral state for AI tab ──
   const [dbMessages, setDbMessages] = useState([]);
 
-  // ── AI messages: persist in sessionStorage for up to 1 hour ──────────────
+  // ── AI messages: persist in sessionStorage for a tier-based TTL ──────────
   // Survives tab navigation and app backgrounding within the same browser session.
-  // Clears automatically after 1 hour or when the tab/session closes.
+  // Free: 15 minutes. Plus / Premium / VIP: 1 hour.
+  // Clears automatically after the TTL or when the tab/session closes.
   const AI_STORAGE_KEY = `held_ai_messages_${user?.id || "anon"}`;
-  const AI_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const AI_TTL_MS = (!subscriptionTier || subscriptionTier === "free")
+    ? 15 * 60 * 1000   // 15 minutes for free tier
+    : 60 * 60 * 1000;  // 1 hour for Plus / Premium / VIP
 
   const [aiMessages, setAiMessages] = useState(() => {
     try {
@@ -1411,7 +1414,7 @@ Use the child's name naturally. Know what method they're on and what day — don
                   flex: 1,
                   width: "100%",
                   minWidth: 0,
-                  background: "#FFFFFF",
+                  background: T.inputBg || T.card || "#FFFFFF",
                   border: `1.5px solid ${inputFocused ? T.border + "cc" : T.border}`,
                   borderRadius: 20,
                   padding: "10px 16px",

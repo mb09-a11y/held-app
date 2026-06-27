@@ -101,7 +101,7 @@ const PARENT_TABS = [
   { id: "sleep",    label: "Track",    icon: "📝" },
   { id: "sos",      sos: true                     }, // center SOS slot
   { id: "messages", label: "Messages", icon: "💬" },
-  { id: "insights", label: "Insights", icon: "✦"  },
+  { id: "insights", label: "Roots", icon: "✦"  },
 ];
 
 // Note: consultant nav is now fully owned by ConsultantShell — no CONSULTANT_TABS needed here
@@ -168,6 +168,12 @@ export default function RCCShell() {
   });
   const [authLoading, setAuthLoading] = useState(() => {
     try { return !localStorage.getItem("rcc_user"); } catch { return true; }
+  });
+  // Prevents the main app from flashing before onboardingStep is resolved.
+  // Starts true for returning users (profileReady from cache) so they aren't blocked.
+  // Starts false for new users and flips in the loadProfile finally block.
+  const [onboardingReady, setOnboardingReady] = useState(() => {
+    try { return !!localStorage.getItem("rcc_user"); } catch { return false; }
   });
   const [authScreen, setAuthScreen] = useState(() => {
     try {
@@ -862,6 +868,14 @@ export default function RCCShell() {
         client.from("families").update({ parent_id: userId }).eq("id", byEmail.id);
       }
 
+      // Backfill timezone for families created before timezone capture was added.
+      // Fires silently on every login but only writes when the field is actually null.
+      if (familyData?.id && !familyData.timezone) {
+        const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        client.from("families").update({ timezone: detectedTz }).eq("id", familyData.id);
+        familyData = { ...familyData, timezone: detectedTz };
+      }
+
       if (!familyData) {
         // Check co_caregivers — try user_id first (reliable after password reset),
         // then fall back to email. Two separate queries avoids .or() syntax issues.
@@ -966,6 +980,7 @@ export default function RCCShell() {
       setProfileReady(true);
     } finally {
       setAuthLoading(false);
+      setOnboardingReady(true);
     }
     } // end loadProfileInner
 
@@ -980,6 +995,7 @@ export default function RCCShell() {
         console.warn("[RCCShell] loadProfile timed out after", LOAD_TIMEOUT_MS, "ms — unblocking UI so the app doesn't hang indefinitely");
         setProfileReady(true);
         setAuthLoading(false);
+        setOnboardingReady(true);
       }
       // Any other error here is unexpected, since loadProfileInner already
       // has its own try/catch — but don't let it crash the app either way.
@@ -1049,6 +1065,7 @@ export default function RCCShell() {
           invite_email: normalizedEmail,
           require_intake: false,
           intake_complete: false,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         });
         if (familyError) console.error("Family creation error:", familyError);
       }
@@ -1398,6 +1415,7 @@ export default function RCCShell() {
   // Loading states
   if (inviteLoading) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading your invitation…" /></ThemeCtx.Provider>;
   if (authLoading && !profileReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
+  if (!onboardingReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
 
   // ── Password reset flow ──
   if (isRecovery) {

@@ -4,7 +4,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useT, useApp, font, serif } from "../../core/shared.jsx";
 import { supabase } from "../../lib/supabase.js";
-import HeldTree from "./HeldTree.jsx";
 
 // ─── DATA HOOK ───────────────────────────────────────────────────────────────
 function useInsightsData(userId, familyId, childId, checkinRefreshKey) {
@@ -557,24 +556,11 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
 
   return (
     <div>
-      {/* ── REGULATION TREE ── */}
-      {/* hideStats wrapper — hides the score row HeldTree renders internally */}
-      <div style={{ paddingBottom: 16 }} className="held-tree-no-stats">
-        <style>{`.held-tree-no-stats .tree-stats-row { display: none !important; }`}</style>
-        <HeldTree
-          userWeekCount={weekCount}
-          totalNsLogs={total}
-          ventralPoints={ventral}
-          latestNsState={profile?.latest_ns_state ?? null}
-          hideStats={true}
-        />
-      </div>
-
       {/* ── STATS ROW ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {[
           { label: "LEAVES",   value: leaves },
-          { label: "VENTRAL",  value: `${stabilityRate}%` },
+          { label: "REGULATED",  value: `${stabilityRate}%` },
           { label: "WEEK",     value: weekCount },
         ].map(s => (
           <div key={s.label} style={{
@@ -598,7 +584,7 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
           "{nsQuote}"
         </div>
         <div style={{ fontSize: 9.5, letterSpacing: ".12em", textTransform: "uppercase", color: T.muted, fontFamily: font, fontWeight: 700, marginBottom: 8 }}>
-          Ventral ratio
+          Regulation ratio
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
           <div style={{ fontFamily: font, fontSize: 13, color: T.headingText }}>{capacityLabel}</div>
@@ -608,7 +594,7 @@ function YourStoryTab({ profile, weekCount, patterns, loading, ventralCount, set
           <div style={{ height: "100%", width: `${stabilityRate}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
         </div>
         <div style={{ fontFamily: font, fontSize: 12, color: T.muted, fontStyle: "italic", lineHeight: 1.6 }}>
-          {stabilityRate}% of your check-ins have been in a regulated state. Every ventral moment builds your foundation.
+          {stabilityRate}% of your check-ins have been in a regulated state. Every regulated moment builds your foundation.
         </div>
       </div>
 
@@ -720,8 +706,8 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
         </div>
       </div>
 
-      {/* ── VENTRAL CAPACITY SCORE ── */}
-      <SectionLabel text="Ventral capacity score" />
+      {/* ── REGULATION CAPACITY SCORE ── */}
+      <SectionLabel text="Regulation capacity score" />
       <div style={{ borderRadius: 16, padding: "18px 18px 16px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
           <div style={{ fontFamily: serif, fontSize: 38, color: T.headingText, lineHeight: 1 }}>{stabilityRate}%</div>
@@ -731,7 +717,7 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
           <div style={{ height: "100%", width: `${stabilityRate}%`, borderRadius: 3, background: T.teal, transition: "width 0.6s" }} />
         </div>
         <div style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7 }}>
-          Every regulated check-in adds to your rolling system stability average. {stabilityRate}% of your check-ins have been in a regulated state. Every ventral moment builds your foundation.
+          Every regulated check-in adds to your rolling system stability average. {stabilityRate}% of your check-ins have been in a regulated state. Every regulated moment builds your foundation.
         </div>
       </div>
 
@@ -739,7 +725,7 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
       <SectionLabel text="By the numbers" />
       <div style={{ borderRadius: 16, padding: "18px 18px 4px", background: T.card2, border: `1px solid ${T.border}`, marginBottom: 16 }}>
         {[
-          { label: "Regulated check-ins", sub: "Ventral (Steady/Regulated) states", value: `${ventral} of ${total}` },
+          { label: "Regulated check-ins", sub: "Steady/regulated states", value: `${ventral} of ${total}` },
           { label: "Leaves banked",        sub: "Deep forest green — hard earned", value: String(leaves) },
           { label: "Repair moments",       sub: "SOS flows completed with repair",  value: String(profile?.repair_count ?? 0) },
           { label: "Anchor strength",      sub: "Meltdown resistance rating",       value: anchorStrength, useSerif: true },
@@ -821,7 +807,7 @@ function FoundationTab({ profile, weekCount, patterns, ventralCount }) {
           })}
         </div>
         <div style={{ fontFamily: font, fontSize: 13, color: T.muted, lineHeight: 1.7 }}>
-          Each ring is a week. Thin rings were harder. Thick rings were weeks of steady ventral access. Growth is not linear — but it is cumulative.
+          Each ring is a week. Thin rings were harder. Thick rings were weeks of steady regulated access. Growth is not linear — but it is cumulative.
         </div>
       </div>
     </div>
@@ -970,7 +956,7 @@ function UpgradeToFoundationCard({ T, currentUser }) {
         Your pattern is becoming clearer
       </div>
       <p style={{ fontFamily: font, fontSize: 13.5, color: T.muted, lineHeight: 1.7, marginBottom: 16, maxWidth: 280, margin: "0 auto 16px" }}>
-        Foundation gives you the full picture — your ventral capacity score, growth rings, and what it all means for your nervous system.
+        Foundation gives you the full picture — your regulation capacity score, growth rings, and what it all means for your nervous system.
       </p>
       <button onClick={handleUpgrade} disabled={loading} style={{
         background: loading ? T.faint : T.teal,
@@ -1035,10 +1021,10 @@ function FoundationPaywall({ T }) {
         Your foundation is growing
       </div>
       <p style={{ fontFamily: font, fontSize: 14, color: T.muted, lineHeight: 1.7, maxWidth: 300, margin: "0 auto 24px" }}>
-        Your ventral capacity score, growth rings, and foundation status report — the interpretation layer behind everything you're tracking.
+        Your regulation capacity score, growth rings, and foundation status report — the interpretation layer behind everything you're tracking.
       </p>
       {[
-        { icon: "📊", label: "Ventral capacity score" },
+        { icon: "📊", label: "Regulation capacity score" },
         { icon: "🌀", label: "Growth rings — week by week" },
         { icon: "⚓", label: "Foundation status report" },
         { icon: "🔢", label: "By the numbers breakdown" },
@@ -1104,7 +1090,7 @@ export function HeldInsights({ setTab, onOpenDrawer, onScripts }) {
       {/* ── HEADER ── */}
       <div style={{ padding: "16px 20px 12px", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 4 }}>Insights</div>
+          <div style={{ fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.muted, fontFamily: font, marginBottom: 4 }}>Roots</div>
           <div style={{ fontFamily: serif, fontSize: 28, color: T.headingText, lineHeight: 1.1 }}>What I'm seeing</div>
           <div style={{ fontFamily: font, fontSize: 13, color: T.muted, marginTop: 3 }}>Your patterns, translated.</div>
         </div>

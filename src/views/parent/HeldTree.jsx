@@ -1,4 +1,5 @@
 import { useEffect, useRef, useMemo } from "react";
+import { useT, useApp } from "../../core/shared.jsx";
 
 /**
  * HeldTree — Visual Regulation Tracker
@@ -64,7 +65,7 @@ function paintCanvas(canvas, totalNsLogs, ventralPoints, weekCount) {
   const depthT    = Math.min(totalNsLogs / 120, 1);
   const spreadT   = Math.min(ventralPoints / 200, 1);
   const extraStr  = Math.max(0, weekCount - 22) * 0.025;
-  const groundY   = H * 0.54;
+  const groundY   = H * 0.63;
   const maxDepth  = H * (0.36 + depthT * 0.22 + extraStr);
 
   // Seeded rand — same roots every render for same data
@@ -168,6 +169,9 @@ export default function HeldTree({
   ventralPoints = 0,
   latestNsState = null,
 }) {
+  const T          = useT();
+  const { themeMode } = useApp();
+  const isDark     = themeMode === "dark";
   const canvasRef  = useRef(null);
   const frameSrc   = getFrame(userWeekCount);
   const stateStyle = STATE_STYLES[latestNsState] || STATE_STYLES.Regulated;
@@ -212,7 +216,7 @@ export default function HeldTree({
         position: "relative",
         borderRadius: 20,
         overflow: "hidden",
-        background: "linear-gradient(160deg, #f8f3e8 0%, #f0e8d5 100%)",
+        background: isDark ? "linear-gradient(160deg, #1e1e1e 0%, #2a2520 100%)" : "linear-gradient(160deg, #f8f3e8 0%, #f0e8d5 100%)",
         boxShadow: stateStyle.glow
           ? "0 0 52px rgba(46,122,46,0.24), 0 4px 20px rgba(45,30,10,0.1)"
           : "0 4px 20px rgba(45,30,10,0.1)",
@@ -242,11 +246,13 @@ export default function HeldTree({
             display: "block",
             width: "100%",
             height: "auto",
-            mixBlendMode: "multiply",
+            mixBlendMode: isDark ? "normal" : "multiply",
             filter: isFiltered ? stateStyle.filter : "none",
             transition: "filter 1.6s ease",
           }}
         />
+
+
 
         {/* Canvas growth layer */}
         <canvas

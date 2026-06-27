@@ -392,7 +392,7 @@ export function SOSFlow({ onClose, setTab }) {
       {screen === "reset" && (
         <ParentReset
           resetType={resetType}
-          childName={workingChild?.name}
+          childName={children && children.length > 1 ? null : workingChild?.name}
           onComplete={handleResetComplete}
           onClose={handleClose}
         />

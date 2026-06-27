@@ -209,7 +209,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
     // Naps/day — only average across days that actually had naps
     const daysWithNaps = days.filter(d => d.napCount > 0);
     const avgNapCount = daysWithNaps.length
-      ? parseFloat((daysWithNaps.reduce((s,d)=>s+d.napCount,0)/daysWithNaps.length).toFixed(1))
+      ? Math.round(daysWithNaps.reduce((s,d)=>s+d.napCount,0)/daysWithNaps.length)
       : 0;
     return {
       avgTotal: parseFloat(avgTotal.toFixed(1)), avgNap: parseFloat(avgNap.toFixed(1)),
@@ -390,7 +390,7 @@ export function PatternsView({ logs, onPatch, onDelete }) {
             {[
               { label: "Avg Settling", value: stats.avgSettle != null ? `${stats.avgSettle}m` : "—", color: C.amber },
               { label: "Night Wakings", value: String(stats.avgNightWakes), color: C.mauve },
-              { label: "Naps/day",      value: String(stats.avgNapCount),   color: C.purple },
+              { label: "Naps/day",      value: `${stats.avgNapCount}`,   color: C.purple },
             ].map(s => (
               <div key={s.label} style={{ textAlign: "center" }}>
                 <div style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
@@ -415,8 +415,8 @@ export function PatternsView({ logs, onPatch, onDelete }) {
             // "both" counts as both a wet and a dirty — match the same logic as SleepLog wellness view
             const wetCount   = diaperLogs.filter(l => l.sub_type === "wet"   || l.sub_type === "both").length;
             const dirtyCount = diaperLogs.filter(l => l.sub_type === "dirty" || l.sub_type === "both").length;
-            const wetPerDay   = diaperLogs.length ? parseFloat((wetCount   / diaperDays).toFixed(1)) : 0;
-            const dirtyPerDay = diaperLogs.length ? parseFloat((dirtyCount / diaperDays).toFixed(1)) : 0;
+            const wetPerDay   = diaperLogs.length ? Math.round(wetCount   / diaperDays) : 0;
+            const dirtyPerDay = diaperLogs.length ? Math.round(dirtyCount / diaperDays) : 0;
 
             const feedLogs    = periodLogs.filter(l => l.type === "feed");
             const feedDays    = daysWithLogs(feedLogs);
