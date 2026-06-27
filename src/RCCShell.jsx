@@ -141,15 +141,28 @@ export default function RCCShell() {
 
       // A PKCE `code` param in the URL means Supabase's automatic
       // exchangeCodeForSession will (or already did) create a session in
-      // the background. Right now the only flow that produces ?code=... is
-      // password recovery, so treat its presence as "show reset screen" —
-      // this avoids depending on catching the PASSWORD_RECOVERY event at
-      // the right moment. (If magic-link or OAuth login is added later,
-      // this will need to get smarter.)
+      // the background. ?code= appears in password recovery AND invite
+      // acceptance flows — we disambiguate below using invite params and
+      // type=recovery to avoid routing invite links into the reset screen.
       const params = new URLSearchParams(search);
-      if (params.has("code")) return true;
 
-      if (hash.includes("type=recovery") || search.includes("type=recovery")) return true;
+      // ?code= is used by Supabase PKCE for ALL email flows — invite acceptance,
+      // email verification, AND password recovery. Only treat it as a recovery
+      // event when type=recovery is explicitly present, OR when no invite token
+      // is in the URL (bare ?code= with no invite params = password reset flow).
+      // Invite acceptance URLs always include ?invite=TOKEN (or co_invite /
+      // consultant_invite) alongside ?code= — those must NOT trigger recovery mode.
+      const hasInviteParam =
+        params.has("invite") ||
+        params.has("co_invite") ||
+        params.has("consultant_invite");
+      const hasRecoveryType =
+        hash.includes("type=recovery") || search.includes("type=recovery");
+
+      if (hasRecoveryType) return true;
+      // Bare ?code= with no invite params → password reset PKCE exchange
+      if (params.has("code") && !hasInviteParam) return true;
+
       // On error (e.g. expired/already-used reset link), Supabase redirects to
       // the default Site URL with error params and drops our ?type=recovery —
       // so also catch that signature directly. This pattern (error + error_code)
