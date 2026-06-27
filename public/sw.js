@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rcc-app-v5';
+const CACHE_NAME = 'rcc-app-v6';
 const STATIC_ASSETS = ['/', '/index.html'];
 
 // ── DEV MODE BYPASS ───────────────────────────────────────────────────────────

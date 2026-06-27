@@ -353,6 +353,10 @@ export default function RCCShell() {
       if (!mounted) return;
       console.warn("[RCCShell] boot timeout — unblocking loading screen");
       setAuthLoading(false);
+      // Also unblock onboardingReady — for new users (no cached profile),
+      // loadProfile never ran so onboardingReady stays false and the spinner
+      // never clears even after authLoading is forced false.
+      setOnboardingReady(true);
     }, 8000);
 
     async function boot() {
@@ -373,7 +377,18 @@ export default function RCCShell() {
         // getSession() may queue behind the resume handler lock — that's fine
         // now because the app is already rendered from cache above.
         // This just background-validates the session is still good.
-        const { data, error } = await supabase.auth.getSession();
+        // Wrap in a hard 5s timeout — if the GoTrue lock is somehow stuck,
+        // we bail out so the boot timeout safety net can unblock the UI.
+        const { data, error } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("getSession_timeout")), 5000)
+          ),
+        ]).catch(err => {
+          console.warn("[RCCShell] boot getSession timed out:", err?.message);
+          clearStaleLocks();
+          return { data: null, error: err };
+        });
         if (!mounted) return;
 
         // If a PASSWORD_RECOVERY event arrived (just now, or while we were
