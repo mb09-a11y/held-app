@@ -1412,12 +1412,8 @@ export default function RCCShell() {
   const isParent = role === "parent" || role === "co_caregiver";
   const isMobile = window.innerWidth < 768;
 
-  // Loading states
-  if (inviteLoading) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading your invitation…" /></ThemeCtx.Provider>;
-  if (authLoading && !profileReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
-  if (!onboardingReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
-
-  // ── Password reset flow ──
+  // ── Password reset flow — checked FIRST so cached sessions don’t render
+  // the normal app underneath the reset screen for returning users.
   if (isRecovery) {
     return (
       <ThemeCtx.Provider value={T}>
@@ -1435,6 +1431,11 @@ export default function RCCShell() {
       </ThemeCtx.Provider>
     );
   }
+
+  // Loading states
+  if (inviteLoading) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading your invitation…" /></ThemeCtx.Provider>;
+  if (authLoading && !profileReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
+  if (!onboardingReady) return <ThemeCtx.Provider value={T}><LoadingScreen label="Loading…" /></ThemeCtx.Provider>;
 
   // Auth screens
   if (!session || !currentUser) {
