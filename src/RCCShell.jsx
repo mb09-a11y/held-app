@@ -1417,18 +1417,27 @@ export default function RCCShell() {
   if (isRecovery) {
     return (
       <ThemeCtx.Provider value={T}>
-        <ResetPasswordScreen onDone={() => {
-          setIsRecovery(false);
-          // Clear the recovery token from the URL so a refresh doesn't
-          // re-trigger the reset screen with a stale token.
-          try {
-            const url = new URL(window.location.href);
-            url.hash = "";
-            url.search = ""; // clear ?code= so a hard refresh doesn't re-trigger recovery
-            window.history.replaceState({}, "", url.toString());
-          } catch {}
-          // onAuthStateChange will fire SIGNED_IN after password update
-        }} />
+        <ResetPasswordScreen
+          onPasswordSet={() => {
+            // Clear recovery state immediately when updateUser() succeeds so the
+            // SIGNED_IN event that Supabase fires right after can load the profile
+            // and route the user into the app. Without this, isRecoveryRef stays
+            // true and onAuthStateChange skips loadProfile, leaving a forever spinner.
+            isRecoveryRef.current = false;
+            setIsRecovery(false);
+            try {
+              const url = new URL(window.location.href);
+              url.hash = "";
+              url.search = "";
+              window.history.replaceState({}, "", url.toString());
+            } catch {}
+          }}
+          onDone={() => {
+            // Belt-and-suspenders: also clear on the 2s delay callback.
+            isRecoveryRef.current = false;
+            setIsRecovery(false);
+          }}
+        />
       </ThemeCtx.Provider>
     );
   }

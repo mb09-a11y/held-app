@@ -499,7 +499,7 @@ function ChildInfoStep({ onSave, onFinish, loading }) {
 // Also handles the common case where an email security scanner (Gmail, etc.)
 // has already "clicked" the one-time link before the person did — Supabase
 // redirects back with an error param instead of a valid code/session.
-function ResetPasswordScreen({ onDone }) {
+function ResetPasswordScreen({ onDone, onPasswordSet }) {
   const T = useT();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -599,14 +599,9 @@ function ResetPasswordScreen({ onDone }) {
       setError(error.message);
     } else {
       setDone(true);
-      // Clear the ?code= param immediately so a hard refresh during the
-      // 2s success delay doesn't land back on the (now spent) recovery flow.
-      try {
-        const url = new URL(window.location.href);
-        url.hash = "";
-        url.search = "";
-        window.history.replaceState({}, "", url.toString());
-      } catch {}
+      // Fire immediately so RCCShell clears isRecoveryRef before the SIGNED_IN
+      // event arrives — letting onAuthStateChange load the profile and route the app.
+      onPasswordSet?.();
       setTimeout(() => onDone?.(), 2000);
     }
   }
