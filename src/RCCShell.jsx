@@ -141,28 +141,18 @@ export default function RCCShell() {
 
       // A PKCE `code` param in the URL means Supabase's automatic
       // exchangeCodeForSession will (or already did) create a session in
-      // the background. ?code= appears in password recovery AND invite
-      // acceptance flows — we disambiguate below using invite params and
-      // type=recovery to avoid routing invite links into the reset screen.
+      // the background. Right now the only flow that produces ?code=... is
+      // password recovery, so treat its presence as "show reset screen" —
+      // this avoids depending on catching the PASSWORD_RECOVERY event at
+      // the right moment. (If magic-link or OAuth login is added later,
+      // this will need to get smarter.)
       const params = new URLSearchParams(search);
+      // Only treat ?code= as a recovery flow when type=recovery is also present.
+      // A bare ?code= without type=recovery could be OAuth or another Supabase
+      // flow and must NOT trigger the reset screen for normal users.
+      if (params.has("code") && (hash.includes("type=recovery") || search.includes("type=recovery"))) return true;
 
-      // ?code= is used by Supabase PKCE for ALL email flows — invite acceptance,
-      // email verification, AND password recovery. Only treat it as a recovery
-      // event when type=recovery is explicitly present, OR when no invite token
-      // is in the URL (bare ?code= with no invite params = password reset flow).
-      // Invite acceptance URLs always include ?invite=TOKEN (or co_invite /
-      // consultant_invite) alongside ?code= — those must NOT trigger recovery mode.
-      const hasInviteParam =
-        params.has("invite") ||
-        params.has("co_invite") ||
-        params.has("consultant_invite");
-      const hasRecoveryType =
-        hash.includes("type=recovery") || search.includes("type=recovery");
-
-      if (hasRecoveryType) return true;
-      // Bare ?code= with no invite params → password reset PKCE exchange
-      if (params.has("code") && !hasInviteParam) return true;
-
+      if (hash.includes("type=recovery") || search.includes("type=recovery")) return true;
       // On error (e.g. expired/already-used reset link), Supabase redirects to
       // the default Site URL with error params and drops our ?type=recovery —
       // so also catch that signature directly. This pattern (error + error_code)
@@ -176,6 +166,9 @@ export default function RCCShell() {
   // Mirrors isRecovery, but readable synchronously inside boot() before the
   // PASSWORD_RECOVERY-triggered re-render happens.
   const isRecoveryRef = useRef(isRecovery);
+  // Flips true the instant updateUser() succeeds — lets onAuthStateChange
+  // distinguish the post-password-update SIGNED_IN from the initial PKCE SIGNED_IN.
+  const passwordWasSetRef = useRef(false);
   const [currentUser, setCurrentUser] = useState(() => {
     try { const c = localStorage.getItem("rcc_user"); return c ? JSON.parse(c) : null; } catch { return null; }
   });
@@ -472,7 +465,7 @@ export default function RCCShell() {
         // IMPORTANT: Skip loadProfile entirely during password recovery — the PKCE
         // exchangeCodeForSession fires SIGNED_IN after the code exchange, but we must
         // not compete for the GoTrue lock or render the normal app under the reset screen.
-        if (isRecoveryRef.current) {
+        if (isRecoveryRef.current && !passwordWasSetRef.current) {
           setAuthLoading(false);
           return;
         }
@@ -1432,10 +1425,9 @@ export default function RCCShell() {
       <ThemeCtx.Provider value={T}>
         <ResetPasswordScreen
           onPasswordSet={() => {
-            // Clear recovery state immediately when updateUser() succeeds so the
-            // SIGNED_IN event that Supabase fires right after can load the profile
-            // and route the user into the app. Without this, isRecoveryRef stays
-            // true and onAuthStateChange skips loadProfile, leaving a forever spinner.
+            // Flip passwordWasSetRef first (synchronous) so the SIGNED_IN event
+            // Supabase fires immediately after updateUser() sees it and loads the profile.
+            passwordWasSetRef.current = true;
             isRecoveryRef.current = false;
             setIsRecovery(false);
             try {
