@@ -599,6 +599,14 @@ function ResetPasswordScreen({ onDone }) {
       setError(error.message);
     } else {
       setDone(true);
+      // Clear the ?code= param immediately so a hard refresh during the
+      // 2s success delay doesn't land back on the (now spent) recovery flow.
+      try {
+        const url = new URL(window.location.href);
+        url.hash = "";
+        url.search = "";
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
       setTimeout(() => onDone?.(), 2000);
     }
   }

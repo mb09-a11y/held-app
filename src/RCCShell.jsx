@@ -1424,6 +1424,7 @@ export default function RCCShell() {
           try {
             const url = new URL(window.location.href);
             url.hash = "";
+            url.search = ""; // clear ?code= so a hard refresh doesn't re-trigger recovery
             window.history.replaceState({}, "", url.toString());
           } catch {}
           // onAuthStateChange will fire SIGNED_IN after password update
