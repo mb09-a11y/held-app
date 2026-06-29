@@ -367,7 +367,9 @@ export default function SleepDataTab({ family, activeChild }) {
           }}>
             <div style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{s.emoji}</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, color: T.text, fontFamily: font }}>{s.date} · {s.time}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: T.text, fontFamily: font }}>
+                {s.date} · {s.time}{s.endTime ? ` – ${s.endTime}` : ""}
+              </div>
               <div style={{ fontSize: 11, color: T.muted, marginTop: 2, fontFamily: font }}>
                 {s.duration}{s.settling && s.settling !== "0m" ? ` · settled in ${s.settling}` : ""}
               </div>

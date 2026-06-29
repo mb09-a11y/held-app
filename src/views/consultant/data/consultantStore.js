@@ -452,6 +452,11 @@ function normalizeSleepLog(row, tz) {
     time:        tz
       ? new Date(row.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })
       : new Date(row.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+    endTime:     row.end_ts
+      ? (tz
+          ? new Date(row.end_ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })
+          : new Date(row.end_ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))
+      : null,
     duration:    durationStr,
     durationMin,
     settling:    settlingMin > 0 ? `${settlingMin}m` : "0m",
